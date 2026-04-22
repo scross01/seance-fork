@@ -2095,12 +2095,14 @@ pub const Workspace = struct {
         switch (direction) {
             .left => {
                 if (self.liveColumnCount() <= 1) return;
+                const src = self.focusedPanelYBounds();
                 var i = self.focused_column;
                 while (i > 0) {
                     i -= 1;
                     if (!self.columns.items[i].closing) {
                         if (self.focusedGroup()) |old| old.unfocus();
                         self.focused_column = i;
+                        self.matchRowInFocusedColumn(src);
                         if (self.focusedGroup()) |new_grp| new_grp.focus();
                         self.panToFocusedColumn();
                         return;
@@ -2109,11 +2111,13 @@ pub const Workspace = struct {
             },
             .right => {
                 if (self.liveColumnCount() <= 1) return;
+                const src = self.focusedPanelYBounds();
                 var i = self.focused_column + 1;
                 while (i < self.columns.items.len) : (i += 1) {
                     if (!self.columns.items[i].closing) {
                         if (self.focusedGroup()) |old| old.unfocus();
                         self.focused_column = i;
+                        self.matchRowInFocusedColumn(src);
                         if (self.focusedGroup()) |new_grp| new_grp.focus();
                         self.panToFocusedColumn();
                         return;
@@ -2129,6 +2133,43 @@ pub const Workspace = struct {
                 group.nextPanel();
             },
         }
+    }
+
+    const YBounds = struct { top: f64, bot: f64 };
+
+    fn focusedPanelYBounds(self: *Workspace) YBounds {
+        const full: YBounds = .{ .top = 0.0, .bot = 1.0 };
+        const grp = self.focusedGroup() orelse return full;
+        if (!grp.in_stacked_mode) return full;
+        const pane = grp.focusedTerminalPane() orelse return full;
+        return .{ .top = pane.stacked_frac_y, .bot = pane.stacked_frac_y + pane.stacked_frac_h };
+    }
+
+    fn matchRowInFocusedColumn(self: *Workspace, src: YBounds) void {
+        const grp = self.focusedGroup() orelse return;
+        if (!grp.in_stacked_mode) return;
+        if (grp.panels.items.len <= 1) return;
+
+        const eps: f64 = 1e-6;
+        const prev = grp.active_panel;
+        var best: ?usize = null;
+        var best_overlap: f64 = 0.0;
+        var prev_overlaps = false;
+        for (grp.panels.items, 0..) |panel, idx| {
+            const pane = panel.asTerminal() orelse continue;
+            const top = pane.stacked_frac_y;
+            const bot = top + pane.stacked_frac_h;
+            if (top >= src.bot - eps or bot <= src.top + eps) continue;
+            const overlap = @min(bot, src.bot) - @max(top, src.top);
+            if (best == null or overlap > best_overlap) {
+                best = idx;
+                best_overlap = overlap;
+            }
+            if (idx == prev) prev_overlaps = true;
+        }
+
+        const target = if (prev_overlaps) prev else (best orelse return);
+        if (target != prev) grp.switchToPanel(target);
     }
 
     // ── Tab operations (per focused group) ──────────────────────────
