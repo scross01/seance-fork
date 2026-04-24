@@ -749,10 +749,11 @@ fn cmdSendKey(ctx: Ctx) u8 {
         werr("usage: send-key KEY [--surface N]\n");
         return 1;
     };
+    const escaped = jsonEscapeAlloc(ctx.alloc, k);
     const params = if (surface_id) |sid|
-        std.fmt.allocPrint(ctx.alloc, "{{\"key\":\"{s}\",\"surface_id\":{d}}}", .{ k, sid }) catch return 1
+        std.fmt.allocPrint(ctx.alloc, "{{\"key\":\"{s}\",\"surface_id\":{d}}}", .{ escaped, sid }) catch return 1
     else
-        std.fmt.allocPrint(ctx.alloc, "{{\"key\":\"{s}\"}}", .{k}) catch return 1;
+        std.fmt.allocPrint(ctx.alloc, "{{\"key\":\"{s}\"}}", .{escaped}) catch return 1;
     _ = apiCall(ctx.alloc, ctx.socket_path, "surface.send_key", params) catch |e| {
         printSocketError(e);
         return 1;
