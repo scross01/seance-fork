@@ -2225,6 +2225,7 @@ pub const Workspace = struct {
 
     pub fn findPaneById(self: *const Workspace, pane_id: u64) ?*Pane {
         for (self.columns.items) |col| {
+            if (col.closing) continue;
             for (col.groups.items) |grp| {
                 if (grp.findPaneById(pane_id)) |pane| return pane;
             }
@@ -2234,6 +2235,7 @@ pub const Workspace = struct {
 
     pub fn findPanelById(self: *const Workspace, panel_id: u64) ?PaneGroup.FindPanelResult {
         for (self.columns.items) |col| {
+            if (col.closing) continue;
             for (col.groups.items) |grp| {
                 if (grp.findPanelById(panel_id)) |result| return result;
             }
@@ -2243,6 +2245,7 @@ pub const Workspace = struct {
 
     pub fn findGroupContainingPane(self: *const Workspace, pane_id: u64) ?*PaneGroup {
         for (self.columns.items) |col| {
+            if (col.closing) continue;
             for (col.groups.items) |grp| {
                 if (grp.findPaneById(pane_id) != null) return grp;
             }
