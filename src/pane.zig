@@ -3,7 +3,6 @@ const c = @import("c.zig").c;
 const config_mod = @import("config.zig");
 const SearchOverlay = @import("search_overlay.zig").SearchOverlay;
 const ghostty_bridge = @import("ghostty_bridge.zig");
-const opengl = @import("gl.zig");
 
 pub const Pane = struct {
     pub const cwd_cap = 512;
@@ -539,41 +538,15 @@ fn onGlRender(_: *c.GtkGLArea, _: *c.GdkGLContext, user_data: c.gpointer) callco
         pane.pending_init_width = 0;
         pane.pending_init_height = 0;
 
-        // Process pending ghostty messages and schedule a follow-up render
-        // so the renderer thread's first frame gets picked up.
+        // Process pending ghostty messages so the renderer thread picks up
+        // config/size updates before we draw.
         ghostty_bridge.tick();
-        pane.queueDeferredRedraw();
-        // Skip ghostty_surface_draw on this frame — the surface was just
-        // created with the app's default config and the config update may
-        // not be reflected in the renderer yet.  Clear the framebuffer to
-        // the current theme background so the user sees the correct color
-        // instead of a flash of the old theme.
-        clearToThemeBg();
-
-        return 1;
     }
 
     if (pane.surface) |s| {
         c.ghostty_surface_draw(s);
     }
     return 1;
-}
-
-/// Clear the GL framebuffer to the current theme's background color.
-/// Used to avoid a flash of stale colors when a surface is first created.
-fn clearToThemeBg() void {
-    const theme_mod = @import("theme.zig");
-    const colors = theme_mod.resolveColors();
-    const bg = colors.window_bg;
-    const r = @as(f32, @floatFromInt(parseHex2(bg[1..3].*))) / 255.0;
-    const g = @as(f32, @floatFromInt(parseHex2(bg[3..5].*))) / 255.0;
-    const b = @as(f32, @floatFromInt(parseHex2(bg[5..7].*))) / 255.0;
-    opengl.glClearColor(r, g, b, 1.0);
-    opengl.glClear(opengl.GL_COLOR_BUFFER_BIT);
-}
-
-fn parseHex2(s: [2]u8) u8 {
-    return std.fmt.parseInt(u8, &s, 16) catch 0;
 }
 
 fn onGlResize(_: *c.GtkGLArea, width: c.gint, height: c.gint, user_data: c.gpointer) callconv(.c) void {
