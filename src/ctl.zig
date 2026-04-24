@@ -2087,7 +2087,9 @@ fn printUsage() void {
         \\  split                   Split pane [--direction vertical|horizontal]
         \\  close-surface ID        Close a surface
         \\  send TEXT               Send text [--surface N]
-        \\  send-key KEY            Send key (enter, ctrl+c, etc.) [--surface N]
+        \\                          Max 4096 bytes per call (PTY line limit).
+        \\  send-key KEY            Send key, e.g. enter, tab, f7, ctrl+c,
+        \\                          shift+tab, alt+b, ctrl+shift+k [--surface N]
         \\  read-screen             Read terminal [--lines N] [--surface N]
         \\  expel-pane              Expel pane --direction left|right [--surface N]
         \\  resize-row              Resize row --taller|--shorter [--surface N]

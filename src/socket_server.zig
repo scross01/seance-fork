@@ -145,13 +145,26 @@ pub const SocketServer = struct {
         _ = std.posix.poll(&pfd, 10) catch return 1;
         if (pfd[0].revents & std.posix.POLL.IN == 0) return 1;
 
-        // Read command (short messages, single read is fine)
-        var buf: [4096]u8 = undefined;
-        const n = std.posix.read(conn_fd, &buf) catch return 1;
-        if (n == 0) return 1;
+        // Read command. Sized to accommodate a 4096-byte text payload in its
+        // worst-case JSON encoding: every byte expanded to `\u00XX` (6 bytes)
+        // gives 24576 bytes, plus ~100 bytes of envelope. 32 KiB covers it
+        // with headroom. 4096 is the PTY text limit — see handleSurfaceSendText.
+        var buf: [32768]u8 = undefined;
+        var total: usize = 0;
+        while (total < buf.len) {
+            const n = std.posix.read(conn_fd, buf[total..]) catch break;
+            if (n == 0) break;
+            total += n;
+            if (std.mem.indexOfScalar(u8, buf[0..total], '\n') != null) break;
+            var pfd2 = [1]std.posix.pollfd{.{ .fd = conn_fd, .events = std.posix.POLL.IN, .revents = 0 }};
+            const ready = std.posix.poll(&pfd2, 10) catch break;
+            if (ready == 0) break;
+            if (pfd2[0].revents & std.posix.POLL.IN == 0) break;
+        }
+        if (total == 0) return 1;
 
         // Trim trailing newline/whitespace
-        const line = std.mem.trimRight(u8, buf[0..n], &[_]u8{ '\r', '\n', ' ' });
+        const line = std.mem.trimRight(u8, buf[0..total], &[_]u8{ '\r', '\n', ' ' });
 
         var resp_buf: [16384]u8 = undefined;
         const response = handleJsonRequest(line, &resp_buf);
@@ -273,6 +286,57 @@ pub const SocketServer = struct {
 
     fn eql(a: []const u8, b: []const u8) bool {
         return std.mem.eql(u8, a, b);
+    }
+
+    const ResolvedPane = union(enum) {
+        pane: *@import("pane.zig").Pane,
+        err: []const u8,
+    };
+
+    /// Resolve the target pane for a request. With `surface_id`, looks up that
+    /// specific pane across all windows. Without it, returns the focused
+    /// terminal pane in the active workspace. On any failure, writes a JSON
+    /// error to `buf` and returns it via `.err`.
+    ///
+    /// A `surface_id` that is present but malformed (negative, non-numeric
+    /// string, wrong type) returns `invalid_params` rather than silently
+    /// falling through to the focused pane — otherwise a buggy caller
+    /// passing `-1` would type into whoever happens to have focus.
+    fn resolvePane(params: ?std.json.Value, id: []const u8, buf: []u8) ResolvedPane {
+        const sid_val: ?std.json.Value = blk: {
+            const p = params orelse break :blk null;
+            if (p != .object) break :blk null;
+            break :blk p.object.get("surface_id");
+        };
+        if (sid_val) |val| {
+            const surface_id = parseSurfaceId(val) orelse
+                return .{ .err = writeJsonError(buf, id, "invalid_params", "surface_id must be a non-negative integer") };
+            const wm = getWindowManager() orelse
+                return .{ .err = writeJsonError(buf, id, "not_ready", "Window manager not initialized") };
+            for (wm.windows.items) |state| {
+                for (state.workspaces.items) |ws| {
+                    if (ws.findPaneById(surface_id)) |p| return .{ .pane = p };
+                }
+            }
+            return .{ .err = writeJsonError(buf, id, "not_found", "Surface not found") };
+        }
+        const state = getActiveState() orelse
+            return .{ .err = writeJsonError(buf, id, "not_ready", "No active window") };
+        const ws = state.activeWorkspace() orelse
+            return .{ .err = writeJsonError(buf, id, "no_workspace", "No active workspace") };
+        const group = ws.focusedGroup() orelse
+            return .{ .err = writeJsonError(buf, id, "no_tab", "No focused pane group") };
+        const pane = group.focusedTerminalPane() orelse
+            return .{ .err = writeJsonError(buf, id, "no_surface", "No focused terminal pane") };
+        return .{ .pane = pane };
+    }
+
+    fn parseSurfaceId(val: std.json.Value) ?u64 {
+        return switch (val) {
+            .integer => |n| if (n >= 0) @intCast(n) else null,
+            .string => |s| std.fmt.parseInt(u64, s, 10) catch null,
+            else => null,
+        };
     }
 
     // ── Response helpers ────────────────────────────────────────────────
@@ -997,85 +1061,241 @@ pub const SocketServer = struct {
     fn handleSurfaceSendText(params: ?std.json.Value, id: []const u8, buf: []u8) []const u8 {
         const text = getParamString(params, "text") orelse return writeJsonError(buf, id, "invalid_params", "Missing 'text' parameter");
 
-        // Find the target pane
-        const pane = if (getParamInt(params, "surface_id")) |surface_id| blk: {
-            const wm = getWindowManager() orelse return writeJsonError(buf, id, "not_ready", "Window manager not initialized");
-            for (wm.windows.items) |state| {
-                for (state.workspaces.items) |ws| {
-                    if (ws.findPaneById(surface_id)) |p| break :blk p;
-                }
-            }
-            return writeJsonError(buf, id, "not_found", "Surface not found");
-        } else blk: {
-            const state = getActiveState() orelse return writeJsonError(buf, id, "not_ready", "No active window");
-            const ws = state.activeWorkspace() orelse return writeJsonError(buf, id, "no_workspace", "No active workspace");
-            const group = ws.focusedGroup() orelse return writeJsonError(buf, id, "no_tab", "No focused pane group");
-            break :blk group.focusedTerminalPane() orelse return writeJsonError(buf, id, "no_surface", "No focused terminal pane");
+        const pane = switch (resolvePane(params, id, buf)) {
+            .pane => |p| p,
+            .err => |e| return e,
         };
 
-        pane.writeInput(text);
+        if (pane.surface == null) return writeJsonError(buf, id, "terminal_destroyed", "Terminal has been destroyed");
+
+        // 4096 matches the PTY's MAX_CANON: a canonical-mode line longer than
+        // that gets truncated at the kernel boundary, so there's no point
+        // buffering more than one line's worth.
+        if (text.len > 4096) return writeJsonError(buf, id, "text_too_long", "Text exceeds 4096 byte limit");
+
+        // Reject embedded null bytes: ghostty's key-event path takes a
+        // null-terminated string, so a `\x00` in the middle would silently
+        // truncate everything after it while the server still reported ok.
+        if (std.mem.indexOfScalar(u8, text, 0) != null) {
+            return writeJsonError(buf, id, "invalid_text", "Text contains embedded null byte");
+        }
+
+        // Send via the key-event path so bracketed paste mode doesn't wrap
+        // the content in `\e[200~`/`\e[201~` markers. Newlines are normalized
+        // to `\r` so they act as real Enter presses. `\r\n` collapses to a
+        // single `\r`; lone `\n` and lone `\r` each become `\r`.
+        var nt_buf: [4097]u8 = undefined;
+        var out_len: usize = 0;
+        var i: usize = 0;
+        while (i < text.len) : (i += 1) {
+            const b = text[i];
+            if (b == '\r' and i + 1 < text.len and text[i + 1] == '\n') {
+                nt_buf[out_len] = '\r';
+                out_len += 1;
+                i += 1;
+            } else if (b == '\n') {
+                nt_buf[out_len] = '\r';
+                out_len += 1;
+            } else {
+                nt_buf[out_len] = b;
+                out_len += 1;
+            }
+        }
+        nt_buf[out_len] = 0;
+        if (out_len > 0) pane.typeText(nt_buf[0..out_len :0]);
         return writeJsonOk(buf, id, "{}");
     }
 
     fn handleSurfaceSendKey(params: ?std.json.Value, id: []const u8, buf: []u8) []const u8 {
         const key = getParamString(params, "key") orelse return writeJsonError(buf, id, "invalid_params", "Missing 'key' parameter");
-        // Map common key names to escape sequences
-        var seq_buf: [32]u8 = undefined;
-        const sequence = mapKeyToSequence(key, &seq_buf) orelse return writeJsonError(buf, id, "invalid_key", "Unrecognized key name");
 
-        // Find target pane (same logic as send_text)
-        const pane = if (getParamInt(params, "surface_id")) |surface_id| blk: {
-            const wm = getWindowManager() orelse return writeJsonError(buf, id, "not_ready", "Window manager not initialized");
-            for (wm.windows.items) |state| {
-                for (state.workspaces.items) |ws| {
-                    if (ws.findPaneById(surface_id)) |p| break :blk p;
-                }
-            }
-            return writeJsonError(buf, id, "not_found", "Surface not found");
-        } else blk: {
-            const state = getActiveState() orelse return writeJsonError(buf, id, "not_ready", "No active window");
-            const ws = state.activeWorkspace() orelse return writeJsonError(buf, id, "no_workspace", "No active workspace");
-            const group = ws.focusedGroup() orelse return writeJsonError(buf, id, "no_tab", "No focused pane group");
-            break :blk group.focusedTerminalPane() orelse return writeJsonError(buf, id, "no_surface", "No focused terminal pane");
+        const pane = switch (resolvePane(params, id, buf)) {
+            .pane => |p| p,
+            .err => |e| return e,
         };
 
-        pane.writeInput(sequence);
-        return writeJsonOk(buf, id, "{}");
-    }
+        if (pane.surface == null) return writeJsonError(buf, id, "terminal_destroyed", "Terminal has been destroyed");
 
-    fn mapKeyToSequence(key: []const u8, buf: []u8) ?[]const u8 {
-        // Common key names to terminal escape sequences
-        if (eql(key, "enter") or eql(key, "return")) return "\r";
-        if (eql(key, "tab")) return "\t";
-        if (eql(key, "escape") or eql(key, "esc")) return "\x1b";
-        if (eql(key, "backspace")) return "\x7f";
-        if (eql(key, "delete")) return "\x1b[3~";
-        if (eql(key, "up")) return "\x1b[A";
-        if (eql(key, "down")) return "\x1b[B";
-        if (eql(key, "right")) return "\x1b[C";
-        if (eql(key, "left")) return "\x1b[D";
-        if (eql(key, "home")) return "\x1b[H";
-        if (eql(key, "end")) return "\x1b[F";
-        if (eql(key, "page_up")) return "\x1b[5~";
-        if (eql(key, "page_down")) return "\x1b[6~";
-        if (eql(key, "space")) return " ";
+        if (mapKeyToEvent(key)) |ev| {
+            var text_buf: [2]u8 = .{ ev.text_char, 0 };
+            const text_ptr: ?[*:0]const u8 = if (ev.text_char != 0) @ptrCast(&text_buf) else null;
+            pane.sendKey(ev.keycode, ev.codepoint, ev.mods, text_ptr);
+            return writeJsonOk(buf, id, "{}");
+        }
 
-        // ctrl+letter (ctrl+c, ctrl+d, etc.)
-        if (key.len == 6 and std.mem.startsWith(u8, key, "ctrl+")) {
-            const ch = key[5];
-            if (ch >= 'a' and ch <= 'z') {
-                buf[0] = ch - 'a' + 1;
-                return buf[0..1];
+        // Unrecognized single codepoint: type it via the key-event path so
+        // bracketed paste doesn't wrap it. Accepts ASCII (1 byte) and any
+        // non-ASCII UTF-8 character (2–4 bytes) that's exactly one codepoint.
+        // Named keys and mod combos are handled above.
+        if (key.len >= 1 and key.len <= 4) {
+            const count = std.unicode.utf8CountCodepoints(key) catch 0;
+            if (count == 1) {
+                // typeText hands ghostty a null-terminated string, so a
+                // lone NUL codepoint would be a silent no-op. Match the
+                // send_text behaviour and reject it.
+                if (std.mem.indexOfScalar(u8, key, 0) != null) {
+                    return writeJsonError(buf, id, "invalid_key", "Key contains embedded null byte");
+                }
+                var buf2: [5]u8 = undefined;
+                @memcpy(buf2[0..key.len], key);
+                buf2[key.len] = 0;
+                pane.typeText(buf2[0..key.len :0]);
+                return writeJsonOk(buf, id, "{}");
             }
         }
 
-        // Single character: send as-is
-        if (key.len == 1) {
-            buf[0] = key[0];
-            return buf[0..1];
+        return writeJsonError(buf, id, "invalid_key", "Unrecognized key name");
+    }
+
+    const KeyEvent = struct {
+        keycode: u32,
+        codepoint: u32,
+        mods: c_uint,
+        /// When non-zero, caller sets the key event's `text` field to this byte
+        /// followed by a null terminator. Needed for printable chars ghostty's
+        /// legacy encoder wouldn't emit from keycode alone.
+        text_char: u8 = 0,
+    };
+
+    const BaseKey = struct {
+        keycode: u32,
+        codepoint: u32,
+        extra_mods: c_uint = 0,
+        text_char: u8 = 0,
+    };
+
+    /// Parse `key` as a chain of modifiers joined with `+`, followed by a base
+    /// key name. Examples: `enter`, `ctrl+c`, `shift+tab`, `ctrl+shift+k`,
+    /// `alt+b`, `f7`, `ctrl+alt+delete`. Case-sensitive. Mod aliases accepted:
+    /// `control`=ctrl, `option`=alt, `meta`/`cmd`/`command`=super.
+    fn mapKeyToEvent(key: []const u8) ?KeyEvent {
+        var mods: c_uint = 0;
+        var rest = key;
+        while (std.mem.indexOfScalar(u8, rest, '+')) |plus| {
+            if (plus == 0) break;
+            const name = rest[0..plus];
+            const bit: c_uint =
+                if (eql(name, "ctrl") or eql(name, "control")) c.GHOSTTY_MODS_CTRL
+                else if (eql(name, "shift")) c.GHOSTTY_MODS_SHIFT
+                else if (eql(name, "alt") or eql(name, "option")) c.GHOSTTY_MODS_ALT
+                else if (eql(name, "super") or eql(name, "meta") or eql(name, "cmd") or eql(name, "command")) c.GHOSTTY_MODS_SUPER
+                else break;
+            mods |= bit;
+            rest = rest[plus + 1 ..];
+        }
+
+        const base = resolveBaseKey(rest) orelse return null;
+        const final_mods = mods | base.extra_mods;
+        // When shift is set and the base key is a lowercase letter, the user
+        // means the uppercase byte — matching keyboard semantics (shift+a is
+        // 'A'). Without this the encoder would emit 'a' with a shift bit set,
+        // which no legacy consumer turns into 'A'.
+        const text_char: u8 = if ((final_mods & c.GHOSTTY_MODS_SHIFT) != 0 and
+            base.text_char >= 'a' and base.text_char <= 'z')
+            base.text_char - 32
+        else
+            base.text_char;
+        return .{
+            .keycode = base.keycode,
+            .codepoint = base.codepoint,
+            .mods = final_mods,
+            .text_char = text_char,
+        };
+    }
+
+    fn resolveBaseKey(name: []const u8) ?BaseKey {
+        // XKB keycodes from ghostty/src/input/keycodes.zig (Linux native).
+        // Named keys.
+        if (eql(name, "enter") or eql(name, "return")) return .{ .keycode = 0x24, .codepoint = 0x0D };
+        if (eql(name, "tab")) return .{ .keycode = 0x17, .codepoint = 0x09 };
+        if (eql(name, "escape") or eql(name, "esc")) return .{ .keycode = 0x09, .codepoint = 0x1B };
+        if (eql(name, "backspace")) return .{ .keycode = 0x16, .codepoint = 0x08 };
+        if (eql(name, "delete")) return .{ .keycode = 0x77, .codepoint = 0 };
+        if (eql(name, "up")) return .{ .keycode = 0x6f, .codepoint = 0 };
+        if (eql(name, "down")) return .{ .keycode = 0x74, .codepoint = 0 };
+        if (eql(name, "right")) return .{ .keycode = 0x72, .codepoint = 0 };
+        if (eql(name, "left")) return .{ .keycode = 0x71, .codepoint = 0 };
+        if (eql(name, "home")) return .{ .keycode = 0x6e, .codepoint = 0 };
+        if (eql(name, "end")) return .{ .keycode = 0x73, .codepoint = 0 };
+        if (eql(name, "page_up") or eql(name, "pageup")) return .{ .keycode = 0x70, .codepoint = 0 };
+        if (eql(name, "page_down") or eql(name, "pagedown")) return .{ .keycode = 0x75, .codepoint = 0 };
+        if (eql(name, "insert")) return .{ .keycode = 0x76, .codepoint = 0 };
+        if (eql(name, "space")) return .{ .keycode = 0x41, .codepoint = 0x20, .text_char = ' ' };
+
+        if (fKeycode(name)) |kc| return .{ .keycode = kc, .codepoint = 0 };
+
+        // Single printable ASCII character.
+        if (name.len == 1) {
+            const ch = name[0];
+            if (letterKeycode(ch)) |kc| {
+                return .{ .keycode = kc, .codepoint = ch, .text_char = ch };
+            }
+            if (ch >= 'A' and ch <= 'Z') {
+                const lower = ch + 32;
+                const kc = letterKeycode(lower) orelse return null;
+                return .{
+                    .keycode = kc,
+                    .codepoint = lower,
+                    .extra_mods = c.GHOSTTY_MODS_SHIFT,
+                    .text_char = ch,
+                };
+            }
+            if (ch >= '0' and ch <= '9') {
+                if (digitKeycode(ch)) |kc| return .{ .keycode = kc, .codepoint = ch, .text_char = ch };
+            }
+            if (symbolKeycode(ch)) |kc| return .{ .keycode = kc, .codepoint = ch, .text_char = ch };
         }
 
         return null;
+    }
+
+    fn letterKeycode(ch: u8) ?u32 {
+        return switch (ch) {
+            'a' => 0x26, 'b' => 0x38, 'c' => 0x36, 'd' => 0x28,
+            'e' => 0x1a, 'f' => 0x29, 'g' => 0x2a, 'h' => 0x2b,
+            'i' => 0x1f, 'j' => 0x2c, 'k' => 0x2d, 'l' => 0x2e,
+            'm' => 0x3a, 'n' => 0x39, 'o' => 0x20, 'p' => 0x21,
+            'q' => 0x18, 'r' => 0x1b, 's' => 0x27, 't' => 0x1c,
+            'u' => 0x1e, 'v' => 0x37, 'w' => 0x19, 'x' => 0x35,
+            'y' => 0x1d, 'z' => 0x34,
+            else => null,
+        };
+    }
+
+    fn digitKeycode(ch: u8) ?u32 {
+        return switch (ch) {
+            '1' => 0x0a, '2' => 0x0b, '3' => 0x0c, '4' => 0x0d, '5' => 0x0e,
+            '6' => 0x0f, '7' => 0x10, '8' => 0x11, '9' => 0x12, '0' => 0x13,
+            else => null,
+        };
+    }
+
+    fn symbolKeycode(ch: u8) ?u32 {
+        return switch (ch) {
+            '-' => 0x14,
+            '=' => 0x15,
+            '[' => 0x22,
+            ']' => 0x23,
+            '\\' => 0x33,
+            ';' => 0x2f,
+            '\'' => 0x30,
+            '`' => 0x31,
+            ',' => 0x3b,
+            '.' => 0x3c,
+            '/' => 0x3d,
+            else => null,
+        };
+    }
+
+    fn fKeycode(name: []const u8) ?u32 {
+        if (name.len < 2 or name[0] != 'f') return null;
+        const n = std.fmt.parseInt(u8, name[1..], 10) catch return null;
+        return switch (n) {
+            1 => 0x43, 2 => 0x44, 3 => 0x45, 4 => 0x46, 5 => 0x47,
+            6 => 0x48, 7 => 0x49, 8 => 0x4a, 9 => 0x4b, 10 => 0x4c,
+            11 => 0x5f, 12 => 0x60,
+            else => null,
+        };
     }
 
     fn handleSurfaceReadScreen(params: ?std.json.Value, id: []const u8, buf: []u8) []const u8 {
@@ -1087,20 +1307,9 @@ pub const SocketServer = struct {
         if (lines == 0) lines = default_lines;
         if (lines > max_lines) lines = max_lines;
 
-        // Find the target pane (same pattern as send_text)
-        const pane = if (getParamInt(params, "surface_id")) |surface_id| blk: {
-            const wm = getWindowManager() orelse return writeJsonError(buf, id, "not_ready", "Window manager not initialized");
-            for (wm.windows.items) |state| {
-                for (state.workspaces.items) |ws| {
-                    if (ws.findPaneById(surface_id)) |p| break :blk p;
-                }
-            }
-            return writeJsonError(buf, id, "not_found", "Surface not found");
-        } else blk: {
-            const state = getActiveState() orelse return writeJsonError(buf, id, "not_ready", "No active window");
-            const ws = state.activeWorkspace() orelse return writeJsonError(buf, id, "no_workspace", "No active workspace");
-            const group = ws.focusedGroup() orelse return writeJsonError(buf, id, "no_tab", "No focused pane group");
-            break :blk group.focusedTerminalPane() orelse return writeJsonError(buf, id, "no_surface", "No focused terminal pane");
+        const pane = switch (resolvePane(params, id, buf)) {
+            .pane => |p| p,
+            .err => |e| return e,
         };
 
         const surface = pane.surface orelse return writeJsonError(buf, id, "terminal_destroyed", "Terminal has been destroyed");

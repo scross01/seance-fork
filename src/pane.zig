@@ -368,11 +368,43 @@ pub const Pane = struct {
         return true;
     }
 
-    /// Write text to the terminal PTY (as if typed).
-    pub fn writeInput(self: *Pane, text: []const u8) void {
-        if (self.surface) |s| {
-            c.ghostty_surface_text(s, text.ptr, text.len);
-        }
+    /// Synthesize a key-press event. `ghostty_surface_text` goes through the
+    /// paste path, which under bracketed paste mode inserts control bytes as
+    /// literal characters rather than acting as keys, so named keys must use
+    /// the key-event path instead.
+    ///
+    /// No RELEASE event is emitted: ghostty's legacy encoder ignores releases,
+    /// and emitting one for `escape` left zsh's line editor in a meta-prefix
+    /// state that corrupted the next bracketed paste.
+    pub fn sendKey(self: *Pane, keycode: u32, codepoint: u32, mods: c_uint, text: ?[*:0]const u8) void {
+        const s = self.surface orelse return;
+        const ev = c.ghostty_input_key_s{
+            .action = c.GHOSTTY_ACTION_PRESS,
+            .mods = @intCast(mods),
+            .consumed_mods = 0,
+            .keycode = keycode,
+            .text = text,
+            .unshifted_codepoint = codepoint,
+            .composing = false,
+        };
+        _ = c.ghostty_surface_key(s, ev);
+    }
+
+    /// Type `text` via the key-event path, bypassing bracketed-paste
+    /// `\e[200~`/`\e[201~` wrapping. Use `\r` as the line terminator.
+    pub fn typeText(self: *Pane, text: [:0]const u8) void {
+        const s = self.surface orelse return;
+        if (text.len == 0) return;
+        const ev = c.ghostty_input_key_s{
+            .action = c.GHOSTTY_ACTION_PRESS,
+            .mods = 0,
+            .consumed_mods = 0,
+            .keycode = 0,
+            .text = text.ptr,
+            .unshifted_codepoint = 0,
+            .composing = false,
+        };
+        _ = c.ghostty_surface_key(s, ev);
     }
 };
 
