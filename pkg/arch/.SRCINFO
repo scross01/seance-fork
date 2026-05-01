@@ -26,6 +26,6 @@ pkgbase = seance
 	depends = harfbuzz
 	depends = oniguruma
 	source = seance-0.1.4-src.tar.gz::https://github.com/no1msd/seance/releases/download/v0.1.4/seance-0.1.4-src.tar.gz
-	sha256sums = 37c2dc3949f88e99ed4b7eba312fd2df8476a3aefa753b4506ab88fc5b0584db
+	sha256sums = e6286ae2e073dece24c505474506d59a10f763fd46f34433ce8b9650be38f739
 
 pkgname = seance
