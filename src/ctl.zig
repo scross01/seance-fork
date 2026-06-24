@@ -1241,7 +1241,7 @@ const opencode_agent = AgentConfig{
     .has_ask_user_handling = true,
     .has_notification_hook = true,
     .has_post_tool_hook = true,
-    .clear_status_on_end = false,
+    .clear_status_on_end = true,
     .session_dir_env = "SEANCE_OPENCODE_SESSION_DIR",
 };
 
@@ -1256,7 +1256,7 @@ const kilo_agent = AgentConfig{
     .has_ask_user_handling = true,
     .has_notification_hook = true,
     .has_post_tool_hook = true,
-    .clear_status_on_end = false,
+    .clear_status_on_end = true,
     .session_dir_env = "SEANCE_KILO_SESSION_DIR",
 };
 
