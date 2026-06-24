@@ -5,6 +5,7 @@
 export const SeancePlugin = async ({ $ }) => {
   const socket = process.env.SEANCE_SOCKET_PATH;
   if (!socket) return {};
+  if (process.env.SEANCE_OPENCODE_HOOKS_DISABLED === "1") return {};
 
   // Find seance binary: SEANCE_BIN_DIR is {prefix}/share/bin, binary is at {prefix}/bin/seance
   const binDir = process.env.SEANCE_BIN_DIR;
@@ -15,6 +16,7 @@ export const SeancePlugin = async ({ $ }) => {
   const surfaceId = process.env.SEANCE_SURFACE_ID;
   const workspaceId = process.env.SEANCE_WORKSPACE_ID;
   let currentSessionId: string | undefined;
+  const shEscape = (s: string) => s.replace(/'/g, "'\\''");
 
   async function hook(event: string, extra: Record<string, unknown> = {}) {
     const payload = JSON.stringify({
@@ -23,7 +25,7 @@ export const SeancePlugin = async ({ $ }) => {
       surface_id: surfaceId,
       ...extra,
     });
-    await $`echo ${payload} | ${seanceBin} ctl opencode-hook ${event}`;
+    await $`echo '${shEscape(payload)}' | ${seanceBin} ctl opencode-hook ${event}`;
   }
 
   return {
@@ -35,6 +37,7 @@ export const SeancePlugin = async ({ $ }) => {
           break;
         case "session.idle":
           await hook("stop");
+          await hook("session-end");
           break;
         case "session.status":
           if (event.properties.status.type === "busy") {

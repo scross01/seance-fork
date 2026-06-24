@@ -52,17 +52,20 @@ fn installOpenCodePlugin() void {
 
     if (installed_content) |content| {
         const installed_version = extractVersion(content);
-        if (installed_version >= bundled_version) return; // up to date
-        std.log.info("opencode: updating plugin v{} → v{}", .{ installed_version, bundled_version });
+        const identical = content.len == bundled_content.len and std.mem.eql(u8, content, bundled_content);
+        if (installed_version == bundled_version and identical) return; // already in sync
+        std.log.info("opencode: syncing plugin v{} → v{}", .{ installed_version, bundled_version });
     } else {
         ensurePluginDir(home) catch return;
         std.log.info("opencode: installing plugin v{}", .{bundled_version});
     }
 
-    // Write plugin
-    const dst = std.fs.createFileAbsolute(plugin_path, .{}) catch return;
-    defer dst.close();
-    dst.writeAll(bundled_content) catch return;
+    const tmp_path = std.fmt.allocPrint(alloc, "{s}.tmp", .{plugin_path}) catch return;
+    defer alloc.free(tmp_path);
+    const dst = std.fs.createFileAbsolute(tmp_path, .{}) catch return;
+    errdefer std.fs.deleteFileAbsolute(tmp_path) catch {};
+    _ = dst.writeAll(bundled_content) catch return;
+    std.fs.renameAbsolute(tmp_path, plugin_path) catch return;
 }
 
 fn extractVersion(content: []const u8) u32 {
