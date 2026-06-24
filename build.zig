@@ -268,6 +268,13 @@ pub fn build(b: *std.Build) void {
         "share/seance/opencode-plugin.ts",
     ).step);
 
+    // Install Kilo Code plugin for agent integration
+    b.getInstallStep().dependOn(&b.addInstallFileWithDir(
+        b.path("plugins/seance-kilo/index.ts"),
+        .prefix,
+        "share/seance/kilo-plugin.ts",
+    ).step);
+
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());
     if (b.args) |args| {

@@ -36,6 +36,11 @@
 # desktop-notifications = true
 # focus-follows-mouse = false
 # confirm-close-window = true
+# claude-code-hooks = true
+# codex-hooks = true
+# pi-hooks = true
+# opencode-hooks = true
+# kilo-hooks = true
 
 [notifications]
 # sound = "default"              # "default", "none", or path to .wav/.ogg file
