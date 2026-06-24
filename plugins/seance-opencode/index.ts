@@ -14,11 +14,11 @@ export const SeancePlugin = async ({ $ }) => {
 
   const surfaceId = process.env.SEANCE_SURFACE_ID;
   const workspaceId = process.env.SEANCE_WORKSPACE_ID;
-  const sessionId = process.env.OPENCODE_SESSION_ID;
+  let currentSessionId: string | undefined;
 
   async function hook(event: string, extra: Record<string, unknown> = {}) {
     const payload = JSON.stringify({
-      session_id: sessionId,
+      session_id: currentSessionId,
       workspace_id: workspaceId,
       surface_id: surfaceId,
       ...extra,
@@ -30,6 +30,7 @@ export const SeancePlugin = async ({ $ }) => {
     event: async ({ event }) => {
       switch (event.type) {
         case "session.created":
+          currentSessionId = event.properties.sessionID;
           await hook("session-start");
           break;
         case "session.idle":
