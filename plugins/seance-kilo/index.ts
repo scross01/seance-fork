@@ -1,6 +1,6 @@
 // Séance plugin for Kilo Code
 // Copy to ~/.config/kilo/plugins/seance-kilo.ts
-// @seance-version 1
+// @seance-version 2
 
 export const SeancePlugin = async ({ $ }) => {
   const socket = process.env.SEANCE_SOCKET_PATH;
@@ -25,7 +25,7 @@ export const SeancePlugin = async ({ $ }) => {
       surface_id: surfaceId,
       ...extra,
     });
-    await $`echo '${shEscape(payload)}' | ${seanceBin} ctl kilo-hook ${event}`;
+    await $`echo '${shEscape(payload)}' | ${seanceBin} ctl kilo-hook ${event} >/dev/null`;
   }
 
   return {
@@ -37,7 +37,6 @@ export const SeancePlugin = async ({ $ }) => {
           break;
         case "session.idle":
           await hook("stop");
-          await hook("session-end");
           break;
         case "session.status":
           if (event.properties.status.type === "busy") {
