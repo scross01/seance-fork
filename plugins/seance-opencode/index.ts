@@ -25,7 +25,7 @@ export const SeancePlugin = async ({ $ }) => {
       surface_id: surfaceId,
       ...extra,
     });
-    await $`echo '${shEscape(payload)}' | ${seanceBin} ctl opencode-hook ${event}`;
+    await $`echo '${shEscape(payload)}' | ${seanceBin} ctl opencode-hook ${event} >/dev/null`;
   }
 
   return {
