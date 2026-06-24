@@ -1,6 +1,6 @@
 // Séance plugin for OpenCode
 // Copy to ~/.config/opencode/plugins/seance-opencode.ts
-// @seance-version 1
+// @seance-version 2
 
 export const SeancePlugin = async ({ $ }) => {
   const socket = process.env.SEANCE_SOCKET_PATH;
