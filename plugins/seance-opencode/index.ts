@@ -32,11 +32,18 @@ export const SeancePlugin = async ({ $ }) => {
     event: async ({ event }) => {
       switch (event.type) {
         case "session.created":
+          if (currentSessionId) {
+            await hook("session-end");
+          }
           currentSessionId = event.properties.sessionID;
           await hook("session-start");
           break;
         case "session.idle":
           await hook("stop");
+          break;
+        case "session.error":
+          await hook("session-end");
+          currentSessionId = undefined;
           break;
         case "session.status":
           if (event.properties.status.type === "busy") {

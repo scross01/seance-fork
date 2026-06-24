@@ -1181,6 +1181,7 @@ const AgentConfig = struct {
     has_ask_user_handling: bool,
     has_notification_hook: bool,
     has_post_tool_hook: bool,
+    clear_status_on_end: bool,
     session_dir_env: ?[]const u8,
 };
 
@@ -1195,6 +1196,7 @@ const claude_agent = AgentConfig{
     .has_ask_user_handling = true,
     .has_notification_hook = true,
     .has_post_tool_hook = false,
+    .clear_status_on_end = true,
     .session_dir_env = null,
 };
 
@@ -1209,6 +1211,7 @@ const codex_agent = AgentConfig{
     .has_ask_user_handling = false,
     .has_notification_hook = false,
     .has_post_tool_hook = true,
+    .clear_status_on_end = true,
     .session_dir_env = "SEANCE_CODEX_SESSION_DIR",
 };
 
@@ -1223,6 +1226,7 @@ const pi_agent = AgentConfig{
     .has_ask_user_handling = false,
     .has_notification_hook = false,
     .has_post_tool_hook = true,
+    .clear_status_on_end = true,
     .session_dir_env = "SEANCE_PI_SESSION_DIR",
 };
 
@@ -1237,6 +1241,7 @@ const opencode_agent = AgentConfig{
     .has_ask_user_handling = true,
     .has_notification_hook = true,
     .has_post_tool_hook = true,
+    .clear_status_on_end = false,
     .session_dir_env = "SEANCE_OPENCODE_SESSION_DIR",
 };
 
@@ -1251,6 +1256,7 @@ const kilo_agent = AgentConfig{
     .has_ask_user_handling = true,
     .has_notification_hook = true,
     .has_post_tool_hook = true,
+    .clear_status_on_end = false,
     .session_dir_env = "SEANCE_KILO_SESSION_DIR",
 };
 
@@ -1558,10 +1564,12 @@ fn agentHookSessionEnd(h: HookCtx) u8 {
     if (h.session_id) |sid| {
         _ = h.store.consume(sid);
     }
-    if (h.workspace) |ws| {
-        const sk = jsonEscapeAlloc(h.alloc, h.getStatusKey());
-        const cp = std.fmt.allocPrint(h.alloc, "{{\"workspace_id\":{d},\"key\":\"{s}\"}}", .{ ws, sk }) catch null;
-        _ = apiCall(h.alloc, h.socket_path, "workspace.clear_status", cp) catch {};
+    if (h.agent.clear_status_on_end) {
+        if (h.workspace) |ws| {
+            const sk = jsonEscapeAlloc(h.alloc, h.getStatusKey());
+            const cp = std.fmt.allocPrint(h.alloc, "{{\"workspace_id\":{d},\"key\":\"{s}\"}}", .{ ws, sk }) catch null;
+            _ = apiCall(h.alloc, h.socket_path, "workspace.clear_status", cp) catch {};
+        }
     }
 
     if (h.agent.session_dir_env) |env_name| {
