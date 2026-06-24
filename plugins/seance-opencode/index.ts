@@ -37,7 +37,6 @@ export const SeancePlugin = async ({ $ }) => {
           break;
         case "session.idle":
           await hook("stop");
-          await hook("session-end");
           break;
         case "session.status":
           if (event.properties.status.type === "busy") {
