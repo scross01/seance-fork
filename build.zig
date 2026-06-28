@@ -282,6 +282,13 @@ pub fn build(b: *std.Build) void {
         "share/seance/mimocode-plugin.ts",
     ).step);
 
+    // Install Vibe hooks template for agent integration
+    b.getInstallStep().dependOn(&b.addInstallFileWithDir(
+        b.path("resources/hooks/vibe-hooks.toml"),
+        .prefix,
+        "share/seance/vibe-hooks.toml",
+    ).step);
+
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());
     if (b.args) |args| {

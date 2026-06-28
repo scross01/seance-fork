@@ -145,6 +145,7 @@ fn dispatch(ctx: Ctx, command: []const u8) u8 {
     if (eql(command, "pi-hook")) return cmdPiHook(ctx);
     if (eql(command, "opencode-hook")) return cmdOpencodeHook(ctx);
     if (eql(command, "kilo-hook")) return cmdKiloHook(ctx);
+    if (eql(command, "vibe-hook")) return cmdVibeHook(ctx);
     if (eql(command, "mimocode-hook")) return cmdMimocodeHook(ctx);
     if (eql(command, "help") or eql(command, "--help") or eql(command, "-h")) {
         printUsage();
@@ -1276,6 +1277,21 @@ const kilo_agent = AgentConfig{
     .session_dir_env = "SEANCE_KILO_SESSION_DIR",
 };
 
+const vibe_agent = AgentConfig{
+    .name = "Vibe",
+    .display_name = "Mistral Vibe",
+    .usage = "usage: vibe-hook <session-start|session-end|prompt-submit|pre-tool-use|post-tool-use|stop>\n",
+    .pid_env = "SEANCE_VIBE_PID",
+    .response = "OK\n",
+    .status_key_prefix = "vibe",
+    .status_key_mode = .surface,
+    .has_ask_user_handling = false,
+    .has_notification_hook = false,
+    .has_post_tool_hook = true,
+    .clear_status_on_end = true,
+    .session_dir_env = null,
+};
+
 fn cmdClaudeHook(ctx: Ctx) u8 {
     return cmdAgentHook(ctx, claude_agent);
 }
@@ -1294,6 +1310,10 @@ fn cmdOpencodeHook(ctx: Ctx) u8 {
 
 fn cmdKiloHook(ctx: Ctx) u8 {
     return cmdAgentHook(ctx, kilo_agent);
+}
+
+fn cmdVibeHook(ctx: Ctx) u8 {
+    return cmdAgentHook(ctx, vibe_agent);
 }
 
 fn cmdMimocodeHook(ctx: Ctx) u8 {

@@ -72,6 +72,9 @@ pub const Config = struct {
     // MiMo Code integration
     mimocode_hooks: bool = true,
 
+    // Mistral Vibe integration
+    vibe_hooks: bool = true,
+
     // Notifications
     notification_sound: NotificationSound = .default,
 
@@ -281,6 +284,7 @@ pub fn saveConfig(cfg: *const Config) void {
     writeBool(w, "opencode-hooks", cfg.opencode_hooks) catch return;
     writeBool(w, "kilo-hooks", cfg.kilo_hooks) catch return;
     writeBool(w, "mimocode-hooks", cfg.mimocode_hooks) catch return;
+    writeBool(w, "vibe-hooks", cfg.vibe_hooks) catch return;
 
     // [notifications]
     w.print("\n[notifications]\n", .{}) catch return;
@@ -470,6 +474,8 @@ fn applyValue(config: *Config, section: []const u8, key: []const u8, raw_val: []
             config.kilo_hooks = parseBool(val) orelse config.kilo_hooks; return true;
         } else if (eql(key, "mimocode-hooks")) {
             config.mimocode_hooks = parseBool(val) orelse config.mimocode_hooks; return true;
+        } else if (eql(key, "vibe-hooks")) {
+            config.vibe_hooks = parseBool(val) orelse config.vibe_hooks; return true;
         }
     } else if (eql(section, "notifications")) {
         if (eql(key, "sound")) {

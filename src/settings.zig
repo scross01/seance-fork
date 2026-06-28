@@ -43,6 +43,7 @@ const Widgets = struct {
     opencode_hooks: ?*c.GtkWidget = null,
     kilo_hooks: ?*c.GtkWidget = null,
     mimocode_hooks: ?*c.GtkWidget = null,
+    vibe_hooks: ?*c.GtkWidget = null,
 
     // Combos
     notification_sound: ?*c.GtkWidget = null,
@@ -443,6 +444,7 @@ fn buildIntegrationsSection(page: *c.GtkWidget, cfg: *const config_mod.Config) v
     w.opencode_hooks = addSwitchRow(g2, "OpenCode Integration", if (cfg.opencode_hooks) "Sidebar shows OpenCode session status and notifications." else "OpenCode runs without seance integration.", cfg.opencode_hooks);
     w.kilo_hooks = addSwitchRow(g2, "Kilo Code Integration", if (cfg.kilo_hooks) "Sidebar shows Kilo Code session status and notifications." else "Kilo Code runs without seance integration.", cfg.kilo_hooks);
     w.mimocode_hooks = addSwitchRow(g2, "MiMo Code Integration", if (cfg.mimocode_hooks) "Sidebar shows MiMo Code session status and notifications." else "MiMo Code runs without seance integration.", cfg.mimocode_hooks);
+    w.vibe_hooks = addSwitchRow(g2, "Mistral Vibe Integration", if (cfg.vibe_hooks) "Sidebar shows Vibe session status." else "Vibe runs without seance integration.", cfg.vibe_hooks);
     addToPage(page, g2);
 
     // Card 3: Port Configuration
@@ -700,6 +702,8 @@ fn onSwitchChanged(obj: *c.GObject, _: *c.GParamSpec, _: c.gpointer) callconv(.c
         cfg.kilo_hooks = active;
     } else if (widget == w.mimocode_hooks) {
         cfg.mimocode_hooks = active;
+    } else if (widget == w.vibe_hooks) {
+        cfg.vibe_hooks = active;
     } else return;
 
     saveAndReload();

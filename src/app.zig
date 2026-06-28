@@ -217,6 +217,67 @@ fn ensureMimocodePluginDir(home: []const u8) !void {
     };
 }
 
+/// Auto-install Vibe hooks.toml if ~/.vibe exists.
+fn installVibeHooks() void {
+    const home = std.posix.getenv("HOME") orelse return;
+    const alloc = std.heap.page_allocator;
+
+    // Check if Vibe config directory exists
+    const config_dir_path = std.fmt.allocPrint(alloc, "{s}/.vibe", .{home}) catch return;
+    defer alloc.free(config_dir_path);
+    _ = std.fs.openDirAbsolute(config_dir_path, .{}) catch return; // no vibe config dir → not installed
+
+    // Read bundled hooks template
+    const bundled_path = blk: {
+        var exe_buf: [std.fs.max_path_bytes]u8 = undefined;
+        const exe_path = std.fs.selfExePath(&exe_buf) catch return;
+        const exe_dir = std.fs.path.dirname(exe_path) orelse return;
+        const prefix = std.fs.path.dirname(exe_dir) orelse return;
+        break :blk std.fmt.allocPrint(alloc, "{s}/share/seance/vibe-hooks.toml", .{prefix}) catch return;
+    };
+    defer alloc.free(bundled_path);
+
+    const bundled_file = std.fs.openFileAbsolute(bundled_path, .{}) catch {
+        std.log.info("vibe: hooks template not found, skipping", .{});
+        return;
+    };
+    defer bundled_file.close();
+    const bundled_content = bundled_file.readToEndAlloc(alloc, 64 * 1024) catch return;
+    defer alloc.free(bundled_content);
+
+    // Check if hooks.toml already exists
+    const hooks_path = std.fmt.allocPrint(alloc, "{s}/.vibe/hooks.toml", .{home}) catch return;
+    defer alloc.free(hooks_path);
+
+    const installed_file = std.fs.openFileAbsolute(hooks_path, .{}) catch null;
+    const installed_content = if (installed_file) |f| f.readToEndAlloc(alloc, 64 * 1024) catch null else null;
+    defer if (installed_file) |f| f.close();
+    defer if (installed_content) |ic| alloc.free(ic);
+
+    if (installed_content) |content| {
+        // Already has seance hooks installed (check for marker comment)
+        if (std.mem.indexOf(u8, content, "Auto-installed by") != null) return;
+        // Append to existing hooks.toml
+        const tmp_path = std.fmt.allocPrint(alloc, "{s}.tmp", .{hooks_path}) catch return;
+        defer alloc.free(tmp_path);
+        const dst = std.fs.createFileAbsolute(tmp_path, .{}) catch return;
+        errdefer std.fs.deleteFileAbsolute(tmp_path) catch {};
+        _ = dst.writeAll(content) catch return;
+        _ = dst.writeAll("\n") catch return;
+        _ = dst.writeAll(bundled_content) catch return;
+        dst.close();
+        std.fs.renameAbsolute(tmp_path, hooks_path) catch return;
+        std.log.info("vibe: appended hooks to existing hooks.toml", .{});
+    } else {
+        // Write new hooks.toml
+        const dst = std.fs.createFileAbsolute(hooks_path, .{}) catch return;
+        errdefer std.fs.deleteFileAbsolute(hooks_path) catch {};
+        _ = dst.writeAll(bundled_content) catch return;
+        dst.close();
+        std.log.info("vibe: installed hooks.toml", .{});
+    }
+}
+
 var wm: ?*WindowManager = null;
 var server: socket_server.SocketServer = .{};
 pub var shutting_down: bool = false;
@@ -278,6 +339,11 @@ fn onActivate(app: *c.AdwApplication) callconv(.c) void {
         // Auto-install MiMo Code plugin if MiMo Code is present
         if (config_mod.get().mimocode_hooks) {
             installMimocodePlugin();
+        }
+
+        // Auto-install Vibe hooks if Vibe is present
+        if (config_mod.get().vibe_hooks) {
+            installVibeHooks();
         }
 
         // Set libadwaita to follow system dark/light, preferring dark when

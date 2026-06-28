@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+# seance Mistral Vibe wrapper — intercepts `vibe` invocations inside seance
+# terminals and tracks the process lifecycle so seance can detect agent exit.
+set -euo pipefail
+
+# ── Find the real vibe binary, skipping our own directory ─────────────────
+
+WRAPPER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REAL_VIBE=""
+IFS=: read -ra PATH_DIRS <<< "$PATH"
+for dir in "${PATH_DIRS[@]}"; do
+    [[ -z "$dir" ]] && continue
+    resolved="$(cd "$dir" 2>/dev/null && pwd)" || continue
+    [[ "$resolved" == "$WRAPPER_DIR" ]] && continue
+    if [[ -x "$dir/vibe" ]]; then
+        REAL_VIBE="$dir/vibe"
+        break
+    fi
+done
+
+if [[ -z "$REAL_VIBE" ]]; then
+    echo "vibe: command not found" >&2
+    exit 127
+fi
+
+# ── Pass-through conditions ──────────────────────────────────────────────
+
+# Not inside seance
+if [[ -z "${SEANCE_SURFACE_ID:-}" ]]; then
+    exec "$REAL_VIBE" "$@"
+fi
+
+# Hooks explicitly disabled
+if [[ "${SEANCE_VIBE_HOOKS_DISABLED:-}" == "1" ]]; then
+    exec "$REAL_VIBE" "$@"
+fi
+
+# Socket health check (0.75s timeout)
+if ! timeout 0.75 seance ctl --socket "${SEANCE_SOCKET_PATH:-}" ping >/dev/null 2>&1; then
+    exec "$REAL_VIBE" "$@"
+fi
+
+# ── Enable experimental hooks ────────────────────────────────────────────
+
+export VIBE_ENABLE_EXPERIMENTAL_HOOKS=1
+
+# ── Export PID so seance can track this process ──────────────────────────
+
+export SEANCE_VIBE_PID=$$
+
+# ── Launch vibe (no exec — wrapper must survive for cleanup) ─────────────
+
+"$REAL_VIBE" "$@"
+rc=$?
+
+# ── Session-end cleanup ──────────────────────────────────────────────────
+# Vibe may not fire session-end on crash or forced exit, so we
+# always run it from the wrapper.
+
+seance ctl vibe-hook session-end <<EOF 2>/dev/null || true
+{"workspace_id":${SEANCE_WORKSPACE_ID:-null},"surface_id":${SEANCE_SURFACE_ID:-null}}
+EOF
+
+exit $rc
