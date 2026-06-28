@@ -724,8 +724,10 @@ fn initSurface(pane: *Pane, width: u32, height: u32) void {
         }
     }
 
-    // Build env var array
-    var env_vars: [18]c.ghostty_env_var_s = undefined;
+    // Build env var array. Keep this ceiling above the sum of all possible entries
+    // (unconditional + every conditional hook-disabled flag + port/path/socket vars).
+    const max_env_vars = 24;
+    var env_vars: [max_env_vars]c.ghostty_env_var_s = undefined;
     var env_count: usize = 0;
 
     env_vars[env_count] = .{ .key = ws_key, .value = ws_val };
@@ -805,6 +807,10 @@ fn initSurface(pane: *Pane, width: u32, height: u32) void {
     surface_config.scale_factor = scale;
     surface_config.font_size = 0; // use config default
     surface_config.working_directory = cwd_z;
+    if (env_count > max_env_vars) {
+        std.log.err("pane: env_vars overflow ({d} > {d}), add agents to max_env_vars", .{ env_count, max_env_vars });
+        return;
+    }
     surface_config.env_vars = &env_vars;
     surface_config.env_var_count = env_count;
     surface_config.context = c.GHOSTTY_SURFACE_CONTEXT_TAB;
