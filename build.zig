@@ -275,6 +275,13 @@ pub fn build(b: *std.Build) void {
         "share/seance/kilo-plugin.ts",
     ).step);
 
+    // Install MiMo Code plugin for agent integration
+    b.getInstallStep().dependOn(&b.addInstallFileWithDir(
+        b.path("plugins/seance-mimocode/index.ts"),
+        .prefix,
+        "share/seance/mimocode-plugin.ts",
+    ).step);
+
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());
     if (b.args) |args| {

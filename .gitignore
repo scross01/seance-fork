@@ -5,3 +5,6 @@ campaign/
 zig-pkg/
 AppDir/
 *.AppImage
+.plans/
+Makefile
+LOCAL.md

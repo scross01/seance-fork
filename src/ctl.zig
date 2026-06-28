@@ -145,6 +145,7 @@ fn dispatch(ctx: Ctx, command: []const u8) u8 {
     if (eql(command, "pi-hook")) return cmdPiHook(ctx);
     if (eql(command, "opencode-hook")) return cmdOpencodeHook(ctx);
     if (eql(command, "kilo-hook")) return cmdKiloHook(ctx);
+    if (eql(command, "mimocode-hook")) return cmdMimocodeHook(ctx);
     if (eql(command, "help") or eql(command, "--help") or eql(command, "-h")) {
         printUsage();
         return 0;
@@ -1245,6 +1246,21 @@ const opencode_agent = AgentConfig{
     .session_dir_env = "SEANCE_OPENCODE_SESSION_DIR",
 };
 
+const mimocode_agent = AgentConfig{
+    .name = "MiMoCode",
+    .display_name = "MiMo Code",
+    .usage = "usage: mimocode-hook <session-start|session-end|prompt-submit|pre-tool-use|post-tool-use|stop|notification>\n",
+    .pid_env = "SEANCE_MIMOCODE_PID",
+    .response = "OK\n",
+    .status_key_prefix = "mimocode",
+    .status_key_mode = .surface,
+    .has_ask_user_handling = true,
+    .has_notification_hook = true,
+    .has_post_tool_hook = true,
+    .clear_status_on_end = true,
+    .session_dir_env = null,
+};
+
 const kilo_agent = AgentConfig{
     .name = "Kilo",
     .display_name = "Kilo Code",
@@ -1278,6 +1294,10 @@ fn cmdOpencodeHook(ctx: Ctx) u8 {
 
 fn cmdKiloHook(ctx: Ctx) u8 {
     return cmdAgentHook(ctx, kilo_agent);
+}
+
+fn cmdMimocodeHook(ctx: Ctx) u8 {
+    return cmdAgentHook(ctx, mimocode_agent);
 }
 
 const HookCtx = struct {
@@ -2163,6 +2183,11 @@ fn printUsage() void {
         \\
         \\Kilo Code Hooks:
         \\  kilo-hook <event>       Handle Kilo Code lifecycle event
+        \\    Events: session-start, session-end, prompt-submit,
+        \\            pre-tool-use, post-tool-use, stop, notification
+        \\
+        \\MiMo Code Hooks:
+        \\  mimocode-hook <event>   Handle MiMo Code lifecycle event
         \\    Events: session-start, session-end, prompt-submit,
         \\            pre-tool-use, post-tool-use, stop, notification
     );
