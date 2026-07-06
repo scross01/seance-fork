@@ -1,5 +1,6 @@
 const std = @import("std");
 const c = @import("c.zig").c;
+const app = @import("app.zig");
 const config_mod = @import("config.zig");
 const ghostty_bridge = @import("ghostty_bridge.zig");
 const keybinds = @import("keybinds.zig");
@@ -698,12 +699,16 @@ fn onSwitchChanged(obj: *c.GObject, _: *c.GParamSpec, _: c.gpointer) callconv(.c
         cfg.pi_hooks = active;
     } else if (widget == w.opencode_hooks) {
         cfg.opencode_hooks = active;
+        app.syncPlugin(.opencode, active);
     } else if (widget == w.kilo_hooks) {
         cfg.kilo_hooks = active;
+        app.syncPlugin(.kilo, active);
     } else if (widget == w.mimocode_hooks) {
         cfg.mimocode_hooks = active;
+        app.syncPlugin(.mimocode, active);
     } else if (widget == w.vibe_hooks) {
         cfg.vibe_hooks = active;
+        app.syncPlugin(.vibe, active);
     } else return;
 
     saveAndReload();
@@ -998,6 +1003,12 @@ fn onResetResponse(_: *c.AdwAlertDialog, response: [*:0]const u8, _: c.gpointer)
     // Reset config to defaults
     const cfg = config_mod.getMut();
     cfg.* = config_mod.Config{};
+
+    // Sync all plugins to match default (all enabled) state
+    app.syncPlugin(.opencode, cfg.opencode_hooks);
+    app.syncPlugin(.kilo, cfg.kilo_hooks);
+    app.syncPlugin(.mimocode, cfg.mimocode_hooks);
+    app.syncPlugin(.vibe, cfg.vibe_hooks);
 
     // Reset keybinds
     keybinds.resetToDefaults();

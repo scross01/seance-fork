@@ -14,7 +14,7 @@ const kde_decoration = @import("kde_decoration.zig");
 const is_linux = builtin.os.tag == .linux;
 
 /// Auto-install OpenCode plugin if OpenCode config dir exists but plugin is missing.
-fn installOpenCodePlugin() void {
+pub fn installOpenCodePlugin() void {
     const home = std.posix.getenv("HOME") orelse return;
     const alloc = std.heap.page_allocator;
     const config_dir_path = std.fmt.allocPrint(alloc, "{s}/.config/opencode", .{home}) catch return;
@@ -68,6 +68,20 @@ fn installOpenCodePlugin() void {
     std.fs.renameAbsolute(tmp_path, plugin_path) catch return;
 }
 
+/// Remove OpenCode plugin if installed.
+pub fn removeOpenCodePlugin() void {
+    const home = std.posix.getenv("HOME") orelse return;
+    const alloc = std.heap.page_allocator;
+    const plugin_path = std.fmt.allocPrint(alloc, "{s}/.config/opencode/plugins/seance-opencode.ts", .{home}) catch return;
+    defer alloc.free(plugin_path);
+    std.fs.deleteFileAbsolute(plugin_path) catch |err| {
+        if (err != error.FileNotFound) std.log.warn("opencode: failed to remove plugin: {s}", .{@errorName(err)});
+    };
+    const marker_path = std.fmt.allocPrint(alloc, "{s}/.config/opencode/.seance-version", .{home}) catch return;
+    defer alloc.free(marker_path);
+    std.fs.deleteFileAbsolute(marker_path) catch {};
+}
+
 fn extractVersion(content: []const u8) u32 {
     // Look for "// @seance-version N" in first 256 bytes
     const header = if (content.len > 256) content[0..256] else content;
@@ -90,7 +104,7 @@ fn ensurePluginDir(home: []const u8) !void {
 }
 
 /// Auto-install Kilo Code plugin if Kilo config dir exists but plugin is missing.
-fn installKiloPlugin() void {
+pub fn installKiloPlugin() void {
     const home = std.posix.getenv("HOME") orelse return;
     const alloc = std.heap.page_allocator;
     const config_dir_path = std.fmt.allocPrint(alloc, "{s}/.config/kilo", .{home}) catch return;
@@ -144,6 +158,20 @@ fn installKiloPlugin() void {
     std.fs.renameAbsolute(tmp_path, plugin_path) catch return;
 }
 
+/// Remove Kilo Code plugin if installed.
+pub fn removeKiloPlugin() void {
+    const home = std.posix.getenv("HOME") orelse return;
+    const alloc = std.heap.page_allocator;
+    const plugin_path = std.fmt.allocPrint(alloc, "{s}/.config/kilo/plugins/seance-kilo.ts", .{home}) catch return;
+    defer alloc.free(plugin_path);
+    std.fs.deleteFileAbsolute(plugin_path) catch |err| {
+        if (err != error.FileNotFound) std.log.warn("kilo: failed to remove plugin: {s}", .{@errorName(err)});
+    };
+    const marker_path = std.fmt.allocPrint(alloc, "{s}/.config/kilo/.seance-version", .{home}) catch return;
+    defer alloc.free(marker_path);
+    std.fs.deleteFileAbsolute(marker_path) catch {};
+}
+
 fn ensureKiloPluginDir(home: []const u8) !void {
     const alloc = std.heap.page_allocator;
     const plugins_dir = try std.fmt.allocPrint(alloc, "{s}/.config/kilo/plugins", .{home});
@@ -154,7 +182,7 @@ fn ensureKiloPluginDir(home: []const u8) !void {
 }
 
 /// Auto-install MiMo Code plugin if MiMo Code config dir exists but plugin is missing.
-fn installMimocodePlugin() void {
+pub fn installMimocodePlugin() void {
     const home = std.posix.getenv("HOME") orelse return;
     const alloc = std.heap.page_allocator;
     const config_dir_path = std.fmt.allocPrint(alloc, "{s}/.config/mimocode", .{home}) catch return;
@@ -208,6 +236,20 @@ fn installMimocodePlugin() void {
     std.fs.renameAbsolute(tmp_path, plugin_path) catch return;
 }
 
+/// Remove MiMo Code plugin if installed.
+pub fn removeMimocodePlugin() void {
+    const home = std.posix.getenv("HOME") orelse return;
+    const alloc = std.heap.page_allocator;
+    const plugin_path = std.fmt.allocPrint(alloc, "{s}/.config/mimocode/plugins/seance-mimocode.ts", .{home}) catch return;
+    defer alloc.free(plugin_path);
+    std.fs.deleteFileAbsolute(plugin_path) catch |err| {
+        if (err != error.FileNotFound) std.log.warn("mimocode: failed to remove plugin: {s}", .{@errorName(err)});
+    };
+    const marker_path = std.fmt.allocPrint(alloc, "{s}/.config/mimocode/.seance-version", .{home}) catch return;
+    defer alloc.free(marker_path);
+    std.fs.deleteFileAbsolute(marker_path) catch {};
+}
+
 fn ensureMimocodePluginDir(home: []const u8) !void {
     const alloc = std.heap.page_allocator;
     const plugins_dir = try std.fmt.allocPrint(alloc, "{s}/.config/mimocode/plugins", .{home});
@@ -218,7 +260,7 @@ fn ensureMimocodePluginDir(home: []const u8) !void {
 }
 
 /// Auto-install Vibe hooks.toml if ~/.vibe exists.
-fn installVibeHooks() void {
+pub fn installVibeHooks() void {
     const home = std.posix.getenv("HOME") orelse return;
     const alloc = std.heap.page_allocator;
 
@@ -278,6 +320,93 @@ fn installVibeHooks() void {
     }
 }
 
+/// Remove Vibe hooks from ~/.vibe/hooks.toml.
+pub fn removeVibeHooks() void {
+    const home = std.posix.getenv("HOME") orelse return;
+    const alloc = std.heap.page_allocator;
+    const hooks_path = std.fmt.allocPrint(alloc, "{s}/.vibe/hooks.toml", .{home}) catch return;
+    defer alloc.free(hooks_path);
+
+    const file = std.fs.openFileAbsolute(hooks_path, .{}) catch return;
+    defer file.close();
+    const content = file.readToEndAlloc(alloc, 64 * 1024) catch return;
+    defer alloc.free(content);
+
+    // Find the seance section by marker
+    const marker = "# Auto-installed by";
+    const start = std.mem.indexOf(u8, content, marker) orelse return;
+
+    // Find the start of the marker line (go back to beginning of line)
+    var line_start = start;
+    while (line_start > 0 and content[line_start - 1] != '\n') : (line_start -= 1) {}
+
+    // Find where seance content ends: look for next [[hooks]] that isn't a seance hook
+    var end: usize = content.len;
+    {
+        var pos = line_start;
+        while (pos < content.len) {
+            const eol = std.mem.indexOfScalar(u8, content[pos..], '\n') orelse content.len;
+            const line = std.mem.trimRight(u8, content[pos..pos + eol], " \t\r");
+            // If we hit a [[hooks]] block (non-seance), stop here
+            if (std.mem.startsWith(u8, line, "[[hooks]]")) {
+                // Check if this line references seance
+                if (std.mem.indexOf(u8, content[pos..pos + eol], "seance") != null) {
+                    pos += eol + 1;
+                    continue;
+                }
+                end = pos;
+                break;
+            }
+            pos += eol + 1;
+        }
+    }
+
+    const before = content[0..line_start];
+    const after = if (end < content.len) content[end..] else "";
+    const before_trimmed = std.mem.trimRight(u8, before, " \t\r\n");
+    const after_trimmed = std.mem.trimLeft(u8, after, " \t\r\n");
+
+    if (before_trimmed.len == 0 and after_trimmed.len == 0) {
+        std.fs.deleteFileAbsolute(hooks_path) catch {};
+        return;
+    }
+
+    const tmp_path = std.fmt.allocPrint(alloc, "{s}.tmp", .{hooks_path}) catch return;
+    defer alloc.free(tmp_path);
+    const dst = std.fs.createFileAbsolute(tmp_path, .{}) catch return;
+    errdefer std.fs.deleteFileAbsolute(tmp_path) catch {};
+    if (before_trimmed.len > 0) {
+        _ = dst.writeAll(before_trimmed) catch return;
+        _ = dst.writeAll("\n") catch return;
+    }
+    if (after_trimmed.len > 0) {
+        _ = dst.writeAll(after_trimmed) catch return;
+    }
+    dst.close();
+    std.fs.renameAbsolute(tmp_path, hooks_path) catch {};
+}
+
+pub const PluginAgent = enum { opencode, kilo, mimocode, vibe };
+
+/// Sync a plugin's on-disk state with the given enabled flag.
+pub fn syncPlugin(agent: PluginAgent, enabled: bool) void {
+    if (enabled) {
+        switch (agent) {
+            .opencode => installOpenCodePlugin(),
+            .kilo => installKiloPlugin(),
+            .mimocode => installMimocodePlugin(),
+            .vibe => installVibeHooks(),
+        }
+    } else {
+        switch (agent) {
+            .opencode => removeOpenCodePlugin(),
+            .kilo => removeKiloPlugin(),
+            .mimocode => removeMimocodePlugin(),
+            .vibe => removeVibeHooks(),
+        }
+    }
+}
+
 var wm: ?*WindowManager = null;
 var server: socket_server.SocketServer = .{};
 pub var shutting_down: bool = false;
@@ -326,25 +455,10 @@ fn onActivate(app: *c.AdwApplication) callconv(.c) void {
         // Load config before initializing ghostty so theme/font settings are available
         _ = config_mod.load();
 
-        // Auto-install OpenCode plugin if OpenCode is present
-        if (config_mod.get().opencode_hooks) {
-            installOpenCodePlugin();
-        }
-
-        // Auto-install Kilo Code plugin if Kilo is present
-        if (config_mod.get().kilo_hooks) {
-            installKiloPlugin();
-        }
-
-        // Auto-install MiMo Code plugin if MiMo Code is present
-        if (config_mod.get().mimocode_hooks) {
-            installMimocodePlugin();
-        }
-
-        // Auto-install Vibe hooks if Vibe is present
-        if (config_mod.get().vibe_hooks) {
-            installVibeHooks();
-        }
+        syncPlugin(.opencode, config_mod.get().opencode_hooks);
+        syncPlugin(.kilo, config_mod.get().kilo_hooks);
+        syncPlugin(.mimocode, config_mod.get().mimocode_hooks);
+        syncPlugin(.vibe, config_mod.get().vibe_hooks);
 
         // Set libadwaita to follow system dark/light, preferring dark when
         // the system has no opinion (or on non-Linux platforms).
