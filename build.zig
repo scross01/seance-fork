@@ -202,14 +202,14 @@ pub fn build(b: *std.Build) void {
     // Install desktop entry and appstream metainfo (Linux desktop integration)
     if (is_linux) {
         b.getInstallStep().dependOn(&b.addInstallFileWithDir(
-            b.path("resources/com.seance.app.desktop"),
+            b.path("resources/com.seance-fork.app.desktop"),
             .prefix,
-            "share/applications/com.seance.app.desktop",
+            "share/applications/com.seance-fork.app.desktop",
         ).step);
         b.getInstallStep().dependOn(&b.addInstallFileWithDir(
-            b.path("resources/com.seance.app.metainfo.xml"),
+            b.path("resources/com.seance-fork.app.metainfo.xml"),
             .prefix,
-            "share/metainfo/com.seance.app.metainfo.xml",
+            "share/metainfo/com.seance-fork.app.metainfo.xml",
         ).step);
     }
 

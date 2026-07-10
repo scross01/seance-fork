@@ -95,7 +95,7 @@ in
 
     meta = {
       description = "GPU-accelerated terminal multiplexer with AI agent support";
-      homepage = "https://github.com/no1msd/seance";
+      homepage = "https://github.com/scross01/seance-fork";
       license = lib.licenses.mit;
       platforms = [
         "x86_64-linux"

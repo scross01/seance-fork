@@ -1,30 +1,30 @@
-<p align="center">
-  <img src="resources/icons/hicolor/scalable/apps/com.seance.app.svg" width="128" alt="Séance logo">
-</p>
+# Séance-fork
 
-<h1 align="center">Séance</h1>
+<p align="center">
+  <img src="resources/icons/hicolor/scalable/apps/com.seance-fork.app.svg" width="128" alt="Séance logo">
+</p>
 
 <p align="center">
   A scrolling terminal multiplexer that tracks your AI coding agents.
 </p>
 
-<p align="center">
-  <a href="https://github.com/no1msd/seance/releases"><img src="https://img.shields.io/github/v/release/no1msd/seance?color=50c6f7&label=release" alt="Latest release"></a>
-  <a href="https://aur.archlinux.org/packages/seance"><img src="https://img.shields.io/aur/version/seance?color=50c6f7&label=AUR" alt="AUR version"></a>
-  <a href="https://github.com/no1msd/seance/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/no1msd/seance/ci.yml?branch=main&color=50c6f7&label=CI" alt="CI status"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/github/license/no1msd/seance?color=50c6f7" alt="MIT License"></a>
-  <a href="https://no1msd.github.io/seance"><img src="https://img.shields.io/badge/site-no1msd.github.io%2Fseance-50c6f7" alt="Website"></a>
-</p>
+**Séance-fork** is an experimental fork of the [Séance](https://github.com/no1msd/seance) scrolling terminal multiplexer that tracks your AI coding agents, with additional features and enhancements:
+
+- 🤖 [OpenCode](https://opencode.ai/) coding agent support
+- 🤖 [Kilo CLI](https://kilo.ai/cli) coding agent support
+- 🤖 Xioami [MiMo Code](https://mimo.xiaomi.com/mimocode) coding agent support
+- 🤖 Mistral [Vibe](https://github.com/mistralai/mistral-vibe) coding agent support
+
+
+<br/>
 
 <p align="center">
   <img src="demo.gif" alt="Séance demo" width="800">
 </p>
 
----
-
 ## Why Séance?
 
-Séance is a GTK4 terminal multiplexer for Linux. It auto-detects [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Codex](https://github.com/openai/codex), [Pi](https://github.com/badlogic/pi-mono), [OpenCode](https://opencode.ai), and [Kilo Code](https://kilo.ai) sessions running inside it and tracks their status (working, waiting for permission, idle) live in the sidebar. Permission requests and task completions are surfaced as desktop notifications with unread tracking. Zero configuration, no dotfile edits: open an agent in a pane and it is tracked.
+Séance is a GTK4 terminal multiplexer for Linux. It auto-detects [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Codex](https://github.com/openai/codex), [Pi](https://github.com/badlogic/pi-mono), [OpenCode](https://opencode.ai), [Kilo Code](https://kilo.ai), [MiMo Code](https://mimo.xiaomi.com/mimocode) and [Vibe](https://github.com/mistralai/mistral-vibe) sessions running inside it and tracks their status (working, waiting for permission, idle) live in the sidebar. Permission requests and task completions are surfaced as desktop notifications with unread tracking. Zero configuration, no dotfile edits: open an agent in a pane and it is tracked.
 
 ### Linux-native, not Electron
 
@@ -36,7 +36,7 @@ Panes are arranged in a horizontal strip that you scroll through, borrowing the 
 
 ### Agent-agnostic
 
-Claude Code, Codex, Pi, OpenCode, and Kilo Code are auto-tracked out of the box. Adding support for another agent is a hook config PR rather than a rewrite. Agents that do not speak hooks still get all the plain multiplexer features.
+Claude Code, Codex, Pi, OpenCode, Kilo CLI, MiMo Code, and Vibe  are auto-tracked out of the box. Adding support for another agent is a hook config PR rather than a rewrite. Agents that do not speak hooks still get all the plain multiplexer features.
 
 ### Scriptable
 
@@ -50,49 +50,9 @@ Workspaces, session persistence across restarts, tabs within columns, a command 
 
 ## Installation
 
-### Arch Linux (AUR)
-
-```bash
-yay -S seance
-```
-
-### Nix (flake)
-
-To run it directly without installing:
-
-```bash
-nix run "git+https://github.com/no1msd/seance?submodules=1"
-```
-
-To install it persistently into your profile:
-
-```bash
-nix profile install "git+https://github.com/no1msd/seance?submodules=1"
-```
-
-Both commands compile from source on the first run and cache the result in
-the Nix store.
-
-> **Non-NixOS users:** EGL won't initialize without a GL wrapper.
-> On Intel/AMD use [`nixGL`](https://github.com/nix-community/nixGL):
->
-> ```bash
-> nix run --impure github:nix-community/nixGL#nixGLIntel -- \
->   nix run "git+https://github.com/no1msd/seance?submodules=1"
-> ```
->
-> On Nvidia use [`nix-gl-host`](https://github.com/numtide/nix-gl-host), since
-> nixGL's Nvidia wrapper breaks on recent drivers:
->
-> ```bash
-> nix run github:numtide/nix-gl-host -- \
->   $(nix build --no-link --print-out-paths \
->     "git+https://github.com/no1msd/seance?submodules=1")/bin/seance
-> ```
-
 ### AppImage
 
-Download the latest `seance-*-x86_64.AppImage` from [GitHub Releases](https://github.com/no1msd/seance/releases), make it executable, and run it:
+Download the latest `seance-*-x86_64.AppImage` from [GitHub Releases](https://github.com/scross01/seance-fork/releases), make it executable, and run it:
 
 ```bash
 chmod +x seance-*-x86_64.AppImage
@@ -120,12 +80,18 @@ sudo apt install pkg-config libgtk-4-dev libadwaita-1-dev libnotify-dev libcanbe
 **Build:**
 
 ```bash
-git clone --recursive https://github.com/no1msd/seance.git
+git clone --recursive https://github.com/scross01/seance-fork.git
 cd seance
 zig build
 ```
 
 The binary is at `zig-out/bin/seance`.
+
+If the ghostty dependency is missing:
+
+```bash
+git submodule update --init --recursive
+```
 
 ## Agent Integrations
 
@@ -149,6 +115,7 @@ Bug reports, feature requests, and pull requests are welcome. See [CONTRIBUTING.
 
 ## Acknowledgements
 
+- [Séance](https://github.com/no1msd/seance) original terminal multiplexer for AI agents.
 - [Ghostty](https://ghostty.org) for terminal emulation
 - [cmux](https://github.com/manaflow-ai/cmux) and [niri](https://github.com/YaLTeR/niri) as key inspirations for layout and interaction model
 - Built with [Zig](https://ziglang.org), [GTK4](https://gtk.org), and [libadwaita](https://gnome.pages.gitlab.gnome.org/libadwaita/)

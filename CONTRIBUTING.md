@@ -11,7 +11,7 @@ Thanks for considering a contribution. A few notes to save time.
 ## Building from source
 
 ```
-git clone --recursive https://github.com/no1msd/seance.git
+git clone --recursive https://github.com/scross01/seance-fork.git
 cd seance
 zig build
 ./zig-out/bin/seance
