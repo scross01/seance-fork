@@ -35,7 +35,7 @@ jobs:
           # downstream packagers (AUR, etc.) can build from a single
           # archive without needing to recurse into git submodules.
           # Must run before any build step pollutes the working tree.
-          TOPDIR="seance-${VERSION}"
+          TOPDIR="seance-fork-${VERSION}"
           OUT="${TOPDIR}-src.tar.gz"
           # Write the archive outside the working tree first; otherwise
           # tar sees its own output file growing in `./` and exits 1 with
@@ -146,14 +146,14 @@ jobs:
         env:
           ARCH: x86_64
         run: |
-          export OUTPUT="seance-${VERSION}-x86_64.AppImage"
+          export OUTPUT="seance-fork-${VERSION}-x86_64.AppImage"
           ./linuxdeploy-x86_64.AppImage \
             --appdir AppDir \
             --output appimage
 
       - name: Extract AppImage for verification
         run: |
-          ./seance-${VERSION}-x86_64.AppImage --appimage-extract >/dev/null
+          ./seance-fork-${VERSION}-x86_64.AppImage --appimage-extract >/dev/null
 
       - name: Verify no host-coupled libraries
         run: |
@@ -190,20 +190,20 @@ jobs:
           fi
 
       - name: Smoke test
-        run: ./seance-${VERSION}-x86_64.AppImage --appimage-extract-and-run --help
+        run: ./seance-fork-${VERSION}-x86_64.AppImage --appimage-extract-and-run --help
 
       - name: Upload AppImage artifact
         uses: actions/upload-artifact@v4
         with:
-          name: seance-${{ env.VERSION }}-x86_64.AppImage
-          path: seance-${{ env.VERSION }}-x86_64.AppImage
+          name: seance-fork-${{ env.VERSION }}-x86_64.AppImage
+          path: seance-fork-${{ env.VERSION }}-x86_64.AppImage
           if-no-files-found: error
 
       - name: Upload source tarball artifact
         uses: actions/upload-artifact@v4
         with:
-          name: seance-${{ env.VERSION }}-src.tar.gz
-          path: seance-${{ env.VERSION }}-src.tar.gz
+          name: seance-fork-${{ env.VERSION }}-src.tar.gz
+          path: seance-fork-${{ env.VERSION }}-src.tar.gz
           if-no-files-found: error
 
       - name: Create GitHub Release
