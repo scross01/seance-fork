@@ -13,6 +13,11 @@ const kde_decoration = @import("kde_decoration.zig");
 
 const is_linux = builtin.os.tag == .linux;
 
+const SEANCE_OPENCODE_VERSION: u32 = 2;
+const SEANCE_KILO_VERSION: u32 = 2;
+const SEANCE_MIMOCODE_VERSION: u32 = 9;
+const SEANCE_VIBE_VERSION: u32 = 1;
+
 /// Auto-install OpenCode plugin if OpenCode config dir exists but plugin is missing.
 pub fn installOpenCodePlugin() void {
     const home = std.posix.getenv("HOME") orelse return;
@@ -20,6 +25,11 @@ pub fn installOpenCodePlugin() void {
     const config_dir_path = std.fmt.allocPrint(alloc, "{s}/.config/opencode", .{home}) catch return;
     defer alloc.free(config_dir_path);
     _ = std.fs.openDirAbsolute(config_dir_path, .{}) catch return; // no opencode config dir → not installed
+
+    // Fast path: if version marker matches, skip all further IO
+    if (readVersionMarker(config_dir_path)) |marker_version| {
+        if (marker_version >= SEANCE_OPENCODE_VERSION) return;
+    }
 
     // Read bundled plugin
     const bundled_path = blk: {
@@ -66,6 +76,7 @@ pub fn installOpenCodePlugin() void {
     errdefer std.fs.deleteFileAbsolute(tmp_path) catch {};
     _ = dst.writeAll(bundled_content) catch return;
     std.fs.renameAbsolute(tmp_path, plugin_path) catch return;
+    writeVersionMarker(config_dir_path, SEANCE_OPENCODE_VERSION);
 }
 
 /// Remove OpenCode plugin if installed.
@@ -94,6 +105,29 @@ fn extractVersion(content: []const u8) u32 {
     return 0;
 }
 
+fn readVersionMarker(dir_path: []const u8) ?u32 {
+    const alloc = std.heap.page_allocator;
+    const marker_path = std.fmt.allocPrint(alloc, "{s}/.seance-version", .{dir_path}) catch return null;
+    defer alloc.free(marker_path);
+    const file = std.fs.openFileAbsolute(marker_path, .{}) catch return null;
+    defer file.close();
+    var buf: [16]u8 = undefined;
+    const n = file.read(&buf) catch return null;
+    if (n == 0) return null;
+    return std.fmt.parseInt(u32, buf[0..n], 10) catch null;
+}
+
+fn writeVersionMarker(dir_path: []const u8, version: u32) void {
+    const alloc = std.heap.page_allocator;
+    const marker_path = std.fmt.allocPrint(alloc, "{s}/.seance-version", .{dir_path}) catch return;
+    defer alloc.free(marker_path);
+    const file = std.fs.createFileAbsolute(marker_path, .{}) catch return;
+    defer file.close();
+    const buf = std.fmt.allocPrint(alloc, "{d}", .{version}) catch return;
+    defer alloc.free(buf);
+    _ = file.writeAll(buf) catch return;
+}
+
 fn ensurePluginDir(home: []const u8) !void {
     const alloc = std.heap.page_allocator;
     const plugins_dir = try std.fmt.allocPrint(alloc, "{s}/.config/opencode/plugins", .{home});
@@ -110,6 +144,11 @@ pub fn installKiloPlugin() void {
     const config_dir_path = std.fmt.allocPrint(alloc, "{s}/.config/kilo", .{home}) catch return;
     defer alloc.free(config_dir_path);
     _ = std.fs.openDirAbsolute(config_dir_path, .{}) catch return; // no kilo config dir → not installed
+
+    // Fast path: if version marker matches, skip all further IO
+    if (readVersionMarker(config_dir_path)) |marker_version| {
+        if (marker_version >= SEANCE_KILO_VERSION) return;
+    }
 
     // Read bundled plugin
     const bundled_path = blk: {
@@ -156,6 +195,7 @@ pub fn installKiloPlugin() void {
     errdefer std.fs.deleteFileAbsolute(tmp_path) catch {};
     _ = dst.writeAll(bundled_content) catch return;
     std.fs.renameAbsolute(tmp_path, plugin_path) catch return;
+    writeVersionMarker(config_dir_path, SEANCE_KILO_VERSION);
 }
 
 /// Remove Kilo Code plugin if installed.
@@ -188,6 +228,11 @@ pub fn installMimocodePlugin() void {
     const config_dir_path = std.fmt.allocPrint(alloc, "{s}/.config/mimocode", .{home}) catch return;
     defer alloc.free(config_dir_path);
     _ = std.fs.openDirAbsolute(config_dir_path, .{}) catch return; // no mimocode config dir → not installed
+
+    // Fast path: if version marker matches, skip all further IO
+    if (readVersionMarker(config_dir_path)) |marker_version| {
+        if (marker_version >= SEANCE_MIMOCODE_VERSION) return;
+    }
 
     // Read bundled plugin
     const bundled_path = blk: {
@@ -234,6 +279,7 @@ pub fn installMimocodePlugin() void {
     errdefer std.fs.deleteFileAbsolute(tmp_path) catch {};
     _ = dst.writeAll(bundled_content) catch return;
     std.fs.renameAbsolute(tmp_path, plugin_path) catch return;
+    writeVersionMarker(config_dir_path, SEANCE_MIMOCODE_VERSION);
 }
 
 /// Remove MiMo Code plugin if installed.
@@ -269,6 +315,11 @@ pub fn installVibeHooks() void {
     defer alloc.free(config_dir_path);
     _ = std.fs.openDirAbsolute(config_dir_path, .{}) catch return; // no vibe config dir → not installed
 
+    // Fast path: if version marker matches, skip all further IO
+    if (readVersionMarker(config_dir_path)) |marker_version| {
+        if (marker_version >= SEANCE_VIBE_VERSION) return;
+    }
+
     // Read bundled hooks template
     const bundled_path = blk: {
         var exe_buf: [std.fs.max_path_bytes]u8 = undefined;
@@ -297,8 +348,6 @@ pub fn installVibeHooks() void {
     defer if (installed_content) |ic| alloc.free(ic);
 
     if (installed_content) |content| {
-        // Already has seance hooks installed (check for marker comment)
-        if (std.mem.indexOf(u8, content, "Auto-installed by") != null) return;
         // Append to existing hooks.toml
         const tmp_path = std.fmt.allocPrint(alloc, "{s}.tmp", .{hooks_path}) catch return;
         defer alloc.free(tmp_path);
@@ -318,6 +367,7 @@ pub fn installVibeHooks() void {
         dst.close();
         std.log.info("vibe: installed hooks.toml", .{});
     }
+    writeVersionMarker(config_dir_path, SEANCE_VIBE_VERSION);
 }
 
 /// Remove Vibe hooks from ~/.vibe/hooks.toml.
