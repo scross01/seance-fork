@@ -41,6 +41,8 @@
 # pi-hooks = true
 # opencode-hooks = true
 # kilo-hooks = true
+# mimocode-hooks = true
+# vibe-hooks = true
 
 [notifications]
 # sound = "default"              # "default", "none", or path to .wav/.ogg file
