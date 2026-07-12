@@ -75,6 +75,9 @@ pub const Config = struct {
     // Mistral Vibe integration
     vibe_hooks: bool = true,
 
+    // Hermes Agent integration
+    hermes_hooks: bool = true,
+
     // Notifications
     notification_sound: NotificationSound = .default,
 
@@ -285,6 +288,7 @@ pub fn saveConfig(cfg: *const Config) void {
     writeBool(w, "kilo-hooks", cfg.kilo_hooks) catch return;
     writeBool(w, "mimocode-hooks", cfg.mimocode_hooks) catch return;
     writeBool(w, "vibe-hooks", cfg.vibe_hooks) catch return;
+    writeBool(w, "hermes-hooks", cfg.hermes_hooks) catch return;
 
     // [notifications]
     w.print("\n[notifications]\n", .{}) catch return;
@@ -476,6 +480,8 @@ fn applyValue(config: *Config, section: []const u8, key: []const u8, raw_val: []
             config.mimocode_hooks = parseBool(val) orelse config.mimocode_hooks; return true;
         } else if (eql(key, "vibe-hooks")) {
             config.vibe_hooks = parseBool(val) orelse config.vibe_hooks; return true;
+        } else if (eql(key, "hermes-hooks")) {
+            config.hermes_hooks = parseBool(val) orelse config.hermes_hooks; return true;
         }
     } else if (eql(section, "notifications")) {
         if (eql(key, "sound")) {

@@ -782,6 +782,10 @@ fn initSurface(pane: *Pane, width: u32, height: u32) void {
         env_vars[env_count] = .{ .key = "SEANCE_VIBE_HOOKS_DISABLED", .value = "1" };
         env_count += 1;
     }
+    if (!cfg.hermes_hooks) {
+        env_vars[env_count] = .{ .key = "SEANCE_HERMES_HOOKS_DISABLED", .value = "1" };
+        env_count += 1;
+    }
     env_vars[env_count] = .{ .key = "SEANCE_SHELL_INTEGRATION", .value = "1" };
     env_count += 1;
     env_vars[env_count] = .{ .key = "TERM_PROGRAM", .value = "ghostty" };

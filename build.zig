@@ -289,6 +289,13 @@ pub fn build(b: *std.Build) void {
         "share/seance/vibe-hooks.toml",
     ).step);
 
+    // Install Hermes plugin for agent integration
+    b.installDirectory(.{
+        .source_dir = b.path("resources/hermes-plugin"),
+        .install_dir = .prefix,
+        .install_subdir = "share/seance/hermes-plugin",
+    });
+
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());
     if (b.args) |args| {

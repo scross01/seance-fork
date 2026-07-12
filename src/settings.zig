@@ -45,6 +45,7 @@ const Widgets = struct {
     kilo_hooks: ?*c.GtkWidget = null,
     mimocode_hooks: ?*c.GtkWidget = null,
     vibe_hooks: ?*c.GtkWidget = null,
+    hermes_hooks: ?*c.GtkWidget = null,
 
     // Combos
     notification_sound: ?*c.GtkWidget = null,
@@ -446,6 +447,7 @@ fn buildIntegrationsSection(page: *c.GtkWidget, cfg: *const config_mod.Config) v
     w.kilo_hooks = addSwitchRow(g2, "Kilo Code Integration", if (cfg.kilo_hooks) "Sidebar shows Kilo Code session status and notifications." else "Kilo Code runs without seance integration.", cfg.kilo_hooks);
     w.mimocode_hooks = addSwitchRow(g2, "MiMo Code Integration", if (cfg.mimocode_hooks) "Sidebar shows MiMo Code session status and notifications." else "MiMo Code runs without seance integration.", cfg.mimocode_hooks);
     w.vibe_hooks = addSwitchRow(g2, "Mistral Vibe Integration", if (cfg.vibe_hooks) "Sidebar shows Vibe session status." else "Vibe runs without seance integration.", cfg.vibe_hooks);
+    w.hermes_hooks = addSwitchRow(g2, "Hermes Agent Integration", if (cfg.hermes_hooks) "Sidebar shows Hermes Agent session status and notifications." else "Hermes Agent runs without seance integration.", cfg.hermes_hooks);
     addToPage(page, g2);
 
     // Card 3: Port Configuration
@@ -709,6 +711,9 @@ fn onSwitchChanged(obj: *c.GObject, _: *c.GParamSpec, _: c.gpointer) callconv(.c
     } else if (widget == w.vibe_hooks) {
         cfg.vibe_hooks = active;
         app.syncPlugin(.vibe, active);
+    } else if (widget == w.hermes_hooks) {
+        cfg.hermes_hooks = active;
+        app.syncPlugin(.hermes, active);
     } else return;
 
     saveAndReload();
@@ -1009,6 +1014,7 @@ fn onResetResponse(_: *c.AdwAlertDialog, response: [*:0]const u8, _: c.gpointer)
     app.syncPlugin(.kilo, cfg.kilo_hooks);
     app.syncPlugin(.mimocode, cfg.mimocode_hooks);
     app.syncPlugin(.vibe, cfg.vibe_hooks);
+    app.syncPlugin(.hermes, cfg.hermes_hooks);
 
     // Reset keybinds
     keybinds.resetToDefaults();

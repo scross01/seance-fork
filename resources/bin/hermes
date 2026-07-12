@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+# seance Hermes Agent wrapper — intercepts `hermes` invocations inside seance
+# terminals and exports environment variables for the seance plugin.
+set -euo pipefail
+
+# ── Find the real hermes binary, skipping seance wrappers ─────────────────
+
+# A seance wrapper is any 'hermes' binary whose directory also contains a
+# 'seance' binary (seance installs its wrappers alongside the seance binary).
+# We loop type -P, removing each wrapper's directory from PATH, until we
+# find a binary that is NOT a seance wrapper.
+
+REAL_HERMES=""
+CHECK_PATH="${PATH:-}"
+while true; do
+    CANDIDATE="$(PATH="$CHECK_PATH" type -P hermes 2>/dev/null || true)"
+    [[ -z "$CANDIDATE" ]] && break
+
+    CANDIDATE_DIR="$(dirname "$CANDIDATE")"
+    if [[ -x "$CANDIDATE_DIR/seance" ]]; then
+        # This is a seance wrapper — remove its directory from PATH and retry
+        NEW_PATH=""
+        IFS=: read -ra PATH_DIRS <<< "$CHECK_PATH"
+        for dir in "${PATH_DIRS[@]}"; do
+            [[ "$dir" != "$CANDIDATE_DIR" ]] && NEW_PATH="${NEW_PATH:+$NEW_PATH:}$dir"
+        done
+        CHECK_PATH="$NEW_PATH"
+        continue
+    fi
+    REAL_HERMES="$CANDIDATE"
+    break
+done
+
+if [[ -z "$REAL_HERMES" ]]; then
+    echo "hermes: command not found" >&2
+    exit 127
+fi
+
+# Resolve seance to an absolute path to prevent PATH manipulation by the agent
+REAL_SEANCE="$(PATH="$CHECK_PATH" type -P seance 2>/dev/null || true)"
+if [[ -z "$REAL_SEANCE" ]]; then
+    echo "hermes: seance not found — falling back to pass-through" >&2
+    exec "$REAL_HERMES" "$@"
+fi
+
+# ── Pass-through conditions ──────────────────────────────────────────────
+
+# Not inside seance
+if [[ -z "${SEANCE_SURFACE_ID:-}" ]]; then
+    exec "$REAL_HERMES" "$@"
+fi
+
+# Hooks explicitly disabled
+if [[ "${SEANCE_HERMES_HOOKS_DISABLED:-}" == "1" ]]; then
+    exec "$REAL_HERMES" "$@"
+fi
+
+# Socket health check (0.75s timeout)
+if ! timeout 0.75 "$REAL_SEANCE" ctl --socket "${SEANCE_SOCKET_PATH:-}" ping >/dev/null 2>&1; then
+    exec "$REAL_HERMES" "$@"
+fi
+
+# ── Export env vars so the seance plugin can reach the sidebar ─────────────
+
+export SEANCE_HERMES_PID=$$
+
+# ── Session-end cleanup on any exit ───────────────────────────────────────
+# Hermes may not fire session-end on crash, forced exit, or signal, so we
+# guarantee it via a trap. This fires on EXIT (normal exit + signal exits)
+# and covers SIGTERM, SIGINT, SIGHUP, etc.
+
+_session_end_cleanup() {
+    # Fire-and-forget with a hard timeout to avoid blocking hermes teardown
+    timeout 0.5 "$REAL_SEANCE" ctl hermes-hook session-end 2>/dev/null &
+}
+trap _session_end_cleanup EXIT
+
+# ── Launch hermes (no exec — wrapper must survive for cleanup) ────────────
+
+"$REAL_HERMES" "$@"
+rc=$?
+exit $rc

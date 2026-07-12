@@ -9,3 +9,4 @@ AppDir/
 Makefile
 LOCAL.md
 .mimocode
+__pycache__/

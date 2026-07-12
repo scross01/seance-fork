@@ -43,6 +43,7 @@
 # kilo-hooks = true
 # mimocode-hooks = true
 # vibe-hooks = true
+# hermes-hooks = true
 
 [notifications]
 # sound = "default"              # "default", "none", or path to .wav/.ogg file

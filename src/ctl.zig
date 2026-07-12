@@ -147,6 +147,7 @@ fn dispatch(ctx: Ctx, command: []const u8) u8 {
     if (eql(command, "kilo-hook")) return cmdKiloHook(ctx);
     if (eql(command, "vibe-hook")) return cmdVibeHook(ctx);
     if (eql(command, "mimocode-hook")) return cmdMimocodeHook(ctx);
+    if (eql(command, "hermes-hook")) return cmdHermesHook(ctx);
     if (eql(command, "help") or eql(command, "--help") or eql(command, "-h")) {
         printUsage();
         return 0;
@@ -1292,6 +1293,27 @@ const vibe_agent = AgentConfig{
     .session_dir_env = null,
 };
 
+const hermes_agent = AgentConfig{
+    .name = "Hermes",
+    .display_name = "Hermes Agent",
+    .usage = "usage: hermes-hook <session-start|session-end|prompt-submit|pre-tool-use|post-tool-use|llm-complete|approval-request|approval-response|interrupt>\n",
+    .pid_env = "SEANCE_HERMES_PID",
+    .response = "OK\n",
+    .status_key_prefix = "hermes",
+    .status_key_mode = .surface,
+    .has_ask_user_handling = true,
+    // Notification parity is achieved via Hermes-specific llm-complete and
+    // approval-request handlers below — Hermes never receives a generic
+    // notification event, so false is correct, not an oversight.
+    .has_notification_hook = false,
+    .has_post_tool_hook = true,
+    // Hermes uses llm-complete to set "Idle" status after each turn. If
+    // clear_status_on_end were true, on_session_end would wipe that status
+    // in TUI mode where the session stays alive between turns.
+    .clear_status_on_end = false,
+    .session_dir_env = null,
+};
+
 fn cmdClaudeHook(ctx: Ctx) u8 {
     return cmdAgentHook(ctx, claude_agent);
 }
@@ -1318,6 +1340,10 @@ fn cmdVibeHook(ctx: Ctx) u8 {
 
 fn cmdMimocodeHook(ctx: Ctx) u8 {
     return cmdAgentHook(ctx, mimocode_agent);
+}
+
+fn cmdHermesHook(ctx: Ctx) u8 {
+    return cmdAgentHook(ctx, hermes_agent);
 }
 
 const HookCtx = struct {
@@ -1409,6 +1435,13 @@ fn cmdAgentHook(ctx: Ctx, agent: AgentConfig) u8 {
     if (eql(hook_cmd, "post-tool-use")) {
         if (agent.has_post_tool_hook) return agentHookPostToolUse(h);
     }
+    // Hermes-specific hooks — single identity check for all Hermes-only hooks
+    if (eql(h.agent.name, "Hermes")) {
+        if (eql(hook_cmd, "llm-complete")) return agentHookLlmComplete(h);
+        if (eql(hook_cmd, "approval-request")) return agentHookApprovalRequest(h);
+        if (eql(hook_cmd, "approval-response")) return agentHookApprovalResponse(h);
+        if (eql(hook_cmd, "interrupt")) return agentHookInterrupt(h);
+    }
     if (eql(hook_cmd, "notification")) {
         if (agent.has_notification_hook) return agentHookNotification(h);
     }
@@ -1425,21 +1458,30 @@ fn setAgentStatus(h: HookCtx, ws: u64, value: []const u8, priority: i32) void {
 }
 
 fn emitNotification(h: HookCtx, ws: u64, title: []const u8, body: []const u8, focused: bool) void {
-    var pbuf: [2048]u8 = undefined;
-    var plen: usize = 0;
-    const hdr = std.fmt.bufPrint(pbuf[plen..], "{{\"title\":\"{s}\",\"body\":\"{s}\"", .{ jsonEscapeAlloc(h.alloc, title), jsonEscapeAlloc(h.alloc, body) }) catch "";
-    plen += hdr.len;
-    const wsf = std.fmt.bufPrint(pbuf[plen..], ",\"workspace_id\":{d}", .{ws}) catch "";
-    plen += wsf.len;
+    // Cap title/body to keep JSON payload within a fixed buffer
+    const max_title: usize = 128;
+    const max_body: usize = 200;
+    const capped_title = if (title.len > max_title) title[0..max_title] else title;
+    const capped_body = if (body.len > max_body) body[0..max_body] else body;
+
+    var buf: [2048]u8 = undefined;
+    var fbs = std.io.fixedBufferStream(&buf);
+    const w = fbs.writer();
+
+    w.print("{{\"title\":\"", .{}) catch return;
+    jsonEscapeTo(capped_title, &w) catch return;
+    w.print("\",\"body\":\"", .{}) catch return;
+    jsonEscapeTo(capped_body, &w) catch return;
+    w.print("\",\"workspace_id\":{d}", .{ws}) catch return;
     if (h.surface) |sf| {
-        const sff = std.fmt.bufPrint(pbuf[plen..], ",\"surface_id\":{d}", .{sf}) catch "";
-        plen += sff.len;
+        w.print(",\"surface_id\":{d}", .{sf}) catch return;
     }
     if (focused) {
-        plen += bufCopy(pbuf[plen..], ",\"read\":true");
+        w.print(",\"read\":true", .{}) catch return;
     }
-    plen += bufCopy(pbuf[plen..], "}");
-    _ = apiCall(h.alloc, h.socket_path, "notification.create", pbuf[0..plen]) catch {};
+    w.print("}}", .{}) catch return;
+
+    _ = apiCall(h.alloc, h.socket_path, "notification.create", fbs.getWritten()) catch {};
 }
 
 fn agentHookSessionStart(h: HookCtx) u8 {
@@ -1475,7 +1517,10 @@ fn agentHookPreToolUse(h: HookCtx) u8 {
 
     if (h.agent.has_ask_user_handling) {
         if (tool_name) |tn| {
-            if (eql(tn, "AskUserQuestion")) {
+            // Hermes uses "clarify" tool; other agents use "AskUserQuestion"
+            const is_clarify = eql(h.agent.name, "Hermes") and eql(tn, "clarify");
+            const is_ask = eql(tn, "AskUserQuestion");
+            if (is_clarify or is_ask) {
                 const tool_input = if (h.input == .object) (h.input.object.get("tool_input") orelse h.input.object.get("input") orelse .null) else JsonValue.null;
                 if (tool_input == .object) {
                     if (tool_input.object.get("question")) |q| {
@@ -1484,6 +1529,15 @@ fn agentHookPreToolUse(h: HookCtx) u8 {
                                 var fields = JsonFields.init(h.alloc);
                                 fields.putStr("last_body", q.string);
                                 h.store.upsert(sid, fields);
+                            }
+                            // Hermes-specific: show "Needs input" status and emit notification
+                            if (is_clarify) {
+                                if (h.workspace) |ws| {
+                                    setAgentStatus(h, ws, "Needs input", 10);
+                                    const focused = isWorkspaceFocused(h.alloc, h.socket_path, ws);
+                                    const notif_body = std.fmt.allocPrint(h.alloc, "{s}: {s}", .{ h.agent.display_name, q.string }) catch q.string;
+                                    emitNotification(h, ws, h.agent.display_name, notif_body, focused);
+                                }
                             }
                         }
                     }
@@ -1505,6 +1559,124 @@ fn agentHookPreToolUse(h: HookCtx) u8 {
 fn agentHookPostToolUse(h: HookCtx) u8 {
     if (h.workspace) |ws| {
         setAgentStatus(h, ws, "Running", 10);
+    }
+    wout(h.agent.response);
+    return 0;
+}
+
+fn agentHookLlmComplete(h: HookCtx) u8 {
+    emitCompletionNotification(h, null);
+    wout(h.agent.response);
+    return 0;
+}
+
+/// Shared helper for completion notifications. `cwd_override` allows callers
+/// to pass an explicit cwd; when null, the cwd is resolved from the input
+/// or from the stored session record.
+fn emitCompletionNotification(h: HookCtx, cwd_override: ?[]const u8) void {
+    const cwd = cwd_override orelse extractCwd(h.input);
+
+    var title: []const u8 = "Completed";
+    if (cwd) |c| {
+        const project = std.fs.path.basename(c);
+        if (project.len > 0) {
+            title = std.fmt.allocPrint(h.alloc, "Completed in {s}", .{project}) catch "Completed";
+        }
+    } else if (h.session_id) |sid| {
+        if (h.store.lookup(sid)) |rec| {
+            const rec_cwd = getJsonStr(rec, "cwd");
+            if (rec_cwd.len > 0) {
+                const project = std.fs.path.basename(rec_cwd);
+                if (project.len > 0) {
+                    title = std.fmt.allocPrint(h.alloc, "Completed in {s}", .{project}) catch "Completed";
+                }
+            }
+        }
+    }
+
+    var body: []const u8 = "";
+    var used_stored_body = false;
+    const last_msg = if (eql(h.agent.name, "Hermes"))
+        getNestedString(h.input, "assistant_response")
+    else
+        getNestedString(h.input, "last_assistant_message");
+    if (last_msg) |msg| {
+        const collapsed = collapseWhitespace(h.alloc, msg);
+        body = if (collapsed.len > 200) collapsed[0..200] else collapsed;
+    } else if (h.session_id) |sid| {
+        if (h.store.lookup(sid)) |rec| {
+            // Only read stored last_body for Hermes (it's set by pre_tool_use for questions)
+            if (eql(h.agent.name, "Hermes")) {
+                const saved_body = getJsonStr(rec, "last_body");
+                if (saved_body.len > 0) {
+                    body = saved_body;
+                    used_stored_body = true;
+                } else {
+                    body = getJsonStr(rec, "last_subtitle");
+                }
+            } else {
+                // For non-Hermes agents, don't use stored last_body (it may be stale from a question)
+                body = getJsonStr(rec, "last_subtitle");
+            }
+            if (cwd == null) {
+                const rec_cwd = getJsonStr(rec, "cwd");
+                if (rec_cwd.len > 0) {
+                    const project = std.fs.path.basename(rec_cwd);
+                    if (project.len > 0) {
+                        title = std.fmt.allocPrint(h.alloc, "Completed in {s}", .{project}) catch title;
+                    }
+                }
+            }
+        }
+    }
+
+    // Update session with completion info
+    if (h.session_id) |sid| {
+        var fields = JsonFields.init(h.alloc);
+        fields.putStr("last_subtitle", title);
+        // Clear last_body if it was consumed, otherwise set it
+        if (used_stored_body) {
+            fields.putStr("last_body", "");
+        } else {
+            fields.putStr("last_body", body);
+        }
+        h.store.upsert(sid, fields);
+    }
+
+    if (h.workspace) |ws| {
+        const focused = isWorkspaceFocused(h.alloc, h.socket_path, ws);
+        emitNotification(h, ws, title, body, focused);
+        setAgentStatus(h, ws, "Idle", 5);
+    }
+}
+
+fn agentHookApprovalRequest(h: HookCtx) u8 {
+    const cmd = getNestedString(h.input, "command") orelse "unknown command";
+    if (h.workspace) |ws| {
+        var status_buf: [512]u8 = undefined;
+        const status = std.fmt.bufPrint(&status_buf, "Pending approval: {s}", .{cmd}) catch "Pending approval";
+        setAgentStatus(h, ws, status, 10);
+        const focused = isWorkspaceFocused(h.alloc, h.socket_path, ws);
+        // Truncate command for notification body if too long
+        const notif_body = if (cmd.len > 500) cmd[0..500] else cmd;
+        emitNotification(h, ws, h.agent.display_name, notif_body, focused);
+    }
+    wout(h.agent.response);
+    return 0;
+}
+
+fn agentHookApprovalResponse(h: HookCtx) u8 {
+    // Status will be set by pre_tool_use when the tool actually runs
+    wout(h.agent.response);
+    return 0;
+}
+
+fn agentHookInterrupt(h: HookCtx) u8 {
+    // Fired on Hermes on_session_reset (/reset, /new). The turn was
+    // cancelled before llm-complete, so status is stuck at "Running" —
+    // reset it to Idle.
+    if (h.workspace) |ws| {
+        setAgentStatus(h, ws, "Idle", 5);
     }
     wout(h.agent.response);
     return 0;
@@ -1548,54 +1720,7 @@ fn agentHookNotification(h: HookCtx) u8 {
 }
 
 fn agentHookStop(h: HookCtx) u8 {
-    const cwd = extractCwd(h.input);
-    var title: []const u8 = "Completed";
-    var body: []const u8 = "";
-
-    if (cwd) |c| {
-        const project = std.fs.path.basename(c);
-        if (project.len > 0) {
-            title = std.fmt.allocPrint(h.alloc, "Completed in {s}", .{project}) catch "Completed";
-        }
-    }
-
-    const last_msg = getNestedString(h.input, "last_assistant_message");
-    if (last_msg) |msg| {
-        const collapsed = collapseWhitespace(h.alloc, msg);
-        body = if (collapsed.len > 200) collapsed[0..200] else collapsed;
-    } else if (h.session_id) |sid| {
-        if (h.store.lookup(sid)) |rec| {
-            const saved_body = getJsonStr(rec, "last_body");
-            if (saved_body.len > 0) {
-                body = saved_body;
-            } else {
-                body = getJsonStr(rec, "last_subtitle");
-            }
-            if (cwd == null) {
-                const rec_cwd = getJsonStr(rec, "cwd");
-                if (rec_cwd.len > 0) {
-                    const project = std.fs.path.basename(rec_cwd);
-                    if (project.len > 0) {
-                        title = std.fmt.allocPrint(h.alloc, "Completed in {s}", .{project}) catch title;
-                    }
-                }
-            }
-        }
-    }
-
-    if (h.session_id) |sid| {
-        var fields = JsonFields.init(h.alloc);
-        fields.putStr("last_subtitle", title);
-        fields.putStr("last_body", body);
-        h.store.upsert(sid, fields);
-    }
-
-    if (h.workspace) |ws| {
-        const focused = isWorkspaceFocused(h.alloc, h.socket_path, ws);
-        emitNotification(h, ws, title, body, focused);
-        setAgentStatus(h, ws, "Idle", 5);
-    }
-
+    emitCompletionNotification(h, extractCwd(h.input));
     wout(h.agent.response);
     return 0;
 }
@@ -2033,6 +2158,25 @@ fn jsonEscapeAlloc(alloc: Allocator, input: []const u8) []const u8 {
     return result.items;
 }
 
+fn jsonEscapeTo(input: []const u8, writer: anytype) !void {
+    for (input) |ch| {
+        switch (ch) {
+            '"' => try writer.writeAll("\\\""),
+            '\\' => try writer.writeAll("\\\\"),
+            '\n' => try writer.writeAll("\\n"),
+            '\r' => try writer.writeAll("\\r"),
+            '\t' => try writer.writeAll("\\t"),
+            else => {
+                if (ch < 0x20) {
+                    try writer.print("\\u{x:0>4}", .{ch});
+                } else {
+                    try writer.writeByte(ch);
+                }
+            },
+        }
+    }
+}
+
 // ── Output helpers ──────────────────────────────────────────────────────
 
 fn printJson(alloc: Allocator, val: JsonValue) void {
@@ -2210,5 +2354,11 @@ fn printUsage() void {
         \\  mimocode-hook <event>   Handle MiMo Code lifecycle event
         \\    Events: session-start, session-end, prompt-submit,
         \\            pre-tool-use, post-tool-use, stop, notification
+        \\
+        \\Hermes Hooks:
+        \\  hermes-hook <event>     Handle Hermes Agent lifecycle event
+        \\    Events: session-start, session-end, prompt-submit,
+        \\            pre-tool-use, post-tool-use, llm-complete,
+        \\            approval-request, approval-response, interrupt
     );
 }

@@ -14,6 +14,7 @@
 - 🤖 [Kilo CLI](https://kilo.ai/cli) coding agent support
 - 🤖 Xioami [MiMo Code](https://mimo.xiaomi.com/mimocode) coding agent support
 - 🤖 Mistral [Vibe](https://github.com/mistralai/mistral-vibe) coding agent support
+- 🤖 [Hermes Agent](https://hermes-agent.nousresearch.com/) harness support
 
 
 <br/>

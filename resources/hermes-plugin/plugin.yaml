@@ -1,0 +1,14 @@
+name: seance
+version: 1.0.0
+description: "Reports Hermes session status to the seance sidebar."
+author: "seance"
+hooks:
+  - on_session_start
+  - pre_llm_call
+  - pre_tool_call
+  - post_tool_call
+  - post_llm_call
+  - pre_approval_request
+  - post_approval_response
+  - on_session_end
+  - on_session_reset
