@@ -20,6 +20,8 @@ pub const Config = struct {
     // Font
     font_family: [128]u8 = [_]u8{0} ** 128,
     font_family_len: usize = 0,
+    font_style: [64]u8 = [_]u8{0} ** 64,
+    font_style_len: usize = 0,
     font_size: ?f64 = null,
 
     // Theme
@@ -238,6 +240,7 @@ pub fn saveConfig(cfg: *const Config) void {
     // [font]
     w.print("[font]\n", .{}) catch return;
     if (cfg.font_family_len > 0) w.print("family = \"{s}\"\n", .{cfg.font_family[0..cfg.font_family_len]}) catch return;
+    if (cfg.font_style_len > 0) w.print("style = \"{s}\"\n", .{cfg.font_style[0..cfg.font_style_len]}) catch return;
     if (cfg.font_size) |fs| {
         w.print("size = ", .{}) catch return;
         writeFloat(w, fs) catch return;
@@ -397,6 +400,8 @@ fn applyValue(config: *Config, section: []const u8, key: []const u8, raw_val: []
     if (eql(section, "font")) {
         if (eql(key, "family")) {
             setStr(&config.font_family, &config.font_family_len, val); return true;
+        } else if (eql(key, "style")) {
+            setStr(&config.font_style, &config.font_style_len, val); return true;
         } else if (eql(key, "size")) {
             if (parseFloat(val)) |f| config.font_size = f;
             return true;
@@ -529,6 +534,8 @@ fn loadGhosttyConfig(config: *Config, home: []const u8) void {
 fn applyGhosttyValue(config: *Config, key: []const u8, val: []const u8) void {
     if (eql(key, "font-family")) {
         setStr(&config.font_family, &config.font_family_len, val);
+    } else if (eql(key, "font-style")) {
+        setStr(&config.font_style, &config.font_style_len, val);
     } else if (eql(key, "font-size")) {
         if (parseFloat(val)) |f| config.font_size = f;
     } else if (eql(key, "background-opacity")) {

@@ -781,6 +781,9 @@ fn applySeanceConfig(config: *anyopaque) void {
         writer.writeAll("font-family = \n") catch {};
         writer.print("font-family = {s}\n", .{cfg.font_family[0..cfg.font_family_len]}) catch {};
     }
+    if (cfg.font_style_len > 0) {
+        writer.print("font-style = {s}\n", .{cfg.font_style[0..cfg.font_style_len]}) catch {};
+    }
     if (cfg.font_size) |fs| {
         writer.print("font-size = {d}\n", .{@as(u32, @intFromFloat(fs))}) catch {};
     }

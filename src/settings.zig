@@ -181,7 +181,11 @@ fn buildAppearanceSection(page: *c.GtkWidget, cfg: *const config_mod.Config) voi
         const btn = c.gtk_font_dialog_button_new(c.gtk_font_dialog_new());
         if (cfg.font_family_len > 0) {
             var desc_buf: [192]u8 = undefined;
-            const desc_str = std.fmt.bufPrintZ(&desc_buf, "{s} {d}", .{ cfg.font_family[0..cfg.font_family_len], @as(u32, @intFromFloat(cfg.font_size orelse 11.0)) }) catch null;
+            const style_part: []const u8 = if (cfg.font_style_len > 0) cfg.font_style[0..cfg.font_style_len] else "";
+            const desc_str = if (style_part.len > 0)
+                std.fmt.bufPrintZ(&desc_buf, "{s} {s} {d}", .{ cfg.font_family[0..cfg.font_family_len], style_part, @as(u32, @intFromFloat(cfg.font_size orelse 11.0)) }) catch null
+            else
+                std.fmt.bufPrintZ(&desc_buf, "{s} {d}", .{ cfg.font_family[0..cfg.font_family_len], @as(u32, @intFromFloat(cfg.font_size orelse 11.0)) }) catch null;
             if (desc_str) |ds| {
                 const desc = c.pango_font_description_from_string(ds.ptr);
                 if (desc != null) {
@@ -842,6 +846,20 @@ fn onEntryChanged(obj: *c.GtkEditable, _: c.gpointer) callconv(.c) void {
     saveAndReload();
 }
 
+fn pangoWeightToStyleName(weight: c_uint) []const u8 {
+    if (weight <= 100) return "Thin";
+    if (weight <= 200) return "UltraLight";
+    if (weight <= 300) return "Light";
+    if (weight <= 350) return "SemiLight";
+    if (weight <= 400) return "";
+    if (weight <= 500) return "Medium";
+    if (weight <= 600) return "SemiBold";
+    if (weight <= 700) return "Bold";
+    if (weight <= 800) return "UltraBold";
+    if (weight <= 900) return "Heavy";
+    return "UltraHeavy";
+}
+
 fn onFontChanged(obj: *c.GObject, _: *c.GParamSpec, _: c.gpointer) callconv(.c) void {
     if (updating) return;
     const btn: *c.GtkFontDialogButton = @ptrCast(@alignCast(obj));
@@ -853,11 +871,24 @@ fn onFontChanged(obj: *c.GObject, _: *c.GParamSpec, _: c.gpointer) callconv(.c) 
             const name = std.mem.sliceTo(f, 0);
             setStr(&cfg.font_family, &cfg.font_family_len, name);
 
+            const weight = c.pango_font_description_get_weight(d);
+            const style = c.pango_font_description_get_style(d);
+            const is_italic = style == c.PANGO_STYLE_ITALIC;
+            const weight_name = pangoWeightToStyleName(weight);
+            if (is_italic and weight_name.len == 0) {
+                setStr(&cfg.font_style, &cfg.font_style_len, "Italic");
+            } else if (is_italic) {
+                var buf: [32]u8 = undefined;
+                const combined = std.fmt.bufPrintZ(&buf, "{s} Italic", .{weight_name}) catch null;
+                if (combined) |cs| setStr(&cfg.font_style, &cfg.font_style_len, cs);
+            } else {
+                setStr(&cfg.font_style, &cfg.font_style_len, weight_name);
+            }
+
             const size_pango = c.pango_font_description_get_size(d);
             if (size_pango > 0) {
                 const pt: f64 = @as(f64, @floatFromInt(size_pango)) / @as(f64, @floatFromInt(c.PANGO_SCALE));
                 cfg.font_size = pt;
-                // Update font size spin if present
                 if (w.font_size) |spin| {
                     updating = true;
                     c.adw_spin_row_set_value(@as(*c.AdwSpinRow, @ptrCast(spin)), pt);
