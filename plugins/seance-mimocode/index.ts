@@ -1,6 +1,6 @@
 // Séance plugin for MiMo Code
 // Copy to ~/.config/mimocode/plugins/seance-mimocode.ts
-// @seance-version 9
+// @seance-version 10
 
 export const SeancePlugin = async ({ $ }) => {
   const socket = process.env.SEANCE_SOCKET_PATH;
@@ -39,6 +39,7 @@ export const SeancePlugin = async ({ $ }) => {
           }
           currentSessionId = event.properties.sessionID;
           await hook("session-start");
+          await hook("stop");
           break;
         case "session.idle":
           if (!eventSessionId || eventSessionId === currentSessionId || eventSessionId === statusSessionId) {

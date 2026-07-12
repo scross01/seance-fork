@@ -1,6 +1,6 @@
 // Séance plugin for OpenCode
 // Copy to ~/.config/opencode/plugins/seance-opencode.ts
-// @seance-version 2
+// @seance-version 3
 
 export const SeancePlugin = async ({ $ }) => {
   const socket = process.env.SEANCE_SOCKET_PATH;
@@ -37,6 +37,7 @@ export const SeancePlugin = async ({ $ }) => {
           }
           currentSessionId = event.properties.sessionID;
           await hook("session-start");
+          await hook("stop");
           break;
         case "session.idle":
           await hook("stop");
