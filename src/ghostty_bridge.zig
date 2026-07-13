@@ -215,6 +215,18 @@ fn createWrapperResourcesDir() bool {
     writeShellWrapper(wd, "shell-integration/bash/ghostty.bash", real, "/shell-integration/bash/ghostty.bash", "/bash-integration.sh") catch return false;
     writeShellWrapper(wd, "shell-integration/zsh/ghostty-integration", real, "/shell-integration/zsh/ghostty-integration", "/zsh-integration.sh") catch return false;
 
+    // Symlink .zshenv so zsh finds a startup file in ZDOTDIR and doesn't
+    // trigger the new-user-install wizard.
+    {
+        var zsh_buf: [std.fs.max_path_bytes]u8 = undefined;
+        const zsh_target = std.fmt.bufPrint(&zsh_buf, "{s}/shell-integration/zsh/.zshenv", .{real}) catch return false;
+        var zsh_dir = wd.openDir("shell-integration/zsh", .{}) catch return false;
+        defer zsh_dir.close();
+        zsh_dir.symLink(zsh_target, ".zshenv", .{}) catch |e| {
+            std.log.warn("ghostty_bridge: failed to symlink .zshenv: {}", .{e});
+        };
+    }
+
     // Create merged themes directory: seance bundled themes take precedence,
     // then ghostty's original themes fill in any gaps.
     createMergedThemesDir(wd, real);
