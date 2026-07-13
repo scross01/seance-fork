@@ -5,30 +5,20 @@ set -euo pipefail
 
 # ── Find the real hermes binary, skipping seance wrappers ─────────────────
 
-# A seance wrapper is any 'hermes' binary whose directory also contains a
-# 'seance' binary (seance installs its wrappers alongside the seance binary).
-# We loop type -P, removing each wrapper's directory from PATH, until we
-# find a binary that is NOT a seance wrapper.
+# A seance wrapper is a 'hermes' binary in the same directory as this script.
+# We iterate PATH, skipping the wrapper's own directory, to find the real one.
 
+WRAPPER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REAL_HERMES=""
-CHECK_PATH="${PATH:-}"
-while true; do
-    CANDIDATE="$(PATH="$CHECK_PATH" type -P hermes 2>/dev/null || true)"
-    [[ -z "$CANDIDATE" ]] && break
-
-    CANDIDATE_DIR="$(dirname "$CANDIDATE")"
-    if [[ -x "$CANDIDATE_DIR/seance" ]]; then
-        # This is a seance wrapper — remove its directory from PATH and retry
-        NEW_PATH=""
-        IFS=: read -ra PATH_DIRS <<< "$CHECK_PATH"
-        for dir in "${PATH_DIRS[@]}"; do
-            [[ "$dir" != "$CANDIDATE_DIR" ]] && NEW_PATH="${NEW_PATH:+$NEW_PATH:}$dir"
-        done
-        CHECK_PATH="$NEW_PATH"
-        continue
+IFS=: read -ra PATH_DIRS <<< "$PATH"
+for dir in "${PATH_DIRS[@]}"; do
+    [[ -z "$dir" ]] && continue
+    resolved="$(cd "$dir" 2>/dev/null && pwd)" || continue
+    [[ "$resolved" == "$WRAPPER_DIR" ]] && continue
+    if [[ -x "$dir/hermes" ]]; then
+        REAL_HERMES="$dir/hermes"
+        break
     fi
-    REAL_HERMES="$CANDIDATE"
-    break
 done
 
 if [[ -z "$REAL_HERMES" ]]; then
@@ -37,7 +27,7 @@ if [[ -z "$REAL_HERMES" ]]; then
 fi
 
 # Resolve seance to an absolute path to prevent PATH manipulation by the agent
-REAL_SEANCE="$(PATH="$CHECK_PATH" type -P seance 2>/dev/null || true)"
+REAL_SEANCE="$(PATH="$PATH" type -P seance 2>/dev/null || true)"
 if [[ -z "$REAL_SEANCE" ]]; then
     echo "hermes: seance not found — falling back to pass-through" >&2
     exec "$REAL_HERMES" "$@"
@@ -52,6 +42,12 @@ fi
 
 # Hooks explicitly disabled
 if [[ "${SEANCE_HERMES_HOOKS_DISABLED:-}" == "1" ]]; then
+    exec "$REAL_HERMES" "$@"
+fi
+
+# Already inside a wrapped hermes call (recursive invocation from hermes update, etc.)
+# Pass through directly to prevent subprocess cascade.
+if [[ -n "${SEANCE_HERMES_PID:-}" ]]; then
     exec "$REAL_HERMES" "$@"
 fi
 
