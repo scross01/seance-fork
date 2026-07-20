@@ -146,6 +146,8 @@ fn dispatch(ctx: Ctx, command: []const u8) u8 {
     if (eql(command, "opencode-hook")) return cmdOpencodeHook(ctx);
     if (eql(command, "kilo-hook")) return cmdKiloHook(ctx);
     if (eql(command, "mimocode-hook")) return cmdMimocodeHook(ctx);
+    if (eql(command, "subagent-update")) return cmdSubagentUpdate(ctx);
+    if (eql(command, "set-idle")) return cmdSetIdle(ctx);
     if (eql(command, "help") or eql(command, "--help") or eql(command, "-h")) {
         printUsage();
         return 0;
@@ -1300,6 +1302,58 @@ fn cmdMimocodeHook(ctx: Ctx) u8 {
     return cmdAgentHook(ctx, mimocode_agent);
 }
 
+fn cmdSubagentUpdate(ctx: Ctx) u8 {
+    const stdin_file: std.fs.File = .stdin();
+    const stdin_data = stdin_file.readToEndAlloc(ctx.alloc, 1024 * 1024) catch "";
+    const input = blk: {
+        const trimmed = std.mem.trim(u8, stdin_data, &[_]u8{ '\r', '\n', ' ' });
+        if (trimmed.len == 0) break :blk JsonValue{ .object = std.json.ObjectMap.init(ctx.alloc) };
+        const parsed = std.json.parseFromSlice(JsonValue, ctx.alloc, trimmed, .{}) catch
+            break :blk JsonValue{ .object = std.json.ObjectMap.init(ctx.alloc) };
+        break :blk parsed.value;
+    };
+    const ws_id = getJsonInt(input, "workspace_id") orelse envInt("SEANCE_WORKSPACE_ID") orelse {
+        werr("seance: workspace_id required\n");
+        return 1;
+    };
+    const subagents = getJsonInt(input, "subagent_count") orelse 0;
+    const background = getJsonInt(input, "background_count") orelse 0;
+
+    var pbuf: [256]u8 = undefined;
+    const p = std.fmt.bufPrint(&pbuf, "{{\"workspace_id\":{d},\"subagents\":{d},\"background\":{d}}}", .{ ws_id, subagents, background }) catch return 1;
+    _ = apiCall(ctx.alloc, ctx.socket_path, "workspace.set_subagent_counts", p) catch {};
+    wout("OK\n");
+    return 0;
+}
+
+fn cmdSetIdle(ctx: Ctx) u8 {
+    const stdin_file: std.fs.File = .stdin();
+    const stdin_data = stdin_file.readToEndAlloc(ctx.alloc, 1024 * 1024) catch "";
+    const input = blk: {
+        const trimmed = std.mem.trim(u8, stdin_data, &[_]u8{ '\r', '\n', ' ' });
+        if (trimmed.len == 0) break :blk JsonValue{ .object = std.json.ObjectMap.init(ctx.alloc) };
+        const parsed = std.json.parseFromSlice(JsonValue, ctx.alloc, trimmed, .{}) catch
+            break :blk JsonValue{ .object = std.json.ObjectMap.init(ctx.alloc) };
+        break :blk parsed.value;
+    };
+    const ws_id = getJsonInt(input, "workspace_id") orelse envInt("SEANCE_WORKSPACE_ID") orelse {
+        werr("seance: workspace_id required\n");
+        return 1;
+    };
+    const sf_id = getJsonInt(input, "surface_id") orelse envInt("SEANCE_SURFACE_ID");
+    // Build status key: "mimocode" (prefix) + optional "-{surface_id}"
+    const sk = if (sf_id) |sf|
+        std.fmt.allocPrint(ctx.alloc, "mimocode-{d}", .{sf}) catch "mimocode"
+    else
+        "mimocode";
+    const sk_escaped = jsonEscapeAlloc(ctx.alloc, sk);
+    var pbuf: [256]u8 = undefined;
+    const p = std.fmt.bufPrint(&pbuf, "{{\"workspace_id\":{d},\"key\":\"{s}\",\"value\":\"Idle\",\"priority\":5,\"is_agent\":true,\"display_name\":\"MiMo Code\"}}", .{ ws_id, sk_escaped }) catch return 1;
+    _ = apiCall(ctx.alloc, ctx.socket_path, "workspace.set_status", p) catch {};
+    wout("OK\n");
+    return 0;
+}
+
 const HookCtx = struct {
     alloc: Allocator,
     socket_path: []const u8,
@@ -1357,9 +1411,12 @@ fn cmdAgentHook(ctx: Ctx, agent: AgentConfig) u8 {
     const session_id = extractSessionId(input);
     const store = SessionStore.init(ctx.alloc);
 
-    // Resolve workspace/surface from overrides, session store, or env
+    // Resolve workspace/surface: overrides > env > session store
     var ws = ws_override;
     var sf = sf_override;
+    if (ws == null) ws = envInt("SEANCE_WORKSPACE_ID");
+    if (sf == null) sf = envInt("SEANCE_SURFACE_ID");
+    // Session store fallback only when env vars are not set
     if (ws == null or sf == null) {
         if (session_id) |sid| {
             if (store.lookup(sid)) |rec| {
@@ -1368,8 +1425,6 @@ fn cmdAgentHook(ctx: Ctx, agent: AgentConfig) u8 {
             }
         }
     }
-    if (ws == null) ws = envInt("SEANCE_WORKSPACE_ID");
-    if (sf == null) sf = envInt("SEANCE_SURFACE_ID");
 
     const h = HookCtx{
         .alloc = ctx.alloc,
@@ -1490,28 +1545,135 @@ fn agentHookPostToolUse(h: HookCtx) u8 {
     return 0;
 }
 
-fn agentHookNotification(h: HookCtx) u8 {
-    const summary = summarizeNotification(h.input);
-    var body = summary.body;
+fn agentHookLlmComplete(h: HookCtx) u8 {
+    emitCompletionNotification(h, null);
+    wout(h.agent.response);
+    return 0;
+}
 
-    // Check for saved question from AskUserQuestion
-    if (h.session_id) |sid| {
+/// Shared helper for completion notifications. `cwd_override` allows callers
+/// to pass an explicit cwd; when null, the cwd is resolved from the input
+/// or from the stored session record.
+fn emitCompletionNotification(h: HookCtx, cwd_override: ?[]const u8) void {
+    _ = cwd_override; // No longer used — title is always "Completed"
+    const title: []const u8 = "Completed";
+
+    var body: []const u8 = "";
+    var used_stored_body = false;
+    const last_msg = if (eql(h.agent.name, "Hermes"))
+        getNestedString(h.input, "assistant_response")
+    else
+        getNestedString(h.input, "last_assistant_message");
+    if (last_msg) |msg| {
+        const collapsed = collapseWhitespace(h.alloc, msg);
+        body = if (collapsed.len > 200) collapsed[0..200] else collapsed;
+    } else if (h.session_id) |sid| {
         if (h.store.lookup(sid)) |rec| {
-            const saved = getJsonStr(rec, "last_body");
-            if (saved.len > 0) {
-                body = saved;
-                var clear_fields = JsonFields.init(h.alloc);
-                clear_fields.putStr("last_body", "");
-                h.store.upsert(sid, clear_fields);
+            // Only read stored last_body for Hermes (it's set by pre_tool_use for questions)
+            if (eql(h.agent.name, "Hermes")) {
+                const saved_body = getJsonStr(rec, "last_body");
+                if (saved_body.len > 0) {
+                    body = saved_body;
+                    used_stored_body = true;
+                } else {
+                    body = getJsonStr(rec, "last_subtitle");
+                }
+            } else {
+                // For non-Hermes agents, don't use stored last_body or last_subtitle
+                // (they may be stale from permission notifications or questions)
+                // Just show "Completed" with empty body
             }
         }
     }
 
-    // Update session
+    // Update session with completion info
     if (h.session_id) |sid| {
         var fields = JsonFields.init(h.alloc);
-        fields.putStr("last_subtitle", summary.subtitle);
-        fields.putStr("last_body", body);
+        fields.putStr("last_subtitle", title);
+        // Clear last_body if it was consumed, otherwise set it
+        if (used_stored_body) {
+            fields.putStr("last_body", "");
+        } else {
+            fields.putStr("last_body", body);
+        }
+        h.store.upsert(sid, fields);
+    }
+
+    if (h.workspace) |ws| {
+        const focused = isWorkspaceFocused(h.alloc, h.socket_path, ws);
+        emitNotification(h, ws, title, body, focused);
+        setAgentStatus(h, ws, "Idle", 5);
+    }
+}
+
+fn agentHookApprovalRequest(h: HookCtx) u8 {
+    const cmd = getNestedString(h.input, "command") orelse "unknown command";
+    if (h.workspace) |ws| {
+        var status_buf: [512]u8 = undefined;
+        const status = std.fmt.bufPrint(&status_buf, "Pending approval: {s}", .{cmd}) catch "Pending approval";
+        setAgentStatus(h, ws, status, 10);
+        const focused = isWorkspaceFocused(h.alloc, h.socket_path, ws);
+        // Truncate command for notification body if too long
+        const notif_body = if (cmd.len > 500) cmd[0..500] else cmd;
+        emitNotification(h, ws, h.agent.display_name, notif_body, focused);
+    }
+    wout(h.agent.response);
+    return 0;
+}
+
+fn agentHookApprovalResponse(h: HookCtx) u8 {
+    // Status will be set by pre_tool_use when the tool actually runs
+    wout(h.agent.response);
+    return 0;
+}
+
+fn agentHookInterrupt(h: HookCtx) u8 {
+    // Fired on Hermes on_session_reset (/reset, /new). The turn was
+    // cancelled before llm-complete, so status is stuck at "Running" —
+    // reset it to Idle.
+    if (h.workspace) |ws| {
+        setAgentStatus(h, ws, "Idle", 5);
+    }
+    wout(h.agent.response);
+    return 0;
+}
+
+fn agentHookNotification(h: HookCtx) u8 {
+    const summary = summarizeNotification(h.input);
+    var body = summary.body;
+
+    // Debug: log what summarizeNotification found
+    if (std.posix.getenv("SEANCE_DEBUG")) |_| {
+        std.log.info("agentHookNotification: subtitle={s} body={s}", .{ summary.subtitle, body });
+    }
+
+    // Only override body with saved last_body for non-permission notifications.
+    // Permission notifications should use the message text directly.
+    if (!std.mem.eql(u8, summary.subtitle, "Permission")) {
+        if (h.session_id) |sid| {
+            if (h.store.lookup(sid)) |rec| {
+                const saved = getJsonStr(rec, "last_body");
+                if (saved.len > 0) {
+                    body = saved;
+                    var clear_fields = JsonFields.init(h.alloc);
+                    clear_fields.putStr("last_body", "");
+                    h.store.upsert(sid, clear_fields);
+                }
+            }
+        }
+    }
+
+    // Update session — don't store last_body for permission notifications
+    // to avoid polluting the session store (it interferes with completion notifications)
+    if (h.session_id) |sid| {
+        var fields = JsonFields.init(h.alloc);
+        if (!std.mem.eql(u8, summary.subtitle, "Permission")) {
+            fields.putStr("last_subtitle", summary.subtitle);
+            fields.putStr("last_body", body);
+        } else {
+            // For permission notifications, clear any stale last_body
+            fields.putStr("last_body", "");
+        }
         h.store.upsert(sid, fields);
     }
 

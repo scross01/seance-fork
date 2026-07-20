@@ -1,6 +1,6 @@
 // Séance plugin for MiMo Code
 // Copy to ~/.config/mimocode/plugins/seance-mimocode.ts
-// @seance-version 9
+// @seance-version 36
 
 export const SeancePlugin = async ({ $ }) => {
   const socket = process.env.SEANCE_SOCKET_PATH;
@@ -15,7 +15,10 @@ export const SeancePlugin = async ({ $ }) => {
   const surfaceId = process.env.SEANCE_SURFACE_ID;
   const workspaceId = process.env.SEANCE_WORKSPACE_ID;
   let currentSessionId: string | undefined;
-  let statusSessionId: string | undefined;
+  let sessionIdle = false;
+  let permissionPending = false;
+  let childSessions: Set<string> = new Set();
+  let subagentCount = 0;
   const shEscape = (s: string) => s.replace(/'/g, "'\\''");
 
   async function hook(event: string, extra: Record<string, unknown> = {}) {
@@ -28,54 +31,155 @@ export const SeancePlugin = async ({ $ }) => {
     await $`echo '${shEscape(payload)}' | ${seanceBin} ctl mimocode-hook ${event} >/dev/null`;
   }
 
+  async function updateCounts() {
+    const payload = JSON.stringify({
+      workspace_id: workspaceId,
+      subagent_count: subagentCount,
+      background_count: 0,
+    });
+    await $`echo '${shEscape(payload)}' | ${seanceBin} ctl subagent-update >/dev/null`;
+  }
+
   return {
     event: async ({ event }) => {
       const eventSessionId = event.properties?.sessionID;
-
       switch (event.type) {
         case "session.created":
-          if (currentSessionId) {
-            await hook("session-end");
+          if (!currentSessionId) {
+            currentSessionId = event.properties.sessionID;
+            sessionIdle = false;
+            await hook("session-start");
+            await hook("prompt-submit");
           }
-          currentSessionId = event.properties.sessionID;
-          await hook("session-start");
           break;
+
+        case "session.updated":
+          if (!currentSessionId && eventSessionId) {
+            currentSessionId = eventSessionId;
+            sessionIdle = false;
+            childSessions.clear();
+            subagentCount = 0;
+            await hook("session-start");
+            await hook("prompt-submit");
+          }
+          break;
+
         case "session.idle":
-          if (!eventSessionId || eventSessionId === currentSessionId || eventSessionId === statusSessionId) {
-            await hook("stop");
-          }
-          break;
-        case "session.error":
-          if (!eventSessionId || eventSessionId === currentSessionId || eventSessionId === statusSessionId) {
-            await hook("session-end");
-            currentSessionId = undefined;
-            statusSessionId = undefined;
-          }
-          break;
-        case "session.status":
-          if (eventSessionId && eventSessionId !== currentSessionId && !statusSessionId) {
-            statusSessionId = eventSessionId;
-          }
-          if (!eventSessionId || eventSessionId === currentSessionId || eventSessionId === statusSessionId) {
-            if (event.properties.status.type === "busy") {
-              await hook("prompt-submit");
-            } else if (event.properties.status.type === "idle") {
+          if (!eventSessionId || eventSessionId === currentSessionId) {
+            if (permissionPending) {
+              // Permission was requested — don't fire stop yet
+              // The session will resume after permission is granted
+              permissionPending = false;
+            } else {
+              sessionIdle = true;
               await hook("stop");
             }
           }
           break;
+
+        case "session.error":
+          if (!eventSessionId || eventSessionId === currentSessionId) {
+            childSessions.clear();
+            subagentCount = 0;
+            await updateCounts();
+            await hook("session-end");
+            currentSessionId = undefined;
+          } else if (childSessions.has(eventSessionId)) {
+            childSessions.delete(eventSessionId);
+            subagentCount = Math.max(0, subagentCount - 1);
+            await updateCounts();
+          }
+          break;
+
+        case "session.status":
+          if (!eventSessionId || eventSessionId === currentSessionId) {
+            if (event.properties.status.type === "busy") {
+              sessionIdle = false;
+              permissionPending = false;
+              await hook("prompt-submit");
+            }
+            // Don't fire hook("stop") here — session.idle handles completion
+            // to avoid duplicate "Completed" notifications
+          }
+          break;
+
         case "permission.asked":
-          await hook("notification", {
-            message: "MiMo Code needs your permission",
-          });
+          // Don't fire notification if session is idle — permission request is stale
+          if (!sessionIdle && (!eventSessionId || eventSessionId === currentSessionId)) {
+            permissionPending = true;
+            const permType = event.properties?.permission ?? "unknown";
+            const patterns = event.properties?.patterns;
+            const detail = Array.isArray(patterns) && patterns.length > 0
+              ? `${permType}: ${patterns.join(", ")}`
+              : String(permType);
+            // Use lowercase "permission" so categorize() in summarizeNotification()
+            // can match it (containsAny is case-sensitive)
+            await hook("notification", {
+              message: `permission requested: ${detail}`,
+            });
+          }
+          break;
+
+        case "permission.replied":
+          // User granted/denied permission — reset flag so session.idle fires hook("stop")
+          permissionPending = false;
+          break;
+
+        case "actor.registered":
+          if (eventSessionId && eventSessionId !== currentSessionId) {
+            const mode = event.properties?.mode;
+            const background = event.properties?.background;
+            if (mode === "subagent" && !background) {
+              if (!childSessions.has(eventSessionId)) {
+                childSessions.add(eventSessionId);
+                subagentCount++;
+                await updateCounts();
+              }
+            }
+          }
           break;
       }
     },
-    "tool.execute.before": async (input) => {
-      await hook("pre-tool-use", { tool_name: input.tool });
+
+    // tool.execute.before/after — only process main session.
+    // Background sessions (checkpoint-writer, compaction, etc.) and
+    // subagents are both ignored here. Subagent tracking is handled
+    // exclusively by actor.postStop.
+    "tool.execute.before": async (input: { tool: string; sessionID: string; callID: string }) => {
+      if (!input.sessionID || input.sessionID === currentSessionId) {
+        await hook("pre-tool-use", { tool_name: input.tool });
+      }
     },
-    "tool.execute.after": async (input) => {
-      await hook("post-tool-use", { tool_name: input.tool });
+
+    "tool.execute.after": async (input: { tool: string; sessionID: string; callID: string; args: any }) => {
+      if (!input.sessionID || input.sessionID === currentSessionId) {
+        await hook("post-tool-use", { tool_name: input.tool });
+      }
+    },
+
+    "actor.postStop": {
+      matcher: {},  // see ALL actors including built-in agents
+      run: async (input: {
+        sessionID: string;
+        parentSessionID?: string;
+        agentType: string;
+        mode: "subagent" | "peer";
+        lifecycle: "ephemeral" | "persistent";
+        outcome: "success" | "failure" | "cancelled";
+      }) => {
+        if (!input.sessionID || input.sessionID === currentSessionId) return;
+
+        // Only track mode:"subagent" — ignore background tasks (mode:"peer" or others)
+        if (input.mode === "subagent") {
+          if (childSessions.has(input.sessionID)) {
+            // Subagent completed — decrement count
+            childSessions.delete(input.sessionID);
+            subagentCount = Math.max(0, subagentCount - 1);
+            await updateCounts();
+          }
+        }
+        // Background tasks (checkpoint-writer, compaction, etc.) are simply ignored
+      },
     },
   };
 };
