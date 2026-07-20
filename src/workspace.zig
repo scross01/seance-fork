@@ -61,6 +61,8 @@ pub const WorkspaceMetadata = struct {
     log_head: usize = 0, // ring buffer write position
     log_count: usize = 0,
     progress: ProgressState = .{},
+    subagent_count: u32 = 0,
+    background_count: u32 = 0,
 
     pub fn setStatus(self: *WorkspaceMetadata, key: []const u8, value: []const u8, priority: i32, is_agent: bool, display_name: ?[]const u8) void {
         // Update existing entry with same key
@@ -160,6 +162,18 @@ pub const WorkspaceMetadata = struct {
         self.progress.active = false;
         self.progress.value = 0.0;
         self.progress.label_len = 0;
+    }
+
+    pub fn setActiveSubagents(self: *WorkspaceMetadata, count: u32) void {
+        self.subagent_count = count;
+    }
+
+    pub fn setActiveBackground(self: *WorkspaceMetadata, count: u32) void {
+        self.background_count = count;
+    }
+
+    pub fn hasAnyActivity(self: *const WorkspaceMetadata) bool {
+        return self.subagent_count > 0 or self.background_count > 0;
     }
 
     pub fn getSortedStatusIndices(self: *const WorkspaceMetadata, out: []usize) usize {
@@ -1445,6 +1459,18 @@ pub const Workspace = struct {
 
     pub fn clearProgress(self: *Workspace) void {
         self.metadata.clearProgress();
+    }
+
+    pub fn setActiveSubagents(self: *Workspace, count: u32) void {
+        self.metadata.setActiveSubagents(count);
+    }
+
+    pub fn setActiveBackground(self: *Workspace, count: u32) void {
+        self.metadata.setActiveBackground(count);
+    }
+
+    pub fn hasAnyActivity(self: *const Workspace) bool {
+        return self.metadata.hasAnyActivity();
     }
 
     pub fn getSortedStatusIndices(self: *const Workspace, out: []usize) usize {

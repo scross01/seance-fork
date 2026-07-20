@@ -274,6 +274,7 @@ pub const SocketServer = struct {
         if (eql(method, "workspace.clear_log")) return handleWorkspaceClearLog(params, id, buf);
         if (eql(method, "workspace.set_progress")) return handleWorkspaceSetProgress(params, id, buf);
         if (eql(method, "workspace.clear_progress")) return handleWorkspaceClearProgress(params, id, buf);
+        if (eql(method, "workspace.set_subagent_counts")) return handleWorkspaceSetSubagentCounts(params, id, buf);
 
         // Shell integration methods
         if (eql(method, "surface.report_cwd")) return handleSurfaceReportCwd(params, id, buf);
@@ -1852,6 +1853,21 @@ pub const SocketServer = struct {
 
         const result = findWorkspaceById(ws_id) orelse return writeJsonError(buf, id, "not_found", "Workspace not found");
         result.ws.clearProgress();
+        result.state.sidebar.refresh();
+        result.state.sidebar.setActive(result.state.active_workspace);
+        return writeJsonOk(buf, id, "{}");
+    }
+
+    fn handleWorkspaceSetSubagentCounts(params: ?std.json.Value, id: []const u8, buf: []u8) []const u8 {
+        const ws_id = getParamInt(params, "workspace_id") orelse return writeJsonError(buf, id, "invalid_params", "Missing 'workspace_id'");
+        const subagents_raw = getParamI32(params, "subagents");
+        const background_raw = getParamI32(params, "background");
+        const subagents: u32 = if (subagents_raw < 0) 0 else @intCast(subagents_raw);
+        const background: u32 = if (background_raw < 0) 0 else @intCast(background_raw);
+
+        const result = findWorkspaceById(ws_id) orelse return writeJsonError(buf, id, "not_found", "Workspace not found");
+        result.ws.setActiveSubagents(subagents);
+        result.ws.setActiveBackground(background);
         result.state.sidebar.refresh();
         result.state.sidebar.setActive(result.state.active_workspace);
         return writeJsonOk(buf, id, "{}");

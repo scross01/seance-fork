@@ -15,7 +15,7 @@ const is_linux = builtin.os.tag == .linux;
 
 const SEANCE_OPENCODE_VERSION: u32 = 2;
 const SEANCE_KILO_VERSION: u32 = 2;
-const SEANCE_MIMOCODE_VERSION: u32 = 9;
+const SEANCE_MIMOCODE_VERSION: u32 = 36;
 const SEANCE_VIBE_VERSION: u32 = 1;
 const SEANCE_HERMES_PLUGIN_VERSION: u32 = 1;
 

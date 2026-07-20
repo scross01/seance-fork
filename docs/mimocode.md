@@ -12,7 +12,7 @@ MiMo Code integration follows the same architecture as all Séance agent integra
 
 ## What was different from Kilo/OpenCode
 
-The Kilo and OpenCode plugins are nearly identical to each other. MiMo Code required one significant change: **dual session tracking**.
+The Kilo and OpenCode plugins are nearly identical to each other. MiMo Code required two significant changes: **dual session tracking** and **subagent activity indicators**.
 
 ### The problem: concurrent sessions
 
@@ -23,32 +23,51 @@ In Kilo/OpenCode, every event is assumed to belong to `currentSessionId`. If a `
 MiMo Code's events carry a `sessionID` in `event.properties`. When a `session.status` event arrives with a session ID that doesn't match `currentSessionId`, the plugin needs to decide:
 
 - Is this from the known session? Forward it.
-- Is this from an unknown background session? Track it as `statusSessionId` so we don't misattribute it to the foreground session.
+- Is this from an unknown background session? Track it as a child session.
 
 ### How the plugin handles it
 
 ```typescript
 let currentSessionId: string | undefined;   // the "real" session (from session.created)
-let statusSessionId: string | undefined;    // a secondary session we've seen status events from
+let childSessions: Map<string, { mode: string; agentType: string }> = new Map();
+let subagentCount = 0;
+let backgroundCount = 0;
 ```
 
-- **`session.created`**: Always sets `currentSessionId`. If one was already set, fires `session-end` first (cleanup).
-- **`session.status`**: If the event's `sessionID` differs from `currentSessionId` and we haven't seen a secondary session yet, we track it as `statusSessionId`. Events from either session are forwarded.
-- **`session.idle` / `session.error`**: Only fire if the event belongs to `currentSessionId` or `statusSessionId`. Unknown sessions are ignored.
-- **`session.error`**: Clears both `currentSessionId` and `statusSessionId`.
+- **`session.created`**: Always sets `currentSessionId`. If one was already set, fires `session-end` first (cleanup). Force-clears all child sessions.
+- **`session.status`**: Only forwarded for the main session. Child session status events are ignored — `actor.postStop` handles them.
+- **`session.idle`**: Only fires `stop` for the main session. Child idle events are ignored.
+- **`session.error`**: For main session — full cleanup. For child sessions — removes from tracking, decrements count.
 
-This prevents background sessions from accidentally cancelling the foreground session's status in Séance's sidebar.
+### Subagent activity detection
+
+MiMo Code spawns subagents (via the actor tool) and runs background tasks (checkpoint-writer, compaction, etc.). The plugin detects these via two mechanisms:
+
+1. **`tool.execute.before`**: If `input.sessionID !== currentSessionId`, a child session is detected. It's registered in `childSessions` and `subagentCount` is incremented (default classification).
+
+2. **`actor.postStop`**: When a child completes, this hook provides `mode: "subagent" | "peer"` and `agentType: string`. The plugin uses `mode` to reclassify: subagents stay in `subagentCount`, background tasks (`mode: "peer"`) are moved to `backgroundCount`.
+
+The counts are sent to Séance via `seance ctl subagent-update`, which sets workspace metadata. The sidebar uses these counts to change the main agent's icon:
+
+| Subtasks active? | Background active? | Icon |
+|---|---|---|
+| No | No | Normal state icon (`camera-flash-symbolic` / `pause-symbolic`) |
+| Yes | No | `system-run-symbolic` |
+| No | Yes | `media-playback-start-symbolic` |
+| Yes | Yes | `system-run-symbolic` (subtasks take precedence) |
 
 ### Comparison table
 
 | Feature | Kilo / OpenCode | MiMo Code |
 |---|---|---|
-| Session tracking | Single `currentSessionId` | Dual: `currentSessionId` + `statusSessionId` |
-| `session.idle` filter | Always fires | Only fires for known sessions |
-| `session.error` filter | Always fires | Only fires for known sessions |
-| `session.status` filter | Always fires (busy only) | Only fires for known sessions; idle also fires `stop` |
-| `statusSessionId` reset | N/A | Cleared on `session.error` |
-| `@seance-version` | 2 | 9 |
+| Session tracking | Single `currentSessionId` | `currentSessionId` + `childSessions: Map` |
+| `session.idle` filter | Always fires | Only fires for main session |
+| `session.error` filter | Always fires | Main: full cleanup; Child: remove from tracking |
+| `session.status` filter | Always fires (busy only) | Only fires for main session |
+| Subagent detection | N/A | `tool.execute.before` sessionID mismatch |
+| Subagent classification | N/A | `actor.postStop` mode field |
+| Activity indicator | N/A | Icon changes based on subagent/background counts |
+| `@seance-version` | 2 | 20 |
 
 ### The `session.status` idle handling
 
@@ -93,7 +112,7 @@ The Zig backend auto-installs the MiMo Code plugin on startup if `~/.config/mimo
 3. Compare version and content against the installed plugin at `~/.config/mimocode/plugins/seance-mimocode.ts`.
 4. If outdated or missing, write atomically via a `.tmp` file + rename.
 
-The plugin version is embedded as `@seance-version 9` in the TypeScript source and extracted by `extractVersion()` in `app.zig`.
+The plugin version is embedded as `@seance-version 20` in the TypeScript source and extracted by `extractVersion()` in `app.zig`.
 
 ## Adding a new agent
 

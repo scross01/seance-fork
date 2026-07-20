@@ -145,9 +145,11 @@ fn dispatch(ctx: Ctx, command: []const u8) u8 {
     if (eql(command, "pi-hook")) return cmdPiHook(ctx);
     if (eql(command, "opencode-hook")) return cmdOpencodeHook(ctx);
     if (eql(command, "kilo-hook")) return cmdKiloHook(ctx);
-    if (eql(command, "vibe-hook")) return cmdVibeHook(ctx);
     if (eql(command, "mimocode-hook")) return cmdMimocodeHook(ctx);
+    if (eql(command, "vibe-hook")) return cmdVibeHook(ctx);
     if (eql(command, "hermes-hook")) return cmdHermesHook(ctx);
+    if (eql(command, "subagent-update")) return cmdSubagentUpdate(ctx);
+    if (eql(command, "set-idle")) return cmdSetIdle(ctx);
     if (eql(command, "help") or eql(command, "--help") or eql(command, "-h")) {
         printUsage();
         return 0;
@@ -1334,16 +1336,68 @@ fn cmdKiloHook(ctx: Ctx) u8 {
     return cmdAgentHook(ctx, kilo_agent);
 }
 
-fn cmdVibeHook(ctx: Ctx) u8 {
-    return cmdAgentHook(ctx, vibe_agent);
-}
-
 fn cmdMimocodeHook(ctx: Ctx) u8 {
     return cmdAgentHook(ctx, mimocode_agent);
 }
 
+fn cmdVibeHook(ctx: Ctx) u8 {
+    return cmdAgentHook(ctx, vibe_agent);
+}
+
 fn cmdHermesHook(ctx: Ctx) u8 {
     return cmdAgentHook(ctx, hermes_agent);
+}
+
+fn cmdSubagentUpdate(ctx: Ctx) u8 {
+    const stdin_file: std.fs.File = .stdin();
+    const stdin_data = stdin_file.readToEndAlloc(ctx.alloc, 1024 * 1024) catch "";
+    const input = blk: {
+        const trimmed = std.mem.trim(u8, stdin_data, &[_]u8{ '\r', '\n', ' ' });
+        if (trimmed.len == 0) break :blk JsonValue{ .object = std.json.ObjectMap.init(ctx.alloc) };
+        const parsed = std.json.parseFromSlice(JsonValue, ctx.alloc, trimmed, .{}) catch
+            break :blk JsonValue{ .object = std.json.ObjectMap.init(ctx.alloc) };
+        break :blk parsed.value;
+    };
+    const ws_id = getJsonInt(input, "workspace_id") orelse envInt("SEANCE_WORKSPACE_ID") orelse {
+        werr("seance: workspace_id required\n");
+        return 1;
+    };
+    const subagents = getJsonInt(input, "subagent_count") orelse 0;
+    const background = getJsonInt(input, "background_count") orelse 0;
+
+    var pbuf: [256]u8 = undefined;
+    const p = std.fmt.bufPrint(&pbuf, "{{\"workspace_id\":{d},\"subagents\":{d},\"background\":{d}}}", .{ ws_id, subagents, background }) catch return 1;
+    _ = apiCall(ctx.alloc, ctx.socket_path, "workspace.set_subagent_counts", p) catch {};
+    wout("OK\n");
+    return 0;
+}
+
+fn cmdSetIdle(ctx: Ctx) u8 {
+    const stdin_file: std.fs.File = .stdin();
+    const stdin_data = stdin_file.readToEndAlloc(ctx.alloc, 1024 * 1024) catch "";
+    const input = blk: {
+        const trimmed = std.mem.trim(u8, stdin_data, &[_]u8{ '\r', '\n', ' ' });
+        if (trimmed.len == 0) break :blk JsonValue{ .object = std.json.ObjectMap.init(ctx.alloc) };
+        const parsed = std.json.parseFromSlice(JsonValue, ctx.alloc, trimmed, .{}) catch
+            break :blk JsonValue{ .object = std.json.ObjectMap.init(ctx.alloc) };
+        break :blk parsed.value;
+    };
+    const ws_id = getJsonInt(input, "workspace_id") orelse envInt("SEANCE_WORKSPACE_ID") orelse {
+        werr("seance: workspace_id required\n");
+        return 1;
+    };
+    const sf_id = getJsonInt(input, "surface_id") orelse envInt("SEANCE_SURFACE_ID");
+    // Build status key: "mimocode" (prefix) + optional "-{surface_id}"
+    const sk = if (sf_id) |sf|
+        std.fmt.allocPrint(ctx.alloc, "mimocode-{d}", .{sf}) catch "mimocode"
+    else
+        "mimocode";
+    const sk_escaped = jsonEscapeAlloc(ctx.alloc, sk);
+    var pbuf: [256]u8 = undefined;
+    const p = std.fmt.bufPrint(&pbuf, "{{\"workspace_id\":{d},\"key\":\"{s}\",\"value\":\"Idle\",\"priority\":5,\"is_agent\":true,\"display_name\":\"MiMo Code\"}}", .{ ws_id, sk_escaped }) catch return 1;
+    _ = apiCall(ctx.alloc, ctx.socket_path, "workspace.set_status", p) catch {};
+    wout("OK\n");
+    return 0;
 }
 
 const HookCtx = struct {
@@ -1403,9 +1457,12 @@ fn cmdAgentHook(ctx: Ctx, agent: AgentConfig) u8 {
     const session_id = extractSessionId(input);
     const store = SessionStore.init(ctx.alloc);
 
-    // Resolve workspace/surface from overrides, session store, or env
+    // Resolve workspace/surface: overrides > env > session store
     var ws = ws_override;
     var sf = sf_override;
+    if (ws == null) ws = envInt("SEANCE_WORKSPACE_ID");
+    if (sf == null) sf = envInt("SEANCE_SURFACE_ID");
+    // Session store fallback only when env vars are not set
     if (ws == null or sf == null) {
         if (session_id) |sid| {
             if (store.lookup(sid)) |rec| {
@@ -1414,8 +1471,6 @@ fn cmdAgentHook(ctx: Ctx, agent: AgentConfig) u8 {
             }
         }
     }
-    if (ws == null) ws = envInt("SEANCE_WORKSPACE_ID");
-    if (sf == null) sf = envInt("SEANCE_SURFACE_ID");
 
     const h = HookCtx{
         .alloc = ctx.alloc,
@@ -1435,17 +1490,15 @@ fn cmdAgentHook(ctx: Ctx, agent: AgentConfig) u8 {
     if (eql(hook_cmd, "post-tool-use")) {
         if (agent.has_post_tool_hook) return agentHookPostToolUse(h);
     }
-    // Hermes-specific hooks — single identity check for all Hermes-only hooks
-    if (eql(h.agent.name, "Hermes")) {
-        if (eql(hook_cmd, "llm-complete")) return agentHookLlmComplete(h);
-        if (eql(hook_cmd, "approval-request")) return agentHookApprovalRequest(h);
-        if (eql(hook_cmd, "approval-response")) return agentHookApprovalResponse(h);
-        if (eql(hook_cmd, "interrupt")) return agentHookInterrupt(h);
-    }
     if (eql(hook_cmd, "notification")) {
         if (agent.has_notification_hook) return agentHookNotification(h);
     }
     if (eql(hook_cmd, "stop")) return agentHookStop(h);
+    // Hermes-specific hooks
+    if (eql(hook_cmd, "llm-complete")) return agentHookLlmComplete(h);
+    if (eql(hook_cmd, "approval-request")) return agentHookApprovalRequest(h);
+    if (eql(hook_cmd, "approval-response")) return agentHookApprovalResponse(h);
+    if (eql(hook_cmd, "interrupt")) return agentHookInterrupt(h);
 
     wfmt("seance: unknown hook '{s}'\n", .{hook_cmd});
     return 1;
@@ -1457,31 +1510,27 @@ fn setAgentStatus(h: HookCtx, ws: u64, value: []const u8, priority: i32) void {
     _ = apiCall(h.alloc, h.socket_path, "workspace.set_status", p) catch {};
 }
 
+fn statusWithSubagentCount(alloc: Allocator, base: []const u8, count: u64) []const u8 {
+    if (count == 0) return base;
+    return std.fmt.allocPrint(alloc, "{s} ({d} subagent{s})", .{ base, count, if (count > 1) "s" else "" }) catch base;
+}
+
 fn emitNotification(h: HookCtx, ws: u64, title: []const u8, body: []const u8, focused: bool) void {
-    // Cap title/body to keep JSON payload within a fixed buffer
-    const max_title: usize = 128;
-    const max_body: usize = 200;
-    const capped_title = if (title.len > max_title) title[0..max_title] else title;
-    const capped_body = if (body.len > max_body) body[0..max_body] else body;
-
-    var buf: [2048]u8 = undefined;
-    var fbs = std.io.fixedBufferStream(&buf);
-    const w = fbs.writer();
-
-    w.print("{{\"title\":\"", .{}) catch return;
-    jsonEscapeTo(capped_title, &w) catch return;
-    w.print("\",\"body\":\"", .{}) catch return;
-    jsonEscapeTo(capped_body, &w) catch return;
-    w.print("\",\"workspace_id\":{d}", .{ws}) catch return;
+    var pbuf: [2048]u8 = undefined;
+    var plen: usize = 0;
+    const hdr = std.fmt.bufPrint(pbuf[plen..], "{{\"title\":\"{s}\",\"body\":\"{s}\"", .{ jsonEscapeAlloc(h.alloc, title), jsonEscapeAlloc(h.alloc, body) }) catch "";
+    plen += hdr.len;
+    const wsf = std.fmt.bufPrint(pbuf[plen..], ",\"workspace_id\":{d}", .{ws}) catch "";
+    plen += wsf.len;
     if (h.surface) |sf| {
-        w.print(",\"surface_id\":{d}", .{sf}) catch return;
+        const sff = std.fmt.bufPrint(pbuf[plen..], ",\"surface_id\":{d}", .{sf}) catch "";
+        plen += sff.len;
     }
     if (focused) {
-        w.print(",\"read\":true", .{}) catch return;
+        plen += bufCopy(pbuf[plen..], ",\"read\":true");
     }
-    w.print("}}", .{}) catch return;
-
-    _ = apiCall(h.alloc, h.socket_path, "notification.create", fbs.getWritten()) catch {};
+    plen += bufCopy(pbuf[plen..], "}");
+    _ = apiCall(h.alloc, h.socket_path, "notification.create", pbuf[0..plen]) catch {};
 }
 
 fn agentHookSessionStart(h: HookCtx) u8 {
@@ -1504,7 +1553,10 @@ fn agentHookSessionStart(h: HookCtx) u8 {
 
 fn agentHookPromptSubmit(h: HookCtx) u8 {
     if (h.workspace) |ws| {
-        setAgentStatus(h, ws, "Running", 10);
+        const base = "Running";
+        const subagent_count = getJsonInt(h.input, "subagent_count") orelse 0;
+        const status = statusWithSubagentCount(h.alloc, base, subagent_count);
+        setAgentStatus(h, ws, status, 10);
     }
     wout(h.agent.response);
     return 0;
@@ -1517,10 +1569,7 @@ fn agentHookPreToolUse(h: HookCtx) u8 {
 
     if (h.agent.has_ask_user_handling) {
         if (tool_name) |tn| {
-            // Hermes uses "clarify" tool; other agents use "AskUserQuestion"
-            const is_clarify = eql(h.agent.name, "Hermes") and eql(tn, "clarify");
-            const is_ask = eql(tn, "AskUserQuestion");
-            if (is_clarify or is_ask) {
+            if (eql(tn, "AskUserQuestion")) {
                 const tool_input = if (h.input == .object) (h.input.object.get("tool_input") orelse h.input.object.get("input") orelse .null) else JsonValue.null;
                 if (tool_input == .object) {
                     if (tool_input.object.get("question")) |q| {
@@ -1529,15 +1578,6 @@ fn agentHookPreToolUse(h: HookCtx) u8 {
                                 var fields = JsonFields.init(h.alloc);
                                 fields.putStr("last_body", q.string);
                                 h.store.upsert(sid, fields);
-                            }
-                            // Hermes-specific: show "Needs input" status and emit notification
-                            if (is_clarify) {
-                                if (h.workspace) |ws| {
-                                    setAgentStatus(h, ws, "Needs input", 10);
-                                    const focused = isWorkspaceFocused(h.alloc, h.socket_path, ws);
-                                    const notif_body = std.fmt.allocPrint(h.alloc, "{s}: {s}", .{ h.agent.display_name, q.string }) catch q.string;
-                                    emitNotification(h, ws, h.agent.display_name, notif_body, focused);
-                                }
                             }
                         }
                     }
@@ -1550,7 +1590,9 @@ fn agentHookPreToolUse(h: HookCtx) u8 {
 
     if (h.workspace) |ws| {
         const desc = toolDescription(h.alloc, tool_name, h.input);
-        setAgentStatus(h, ws, desc, 10);
+        const subagent_count = getJsonInt(h.input, "subagent_count") orelse 0;
+        const status = statusWithSubagentCount(h.alloc, desc, subagent_count);
+        setAgentStatus(h, ws, status, 10);
     }
     wout(h.agent.response);
     return 0;
@@ -1558,7 +1600,10 @@ fn agentHookPreToolUse(h: HookCtx) u8 {
 
 fn agentHookPostToolUse(h: HookCtx) u8 {
     if (h.workspace) |ws| {
-        setAgentStatus(h, ws, "Running", 10);
+        const base = "Running";
+        const subagent_count = getJsonInt(h.input, "subagent_count") orelse 0;
+        const status = statusWithSubagentCount(h.alloc, base, subagent_count);
+        setAgentStatus(h, ws, status, 10);
     }
     wout(h.agent.response);
     return 0;
@@ -1574,25 +1619,8 @@ fn agentHookLlmComplete(h: HookCtx) u8 {
 /// to pass an explicit cwd; when null, the cwd is resolved from the input
 /// or from the stored session record.
 fn emitCompletionNotification(h: HookCtx, cwd_override: ?[]const u8) void {
-    const cwd = cwd_override orelse extractCwd(h.input);
-
-    var title: []const u8 = "Completed";
-    if (cwd) |c| {
-        const project = std.fs.path.basename(c);
-        if (project.len > 0) {
-            title = std.fmt.allocPrint(h.alloc, "Completed in {s}", .{project}) catch "Completed";
-        }
-    } else if (h.session_id) |sid| {
-        if (h.store.lookup(sid)) |rec| {
-            const rec_cwd = getJsonStr(rec, "cwd");
-            if (rec_cwd.len > 0) {
-                const project = std.fs.path.basename(rec_cwd);
-                if (project.len > 0) {
-                    title = std.fmt.allocPrint(h.alloc, "Completed in {s}", .{project}) catch "Completed";
-                }
-            }
-        }
-    }
+    _ = cwd_override; // No longer used — title is always "Completed"
+    const title: []const u8 = "Completed";
 
     var body: []const u8 = "";
     var used_stored_body = false;
@@ -1615,17 +1643,9 @@ fn emitCompletionNotification(h: HookCtx, cwd_override: ?[]const u8) void {
                     body = getJsonStr(rec, "last_subtitle");
                 }
             } else {
-                // For non-Hermes agents, don't use stored last_body (it may be stale from a question)
-                body = getJsonStr(rec, "last_subtitle");
-            }
-            if (cwd == null) {
-                const rec_cwd = getJsonStr(rec, "cwd");
-                if (rec_cwd.len > 0) {
-                    const project = std.fs.path.basename(rec_cwd);
-                    if (project.len > 0) {
-                        title = std.fmt.allocPrint(h.alloc, "Completed in {s}", .{project}) catch title;
-                    }
-                }
+                // For non-Hermes agents, don't use stored last_body or last_subtitle
+                // (they may be stale from permission notifications or questions)
+                // Just show "Completed" with empty body
             }
         }
     }
@@ -1686,24 +1706,38 @@ fn agentHookNotification(h: HookCtx) u8 {
     const summary = summarizeNotification(h.input);
     var body = summary.body;
 
-    // Check for saved question from AskUserQuestion
-    if (h.session_id) |sid| {
-        if (h.store.lookup(sid)) |rec| {
-            const saved = getJsonStr(rec, "last_body");
-            if (saved.len > 0) {
-                body = saved;
-                var clear_fields = JsonFields.init(h.alloc);
-                clear_fields.putStr("last_body", "");
-                h.store.upsert(sid, clear_fields);
+    // Debug: log what summarizeNotification found
+    if (std.posix.getenv("SEANCE_DEBUG")) |_| {
+        std.log.info("agentHookNotification: subtitle={s} body={s}", .{ summary.subtitle, body });
+    }
+
+    // Only override body with saved last_body for non-permission notifications.
+    // Permission notifications should use the message text directly.
+    if (!std.mem.eql(u8, summary.subtitle, "Permission")) {
+        if (h.session_id) |sid| {
+            if (h.store.lookup(sid)) |rec| {
+                const saved = getJsonStr(rec, "last_body");
+                if (saved.len > 0) {
+                    body = saved;
+                    var clear_fields = JsonFields.init(h.alloc);
+                    clear_fields.putStr("last_body", "");
+                    h.store.upsert(sid, clear_fields);
+                }
             }
         }
     }
 
-    // Update session
+    // Update session — don't store last_body for permission notifications
+    // to avoid polluting the session store (it interferes with completion notifications)
     if (h.session_id) |sid| {
         var fields = JsonFields.init(h.alloc);
-        fields.putStr("last_subtitle", summary.subtitle);
-        fields.putStr("last_body", body);
+        if (!std.mem.eql(u8, summary.subtitle, "Permission")) {
+            fields.putStr("last_subtitle", summary.subtitle);
+            fields.putStr("last_body", body);
+        } else {
+            // For permission notifications, clear any stale last_body
+            fields.putStr("last_body", "");
+        }
         h.store.upsert(sid, fields);
     }
 
@@ -1720,7 +1754,54 @@ fn agentHookNotification(h: HookCtx) u8 {
 }
 
 fn agentHookStop(h: HookCtx) u8 {
-    emitCompletionNotification(h, extractCwd(h.input));
+    const cwd = extractCwd(h.input);
+    var title: []const u8 = "Completed";
+    var body: []const u8 = "";
+
+    if (cwd) |c| {
+        const project = std.fs.path.basename(c);
+        if (project.len > 0) {
+            title = std.fmt.allocPrint(h.alloc, "Completed in {s}", .{project}) catch "Completed";
+        }
+    }
+
+    const last_msg = getNestedString(h.input, "last_assistant_message");
+    if (last_msg) |msg| {
+        const collapsed = collapseWhitespace(h.alloc, msg);
+        body = if (collapsed.len > 200) collapsed[0..200] else collapsed;
+    } else if (h.session_id) |sid| {
+        if (h.store.lookup(sid)) |rec| {
+            const saved_body = getJsonStr(rec, "last_body");
+            if (saved_body.len > 0) {
+                body = saved_body;
+            } else {
+                body = getJsonStr(rec, "last_subtitle");
+            }
+            if (cwd == null) {
+                const rec_cwd = getJsonStr(rec, "cwd");
+                if (rec_cwd.len > 0) {
+                    const project = std.fs.path.basename(rec_cwd);
+                    if (project.len > 0) {
+                        title = std.fmt.allocPrint(h.alloc, "Completed in {s}", .{project}) catch title;
+                    }
+                }
+            }
+        }
+    }
+
+    if (h.session_id) |sid| {
+        var fields = JsonFields.init(h.alloc);
+        fields.putStr("last_subtitle", title);
+        fields.putStr("last_body", body);
+        h.store.upsert(sid, fields);
+    }
+
+    if (h.workspace) |ws| {
+        const focused = isWorkspaceFocused(h.alloc, h.socket_path, ws);
+        emitNotification(h, ws, title, body, focused);
+        setAgentStatus(h, ws, "Idle", 5);
+    }
+
     wout(h.agent.response);
     return 0;
 }
@@ -2158,25 +2239,6 @@ fn jsonEscapeAlloc(alloc: Allocator, input: []const u8) []const u8 {
     return result.items;
 }
 
-fn jsonEscapeTo(input: []const u8, writer: anytype) !void {
-    for (input) |ch| {
-        switch (ch) {
-            '"' => try writer.writeAll("\\\""),
-            '\\' => try writer.writeAll("\\\\"),
-            '\n' => try writer.writeAll("\\n"),
-            '\r' => try writer.writeAll("\\r"),
-            '\t' => try writer.writeAll("\\t"),
-            else => {
-                if (ch < 0x20) {
-                    try writer.print("\\u{x:0>4}", .{ch});
-                } else {
-                    try writer.writeByte(ch);
-                }
-            },
-        }
-    }
-}
-
 // ── Output helpers ──────────────────────────────────────────────────────
 
 fn printJson(alloc: Allocator, val: JsonValue) void {
@@ -2355,8 +2417,13 @@ fn printUsage() void {
         \\    Events: session-start, session-end, prompt-submit,
         \\            pre-tool-use, post-tool-use, stop, notification
         \\
+        \\Vibe Hooks:
+        \\  vibe-hook <event>       Handle Vibe lifecycle event
+        \\    Events: session-start, session-end, prompt-submit,
+        \\            pre-tool-use, post-tool-use, stop
+        \\
         \\Hermes Hooks:
-        \\  hermes-hook <event>     Handle Hermes Agent lifecycle event
+        \\  hermes-hook <event>     Handle Hermes lifecycle event
         \\    Events: session-start, session-end, prompt-submit,
         \\            pre-tool-use, post-tool-use, llm-complete,
         \\            approval-request, approval-response, interrupt
