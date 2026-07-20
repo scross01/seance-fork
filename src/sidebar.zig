@@ -408,7 +408,7 @@ pub const Sidebar = struct {
 
             for (0..visible_count) |si| {
                 const entry = &ws.metadata.status_entries[sort_indices[si]];
-                const status_label = makeStatusLabel(entry, ws.metadata.subagent_count, ws.metadata.background_count);
+                const status_label = makeStatusLabel(entry, ws.metadata.background_count);
                 c.gtk_box_append(@ptrCast(pills_box), status_label);
             }
 
@@ -814,12 +814,10 @@ fn makeBranchDirectorySection(branch: ?[]const u8, dirty: bool, cwd: ?[]const u8
 }
 
 
-fn makeStatusLabel(entry: *const workspace_mod.StatusEntry, subagent_count: u32, background_count: u32) *c.GtkWidget {
+fn makeStatusLabel(entry: *const workspace_mod.StatusEntry, background_count: u32) *c.GtkWidget {
     const hbox = c.gtk_box_new(c.GTK_ORIENTATION_HORIZONTAL, 4);
 
-    const icon_name: [*:0]const u8 = if (subagent_count > 0)
-        "system-run-symbolic"
-    else if (background_count > 0)
+    const icon_name: [*:0]const u8 = if (background_count > 0)
         "media-playback-start-symbolic"
     else if (entry.is_agent)
         agentStatusIcon(entry.getValue())

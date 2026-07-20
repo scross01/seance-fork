@@ -1459,6 +1459,11 @@ fn setAgentStatus(h: HookCtx, ws: u64, value: []const u8, priority: i32) void {
     _ = apiCall(h.alloc, h.socket_path, "workspace.set_status", p) catch {};
 }
 
+fn statusWithSubagentCount(alloc: Allocator, base: []const u8, count: u64) []const u8 {
+    if (count == 0) return base;
+    return std.fmt.allocPrint(alloc, "{s} ({d} subagent{s})", .{ base, count, if (count > 1) "s" else "" }) catch base;
+}
+
 fn emitNotification(h: HookCtx, ws: u64, title: []const u8, body: []const u8, focused: bool) void {
     var pbuf: [2048]u8 = undefined;
     var plen: usize = 0;
@@ -1497,7 +1502,10 @@ fn agentHookSessionStart(h: HookCtx) u8 {
 
 fn agentHookPromptSubmit(h: HookCtx) u8 {
     if (h.workspace) |ws| {
-        setAgentStatus(h, ws, "Running", 10);
+        const base = "Running";
+        const subagent_count = getJsonInt(h.input, "subagent_count") orelse 0;
+        const status = statusWithSubagentCount(h.alloc, base, subagent_count);
+        setAgentStatus(h, ws, status, 10);
     }
     wout(h.agent.response);
     return 0;
@@ -1531,7 +1539,9 @@ fn agentHookPreToolUse(h: HookCtx) u8 {
 
     if (h.workspace) |ws| {
         const desc = toolDescription(h.alloc, tool_name, h.input);
-        setAgentStatus(h, ws, desc, 10);
+        const subagent_count = getJsonInt(h.input, "subagent_count") orelse 0;
+        const status = statusWithSubagentCount(h.alloc, desc, subagent_count);
+        setAgentStatus(h, ws, status, 10);
     }
     wout(h.agent.response);
     return 0;
@@ -1539,7 +1549,10 @@ fn agentHookPreToolUse(h: HookCtx) u8 {
 
 fn agentHookPostToolUse(h: HookCtx) u8 {
     if (h.workspace) |ws| {
-        setAgentStatus(h, ws, "Running", 10);
+        const base = "Running";
+        const subagent_count = getJsonInt(h.input, "subagent_count") orelse 0;
+        const status = statusWithSubagentCount(h.alloc, base, subagent_count);
+        setAgentStatus(h, ws, status, 10);
     }
     wout(h.agent.response);
     return 0;

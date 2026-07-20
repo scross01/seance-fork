@@ -1,6 +1,6 @@
 // Séance plugin for MiMo Code
 // Copy to ~/.config/mimocode/plugins/seance-mimocode.ts
-// @seance-version 36
+// @seance-version 37
 
 export const SeancePlugin = async ({ $ }) => {
   const socket = process.env.SEANCE_SOCKET_PATH;
@@ -26,6 +26,7 @@ export const SeancePlugin = async ({ $ }) => {
       session_id: currentSessionId,
       workspace_id: workspaceId,
       surface_id: surfaceId,
+      subagent_count: subagentCount,
       ...extra,
     });
     await $`echo '${shEscape(payload)}' | ${seanceBin} ctl mimocode-hook ${event} >/dev/null`;
@@ -67,8 +68,6 @@ export const SeancePlugin = async ({ $ }) => {
         case "session.idle":
           if (!eventSessionId || eventSessionId === currentSessionId) {
             if (permissionPending) {
-              // Permission was requested — don't fire stop yet
-              // The session will resume after permission is granted
               permissionPending = false;
             } else {
               sessionIdle = true;
@@ -98,13 +97,10 @@ export const SeancePlugin = async ({ $ }) => {
               permissionPending = false;
               await hook("prompt-submit");
             }
-            // Don't fire hook("stop") here — session.idle handles completion
-            // to avoid duplicate "Completed" notifications
           }
           break;
 
         case "permission.asked":
-          // Don't fire notification if session is idle — permission request is stale
           if (!sessionIdle && (!eventSessionId || eventSessionId === currentSessionId)) {
             permissionPending = true;
             const permType = event.properties?.permission ?? "unknown";
@@ -112,39 +108,45 @@ export const SeancePlugin = async ({ $ }) => {
             const detail = Array.isArray(patterns) && patterns.length > 0
               ? `${permType}: ${patterns.join(", ")}`
               : String(permType);
-            // Use lowercase "permission" so categorize() in summarizeNotification()
-            // can match it (containsAny is case-sensitive)
             await hook("notification", {
-              message: `permission requested: ${detail}`,
+              message: detail,
             });
           }
           break;
 
         case "permission.replied":
-          // User granted/denied permission — reset flag so session.idle fires hook("stop")
           permissionPending = false;
           break;
 
         case "actor.registered":
-          if (eventSessionId && eventSessionId !== currentSessionId) {
+          {
             const mode = event.properties?.mode;
-            const background = event.properties?.background;
-            if (mode === "subagent" && !background) {
-              if (!childSessions.has(eventSessionId)) {
-                childSessions.add(eventSessionId);
+            const agent = event.properties?.agent;
+            const actorID = event.properties?.actorID;
+            if (mode === "subagent" && agent !== "checkpoint-writer" && agent !== "compaction") {
+              if (actorID && !childSessions.has(actorID)) {
+                childSessions.add(actorID);
                 subagentCount++;
                 await updateCounts();
               }
             }
           }
           break;
+
+        case "actor.status":
+          {
+            const actorID = event.properties?.actorID;
+            const status = event.properties?.status;
+            if (status === "idle" && actorID && childSessions.has(actorID)) {
+              childSessions.delete(actorID);
+              subagentCount = Math.max(0, subagentCount - 1);
+              await updateCounts();
+            }
+          }
+          break;
       }
     },
 
-    // tool.execute.before/after — only process main session.
-    // Background sessions (checkpoint-writer, compaction, etc.) and
-    // subagents are both ignored here. Subagent tracking is handled
-    // exclusively by actor.postStop.
     "tool.execute.before": async (input: { tool: string; sessionID: string; callID: string }) => {
       if (!input.sessionID || input.sessionID === currentSessionId) {
         await hook("pre-tool-use", { tool_name: input.tool });
@@ -155,31 +157,6 @@ export const SeancePlugin = async ({ $ }) => {
       if (!input.sessionID || input.sessionID === currentSessionId) {
         await hook("post-tool-use", { tool_name: input.tool });
       }
-    },
-
-    "actor.postStop": {
-      matcher: {},  // see ALL actors including built-in agents
-      run: async (input: {
-        sessionID: string;
-        parentSessionID?: string;
-        agentType: string;
-        mode: "subagent" | "peer";
-        lifecycle: "ephemeral" | "persistent";
-        outcome: "success" | "failure" | "cancelled";
-      }) => {
-        if (!input.sessionID || input.sessionID === currentSessionId) return;
-
-        // Only track mode:"subagent" — ignore background tasks (mode:"peer" or others)
-        if (input.mode === "subagent") {
-          if (childSessions.has(input.sessionID)) {
-            // Subagent completed — decrement count
-            childSessions.delete(input.sessionID);
-            subagentCount = Math.max(0, subagentCount - 1);
-            await updateCounts();
-          }
-        }
-        // Background tasks (checkpoint-writer, compaction, etc.) are simply ignored
-      },
     },
   };
 };
