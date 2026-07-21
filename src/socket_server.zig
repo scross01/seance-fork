@@ -637,29 +637,46 @@ pub const SocketServer = struct {
     fn handleWindowList(id: []const u8, buf: []u8) []const u8 {
         const wm = getWindowManager() orelse return writeJsonError(buf, id, "not_ready", "Window manager not initialized");
 
-        var result_buf: [8192]u8 = undefined;
+        var result_buf: [65536]u8 = undefined;
         var pos: usize = 0;
+        var overflow = false;
 
-        pos += copySlice(result_buf[pos..], "{\"windows\":[");
+        const W = struct {
+            fn slice(r: *[65536]u8, p: *usize, ov: *bool, s: []const u8) void {
+                const n = copySlice(r.*[p.*..], s);
+                p.* += n;
+                if (n < s.len) ov.* = true;
+            }
+            fn print(r: *[65536]u8, p: *usize, ov: *bool, comptime fmt: []const u8, args: anytype) void {
+                const out = std.fmt.bufPrint(r.*[p.*..], fmt, args) catch {
+                    ov.* = true;
+                    return;
+                };
+                p.* += out.len;
+            }
+        };
+
+        W.slice(&result_buf, &pos, &overflow, "{\"windows\":[");
 
         for (wm.windows.items, 0..) |state, i| {
-            if (i > 0) pos += copySlice(result_buf[pos..], ",");
+            if (overflow) break;
+            if (i > 0) W.slice(&result_buf, &pos, &overflow, ",");
 
             var title_esc: [256]u8 = undefined;
             const title = if (state.activeWorkspace()) |ws| ws.getTitle() else "seance";
             const escaped_title = jsonEscapeString(title, &title_esc);
 
             const is_active = (wm.active_window == state);
-            const entry = std.fmt.bufPrint(result_buf[pos..], "{{\"index\":{d},\"title\":\"{s}\",\"active\":{s},\"workspace_count\":{d}}}", .{
+            W.print(&result_buf, &pos, &overflow, "{{\"index\":{d},\"title\":\"{s}\",\"active\":{s},\"workspace_count\":{d}}}", .{
                 i,
                 escaped_title,
                 if (is_active) "true" else "false",
                 state.workspaces.items.len,
-            }) catch break;
-            pos += entry.len;
+            });
         }
 
-        pos += copySlice(result_buf[pos..], "]}");
+        if (overflow) return writeJsonError(buf, id, "overflow", "Window list exceeded buffer size");
+        W.slice(&result_buf, &pos, &overflow, "]}");
         return writeJsonOk(buf, id, result_buf[0..pos]);
     }
 
@@ -731,13 +748,30 @@ pub const SocketServer = struct {
             break :blk wm.windows.items[win_idx];
         } else wm.active_window orelse return writeJsonError(buf, id, "no_window", "No active window");
 
-        var result_buf: [8192]u8 = undefined;
+        var result_buf: [65536]u8 = undefined;
         var pos: usize = 0;
+        var overflow = false;
 
-        pos += copySlice(result_buf[pos..], "{\"workspaces\":[");
+        const W = struct {
+            fn slice(r: *[65536]u8, p: *usize, ov: *bool, s: []const u8) void {
+                const n = copySlice(r.*[p.*..], s);
+                p.* += n;
+                if (n < s.len) ov.* = true;
+            }
+            fn print(r: *[65536]u8, p: *usize, ov: *bool, comptime fmt: []const u8, args: anytype) void {
+                const out = std.fmt.bufPrint(r.*[p.*..], fmt, args) catch {
+                    ov.* = true;
+                    return;
+                };
+                p.* += out.len;
+            }
+        };
+
+        W.slice(&result_buf, &pos, &overflow, "{\"workspaces\":[");
 
         for (state.workspaces.items, 0..) |ws, i| {
-            if (i > 0) pos += copySlice(result_buf[pos..], ",");
+            if (overflow) break;
+            if (i > 0) W.slice(&result_buf, &pos, &overflow, ",");
 
             var title_esc: [256]u8 = undefined;
             const escaped_title = jsonEscapeString(ws.getTitle(), &title_esc);
@@ -754,7 +788,7 @@ pub const SocketServer = struct {
             } else "";
 
             const panel_count: usize = if (ws.focusedGroup()) |fg| fg.panels.items.len else 0;
-            const entry = std.fmt.bufPrint(result_buf[pos..], "{{\"id\":{d},\"index\":{d},\"title\":\"{s}\",\"active\":{s},\"pinned\":{s},\"panel_count\":{d},\"cwd\":\"{s}\"{s}}}", .{
+            W.print(&result_buf, &pos, &overflow, "{{\"id\":{d},\"index\":{d},\"title\":\"{s}\",\"active\":{s},\"pinned\":{s},\"panel_count\":{d},\"cwd\":\"{s}\"{s}}}", .{
                 ws.id,
                 i,
                 escaped_title,
@@ -763,11 +797,11 @@ pub const SocketServer = struct {
                 panel_count,
                 escaped_cwd,
                 git_str,
-            }) catch break;
-            pos += entry.len;
+            });
         }
 
-        pos += copySlice(result_buf[pos..], "]}");
+        if (overflow) return writeJsonError(buf, id, "overflow", "Workspace list exceeded buffer size");
+        W.slice(&result_buf, &pos, &overflow, "]}");
         return writeJsonOk(buf, id, result_buf[0..pos]);
     }
 
@@ -1462,15 +1496,32 @@ pub const SocketServer = struct {
     fn handleNotificationList(id: []const u8, buf: []u8) []const u8 {
         const state = getActiveState() orelse return writeJsonError(buf, id, "not_ready", "No active window");
 
-        var result_buf: [8192]u8 = undefined;
+        var result_buf: [65536]u8 = undefined;
         var pos: usize = 0;
+        var overflow = false;
 
-        pos += copySlice(result_buf[pos..], "{\"notifications\":[");
+        const W = struct {
+            fn slice(r: *[65536]u8, p: *usize, ov: *bool, s: []const u8) void {
+                const n = copySlice(r.*[p.*..], s);
+                p.* += n;
+                if (n < s.len) ov.* = true;
+            }
+            fn print(r: *[65536]u8, p: *usize, ov: *bool, comptime fmt: []const u8, args: anytype) void {
+                const out = std.fmt.bufPrint(r.*[p.*..], fmt, args) catch {
+                    ov.* = true;
+                    return;
+                };
+                p.* += out.len;
+            }
+        };
+
+        W.slice(&result_buf, &pos, &overflow, "{\"notifications\":[");
 
         var first = true;
         for (0..state.notif_center.store.count) |i| {
+            if (overflow) break;
             const notif = state.notif_center.store.getByIndex(i) orelse continue;
-            if (!first) pos += copySlice(result_buf[pos..], ",");
+            if (!first) W.slice(&result_buf, &pos, &overflow, ",");
             first = false;
 
             var title_esc: [512]u8 = undefined;
@@ -1480,7 +1531,7 @@ pub const SocketServer = struct {
             var body_esc: [1024]u8 = undefined;
             const escaped_body = jsonEscapeString(notif.getBody(), &body_esc);
 
-            const entry = std.fmt.bufPrint(result_buf[pos..], "{{\"index\":{d},\"title\":\"{s}\",\"subtitle\":\"{s}\",\"body\":\"{s}\",\"workspace_id\":{d},\"surface_id\":{d},\"pane_group_id\":{d},\"read\":{s},\"timestamp\":{d}}}", .{
+            W.print(&result_buf, &pos, &overflow, "{{\"index\":{d},\"title\":\"{s}\",\"subtitle\":\"{s}\",\"body\":\"{s}\",\"workspace_id\":{d},\"surface_id\":{d},\"pane_group_id\":{d},\"read\":{s},\"timestamp\":{d}}}", .{
                 i,
                 escaped_title,
                 escaped_subtitle,
@@ -1490,11 +1541,11 @@ pub const SocketServer = struct {
                 notif.pane_group_id,
                 if (notif.read) "true" else "false",
                 notif.timestamp,
-            }) catch break;
-            pos += entry.len;
+            });
         }
 
-        pos += copySlice(result_buf[pos..], "]}");
+        if (overflow) return writeJsonError(buf, id, "overflow", "Notification list exceeded buffer size");
+        W.slice(&result_buf, &pos, &overflow, "]}");
         return writeJsonOk(buf, id, result_buf[0..pos]);
     }
 
