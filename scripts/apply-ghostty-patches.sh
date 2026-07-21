@@ -10,9 +10,9 @@ echo "Applying seance patches to ghostty..."
 
 cd "$GHOSTTY_DIR"
 
-# Check if patches are already applied
-if git log --oneline -1 | grep -q "seance-patches"; then
-    echo "Patches already applied. Skipping."
+# Check if patches are already applied by looking for uncommitted changes
+if ! git diff --quiet HEAD; then
+    echo "Patches appear to be already applied (uncommitted changes detected). Skipping."
     exit 0
 fi
 
