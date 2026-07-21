@@ -557,7 +557,7 @@ fn cmdListWorkspaces(ctx: Ctx) u8 {
 fn cmdNewWorkspace(ctx: Ctx) u8 {
     const title = findNamedArg(ctx.rest, "--title");
     const params = if (title) |t|
-        std.fmt.allocPrint(ctx.alloc, "{{\"title\":\"{s}\"}}", .{t}) catch null
+        std.fmt.allocPrint(ctx.alloc, "{{\"title\":\"{s}\"}}", .{jsonEscapeAlloc(ctx.alloc, t)}) catch null
     else
         null;
     const resp = apiCall(ctx.alloc, ctx.socket_path, "workspace.create", params) catch |e| {
@@ -616,7 +616,7 @@ fn cmdRenameWorkspace(ctx: Ctx) u8 {
         werr("usage: rename-workspace ID TITLE\n");
         return 1;
     }
-    const params = std.fmt.allocPrint(ctx.alloc, "{{\"workspace_id\":{s},\"title\":\"{s}\"}}", .{ ctx.rest[0], ctx.rest[1] }) catch return 1;
+    const params = std.fmt.allocPrint(ctx.alloc, "{{\"workspace_id\":{s},\"title\":\"{s}\"}}", .{ ctx.rest[0], jsonEscapeAlloc(ctx.alloc, ctx.rest[1]) }) catch return 1;
     _ = apiCall(ctx.alloc, ctx.socket_path, "workspace.rename", params) catch |e| {
         printSocketError(e);
         return 1;
@@ -1820,7 +1820,11 @@ fn agentHookSessionEnd(h: HookCtx) u8 {
 
     if (h.agent.session_dir_env) |env_name| {
         if (std.posix.getenv(env_name)) |dir| {
-            std.fs.deleteTreeAbsolute(dir) catch {};
+            if (isValidSessionDir(dir)) {
+                std.fs.deleteTreeAbsolute(dir) catch {};
+            } else {
+                std.log.warn("seance: refusing to delete unexpected session dir: {s}", .{dir});
+            }
         }
     }
 
@@ -1829,6 +1833,31 @@ fn agentHookSessionEnd(h: HookCtx) u8 {
 }
 
 // ── Hook helpers ────────────────────────────────────────────────────────
+
+fn isValidSessionDir(dir: []const u8) bool {
+    const home = std.posix.getenv("HOME") orelse return false;
+    const cache_prefixes = [_][]const u8{ "/.cache/seance-codex/", "/.cache/seance-pi/" };
+    for (cache_prefixes) |prefix| {
+        // Check for $HOME/.cache/seance-<agent>/<id>
+        if (std.mem.startsWith(u8, dir, home)) {
+            const rest = dir[home.len..];
+            if (std.mem.startsWith(u8, rest, prefix)) {
+                const id_part = rest[prefix.len..];
+                if (id_part.len > 0) {
+                    var all_digits = true;
+                    for (id_part) |ch| {
+                        if (ch < '0' or ch > '9') {
+                            all_digits = false;
+                            break;
+                        }
+                    }
+                    if (all_digits) return true;
+                }
+            }
+        }
+    }
+    return false;
+}
 
 fn extractSessionId(data: JsonValue) ?[]const u8 {
     const paths = [_][]const u8{ "session_id", "sessionId", "notification.session_id", "data.session_id", "session.id", "context.session_id" };

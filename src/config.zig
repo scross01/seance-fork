@@ -222,7 +222,7 @@ pub fn saveConfig(cfg: *const Config) void {
 
     // Write to a temp file first, then rename for atomic save
     var tmp_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const tmp_path = std.fmt.bufPrint(&tmp_buf, "{s}/config.toml.tmp", .{dir_path}) catch {
+    const tmp_path = std.fmt.bufPrint(&tmp_buf, "{s}/config.{d}.tmp", .{ dir_path, std.time.timestamp() }) catch {
         std.log.warn("config: cannot save — tmp path too long", .{});
         return;
     };
@@ -347,9 +347,9 @@ fn parseToml(config: *Config, content: []const u8) void {
             if (std.mem.indexOfScalar(u8, trimmed, ']')) |end| {
                 const section = trimmed[1..end];
                 if (!isKnownSection(section)) {
-                    load_error.set("config.toml line {d}: unknown section [{s}]", .{ line_num, section });
-                    std.log.warn("config: line {d}: unknown section [{s}]", .{ line_num, section });
-                    return;
+                    std.log.warn("config: line {d}: unknown section [{s}], skipping", .{ line_num, section });
+                    current_section = "";
+                    continue;
                 }
                 current_section = section;
             } else {
@@ -369,14 +369,8 @@ fn parseToml(config: *Config, content: []const u8) void {
                 return;
             }
             if (!applyValue(config, current_section, key, val)) {
-                if (current_section.len == 0) {
-                    load_error.set("config.toml line {d}: unexpected key \"{s}\" (missing section header?)", .{ line_num, key });
-                    std.log.warn("config: line {d}: unexpected key \"{s}\" outside any section", .{ line_num, key });
-                } else {
-                    load_error.set("config.toml line {d}: unknown key \"{s}\" in [{s}]", .{ line_num, key, current_section });
-                    std.log.warn("config: line {d}: unknown key \"{s}\" in [{s}]", .{ line_num, key, current_section });
-                }
-                return;
+                std.log.warn("config: line {d}: unknown key \"{s}\" in [{s}], skipping", .{ line_num, key, current_section });
+                continue;
             }
         } else {
             load_error.set("config.toml line {d}: syntax error", .{line_num});
@@ -643,18 +637,24 @@ test "parseToml: comments and blank lines are skipped" {
     try std.testing.expectEqual(@as(?u32, 10), cfg.window_padding_y);
 }
 
-test "parseToml: unknown section and keys are ignored" {
+test "parseToml: unknown section and keys are skipped, valid config continues" {
     var cfg = Config{};
-    const defaults = Config{};
     parseToml(&cfg,
         \\[unknown_section]
-        \\foo = bar
+        \\foo = "bar"
         \\
         \\[window]
-        \\nonexistent_key = 999
+        \\padding-x = 42
+        \\
+        \\[also_unknown]
+        \\baz = 123
+        \\
+        \\[font]
+        \\size = 18.0
     );
-    // Defaults should be preserved
-    try std.testing.expectEqual(defaults.window_padding_x, cfg.window_padding_x);
+    // Valid keys after unknown sections should be parsed
+    try std.testing.expectEqual(@as(?u32, 42), cfg.window_padding_x);
+    try std.testing.expectEqual(@as(?f64, 18.0), cfg.font_size);
 }
 
 test "parseToml: all sidebar enum values" {

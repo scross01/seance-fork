@@ -358,36 +358,15 @@ pub fn installVibeHooks() void {
     const hooks_path = std.fmt.allocPrint(alloc, "{s}/.vibe/hooks.toml", .{home}) catch return;
     defer alloc.free(hooks_path);
 
-    const installed_file = std.fs.openFileAbsolute(hooks_path, .{}) catch null;
-    const installed_content = if (installed_file) |f| f.readToEndAlloc(alloc, 64 * 1024) catch null else null;
-    defer if (installed_file) |f| f.close();
-    defer if (installed_content) |ic| alloc.free(ic);
+    // Strip existing seance block first (idempotent upgrade)
+    removeVibeHooks();
 
-    if (installed_content) |content| {
-        // Append to existing hooks.toml
-        const tmp_path = std.fmt.allocPrint(alloc, "{s}.tmp", .{hooks_path}) catch return;
-        defer alloc.free(tmp_path);
-        // Use exclusive creation to prevent following an existing symlink at the tmp path
-        const dst = std.fs.createFileAbsolute(tmp_path, .{ .exclusive = true }) catch return;
-        errdefer std.fs.deleteFileAbsolute(tmp_path) catch {};
-        _ = dst.writeAll(content) catch return;
-        _ = dst.writeAll("\n") catch return;
-        _ = dst.writeAll(bundled_content) catch return;
-        dst.close();
-        // Verify destination is not a symlink before renaming
-        if (std.fs.cwd().statFile(hooks_path)) |stat| {
-            if (stat.kind == .sym_link) return;
-        } else |_| {}
-        std.fs.renameAbsolute(tmp_path, hooks_path) catch return;
-        std.log.info("vibe: appended hooks to existing hooks.toml", .{});
-    } else {
-        // Write new hooks.toml
-        const dst = std.fs.createFileAbsolute(hooks_path, .{}) catch return;
-        errdefer std.fs.deleteFileAbsolute(hooks_path) catch {};
-        _ = dst.writeAll(bundled_content) catch return;
-        dst.close();
-        std.log.info("vibe: installed hooks.toml", .{});
-    }
+    // Write fresh hooks.toml (always create, since remove may have deleted it)
+    const dst = std.fs.createFileAbsolute(hooks_path, .{}) catch return;
+    errdefer std.fs.deleteFileAbsolute(hooks_path) catch {};
+    _ = dst.writeAll(bundled_content) catch return;
+    dst.close();
+    std.log.info("vibe: installed hooks.toml", .{});
     writeVersionMarker(config_dir_path, SEANCE_VIBE_VERSION);
 }
 

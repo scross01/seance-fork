@@ -210,7 +210,11 @@ pub const SocketServer = struct {
     fn extractId(obj: std.json.ObjectMap, buf: []u8) []const u8 {
         const id_val = obj.get("id") orelse return "null";
         return switch (id_val) {
-            .string => |s| std.fmt.bufPrint(buf, "\"{s}\"", .{s}) catch "null",
+            .string => |s| blk: {
+                var esc_buf: [128]u8 = undefined;
+                const escaped = jsonEscapeString(s, &esc_buf);
+                break :blk std.fmt.bufPrint(buf, "\"{s}\"", .{escaped}) catch "null";
+            },
             .integer => |n| std.fmt.bufPrint(buf, "{d}", .{n}) catch "null",
             .float => |f| std.fmt.bufPrint(buf, "{d}", .{@as(i64, @intFromFloat(f))}) catch "null",
             else => "null",
