@@ -1,4 +1,4 @@
 [submodule "ghostty"]
 	path = ghostty
-	url = https://github.com/no1msd/ghostty.git
-	branch = seance-patches
+	url = https://github.com/ghostty-org/ghostty.git
+	branch = main

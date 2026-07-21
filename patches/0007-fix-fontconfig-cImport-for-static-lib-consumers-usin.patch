@@ -1,0 +1,31 @@
+From 3ceb26f3024939ed4216fc80341eccede49ebeba Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Sipka=20D=C3=A1niel?= <sipka.daniel@leviathan.hu>
+Date: Thu, 9 Apr 2026 17:50:37 +0200
+Subject: [PATCH 7/7] fix fontconfig @cImport for static-lib consumers using
+ system integration
+
+---
+ pkg/fontconfig/build.zig | 7 +++----
+ 1 file changed, 3 insertions(+), 4 deletions(-)
+
+diff --git a/pkg/fontconfig/build.zig b/pkg/fontconfig/build.zig
+index 14e7bfb63..0e82f38da 100644
+--- a/pkg/fontconfig/build.zig
++++ b/pkg/fontconfig/build.zig
+@@ -40,10 +40,9 @@ pub fn build(b: *std.Build) !void {
+     test_step.dependOn(&tests_run.step);
+ 
+     if (b.systemIntegrationOption("fontconfig", .{})) {
+-        // Don't `module.linkSystemLibrary` here: it propagates to every
+-        // Compile step that imports the module, including static libs,
+-        // where Zig embeds the resolved `.so` as an archive member.
+-        // Consumers must link fontconfig at the compile-step level.
++        if (b.lazyDependency("fontconfig", .{})) |upstream| {
++            module.addIncludePath(upstream.path(""));
++        }
+         test_exe.linkSystemLibrary2("fontconfig", dynamic_link_opts);
+     } else {
+         const lib = try buildLib(b, module, .{
+-- 
+2.53.0
+

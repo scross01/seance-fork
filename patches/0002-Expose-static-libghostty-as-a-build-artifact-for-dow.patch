@@ -1,0 +1,54 @@
+From 08dc9692013ed1ea81791d57406598f42c5ff9e3 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Sipka=20D=C3=A1niel?= <sipka.daniel@leviathan.hu>
+Date: Sat, 21 Mar 2026 13:36:03 +0100
+Subject: [PATCH 2/7] Expose static libghostty as a build artifact for
+ downstream consumers
+
+The static lib compile step was not stored in GhosttyLib.compile for
+non-Darwin targets, making it inaccessible via artifact(). Register it
+as "ghostty_static" alongside the existing shared "ghostty" artifact.
+
+Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>
+---
+ build.zig                | 9 +++++++--
+ src/build/GhosttyLib.zig | 1 +
+ 2 files changed, 8 insertions(+), 2 deletions(-)
+
+diff --git a/build.zig b/build.zig
+index 99d07d00b..8415b087b 100644
+--- a/build.zig
++++ b/build.zig
+@@ -143,11 +143,16 @@ pub fn build(b: *std.Build) !void {
+             libghostty_shared.install("libghostty.so");
+             libghostty_static.install("libghostty.a");
+ 
+-            // Register the shared lib as a build artifact so downstream
+-            // dependencies can find it via artifact("ghostty").
++            // Register both shared and static libs as build artifacts so
++            // downstream dependencies can use artifact("ghostty") or
++            // artifact("ghostty_static").
+             if (libghostty_shared.compile) |compile| {
+                 b.installArtifact(compile);
+             }
++            if (libghostty_static.compile) |compile| {
++                compile.name = "ghostty_static";
++                b.installArtifact(compile);
++            }
+         }
+     }
+ 
+diff --git a/src/build/GhosttyLib.zig b/src/build/GhosttyLib.zig
+index bdd0ace0c..1ecf29df0 100644
+--- a/src/build/GhosttyLib.zig
++++ b/src/build/GhosttyLib.zig
+@@ -49,6 +49,7 @@ pub fn initStatic(
+ 
+     if (!deps.config.target.result.os.tag.isDarwin()) return .{
+         .step = &lib.step,
++        .compile = lib,
+         .output = lib.getEmittedBin(),
+         .dsym = null,
+     };
+-- 
+2.53.0
+

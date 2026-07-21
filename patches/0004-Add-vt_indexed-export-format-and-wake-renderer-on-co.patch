@@ -1,0 +1,86 @@
+From 704009cd711bc061f6fa9ab8820633758c13969f Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Sipka=20D=C3=A1niel?= <sipka.daniel@leviathan.hu>
+Date: Sun, 5 Apr 2026 22:17:31 +0200
+Subject: [PATCH 4/7] Add vt_indexed export format and wake renderer on config
+ change
+
+Support palette-indexed color export (vt_indexed) so downstream can
+restore scrollback without baking in RGB values from the export-time
+theme.  Also wake the renderer after changeConfig so palette/color
+updates take effect immediately.
+
+Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>
+---
+ src/Surface.zig       | 8 ++++----
+ src/input/Binding.zig | 1 +
+ src/termio/Termio.zig | 3 +++
+ 3 files changed, 8 insertions(+), 4 deletions(-)
+
+diff --git a/src/Surface.zig b/src/Surface.zig
+index 4d66622e3..85250104a 100644
+--- a/src/Surface.zig
++++ b/src/Surface.zig
+@@ -6005,7 +6005,7 @@ fn writeScreenFile(
+         .{
+             @tagName(loc),
+             switch (write_screen.emit) {
+-                .plain, .vt => "txt",
++                .plain, .vt, .vt_indexed => "txt",
+                 .html => "html",
+             },
+         },
+@@ -6073,14 +6073,14 @@ fn writeScreenFile(
+         var formatter: ScreenFormatter = .init(self.io.terminal.screens.active, .{
+             .emit = switch (write_screen.emit) {
+                 .plain => .plain,
+-                .vt => .vt,
++                .vt, .vt_indexed => .vt,
+                 .html => .html,
+             },
+             .unwrap = true,
+             .trim = false,
+             .background = self.io.terminal.colors.background.get(),
+             .foreground = self.io.terminal.colors.foreground.get(),
+-            .palette = &self.io.terminal.colors.palette.current,
++            .palette = if (write_screen.emit == .vt_indexed) null else &self.io.terminal.colors.palette.current,
+         });
+         formatter.content = .{ .selection = sel.ordered(
+             self.io.terminal.screens.active,
+@@ -6105,7 +6105,7 @@ fn writeScreenFile(
+         },
+         .open => try self.openUrl(.{
+             .kind = switch (write_screen.emit) {
+-                .plain, .vt => .text,
++                .plain, .vt, .vt_indexed => .text,
+                 .html => .html,
+             },
+             .url = path,
+diff --git a/src/input/Binding.zig b/src/input/Binding.zig
+index 62a4e39ac..a9309eee0 100644
+--- a/src/input/Binding.zig
++++ b/src/input/Binding.zig
+@@ -1092,6 +1092,7 @@ pub const Action = union(enum) {
+         pub const Format = enum {
+             plain,
+             vt,
++            vt_indexed,
+             html,
+         };
+ 
+diff --git a/src/termio/Termio.zig b/src/termio/Termio.zig
+index dcd0d8cf7..7439e40d8 100644
+--- a/src/termio/Termio.zig
++++ b/src/termio/Termio.zig
+@@ -472,6 +472,9 @@ pub fn changeConfig(self: *Termio, td: *ThreadData, config: *DerivedConfig) !voi
+             config.image_storage_limit,
+         );
+     }
++
++    // Wake the renderer so it redraws with the updated palette/colors.
++    self.renderer_wakeup.notify() catch {};
+ }
+ 
+ /// Resize the terminal.
+-- 
+2.53.0
+

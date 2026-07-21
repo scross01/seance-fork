@@ -1,0 +1,238 @@
+From 4614b99b53458f4b2bbdaa26da23c6f5154629c0 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?D=C3=A1niel=20Sipka?= <no1msd@gmail.com>
+Date: Thu, 19 Mar 2026 11:38:16 +0100
+Subject: [PATCH 1/7] feat: enable libghostty embedded API for OpenGL on Linux
+
+Add support for using libghostty as an embedded library with OpenGL
+rendering on Linux (previously only Metal on macOS was supported).
+
+Changes:
+- Add GHOSTTY_PLATFORM_NONE to platform enum for headless embedders
+- Expose ghostty_surface_renderer_realize/unrealize through the C API
+  for GL context lifecycle management (needed for widget reparenting)
+- Fix OpenGL surfaceInit/threadEnter/threadExit to work with embedded apprt
+- Set must_draw_from_app_thread on embedded App (host manages GL context)
+- Register libghostty shared lib as a build artifact for downstream deps
+
+Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>
+---
+ build.zig                |  6 ++++++
+ include/ghostty.h        |  3 +++
+ src/apprt/embedded.zig   | 27 ++++++++++++++++++++++++
+ src/build/GhosttyLib.zig |  4 ++++
+ src/renderer/OpenGL.zig  | 44 ++++++++++++++++------------------------
+ 5 files changed, 57 insertions(+), 27 deletions(-)
+
+diff --git a/build.zig b/build.zig
+index f9d861b19..99d07d00b 100644
+--- a/build.zig
++++ b/build.zig
+@@ -142,6 +142,12 @@ pub fn build(b: *std.Build) !void {
+             libghostty_shared.installHeader(); // Only need one header
+             libghostty_shared.install("libghostty.so");
+             libghostty_static.install("libghostty.a");
++
++            // Register the shared lib as a build artifact so downstream
++            // dependencies can find it via artifact("ghostty").
++            if (libghostty_shared.compile) |compile| {
++                b.installArtifact(compile);
++            }
+         }
+     }
+ 
+diff --git a/include/ghostty.h b/include/ghostty.h
+index 40ff55c9b..d271a08dc 100644
+--- a/include/ghostty.h
++++ b/include/ghostty.h
+@@ -38,6 +38,7 @@ typedef enum {
+   GHOSTTY_PLATFORM_INVALID,
+   GHOSTTY_PLATFORM_MACOS,
+   GHOSTTY_PLATFORM_IOS,
++  GHOSTTY_PLATFORM_NONE,
+ } ghostty_platform_e;
+ 
+ typedef enum {
+@@ -1082,6 +1083,8 @@ bool ghostty_surface_needs_confirm_quit(ghostty_surface_t);
+ bool ghostty_surface_process_exited(ghostty_surface_t);
+ void ghostty_surface_refresh(ghostty_surface_t);
+ void ghostty_surface_draw(ghostty_surface_t);
++int ghostty_surface_renderer_realize(ghostty_surface_t);
++void ghostty_surface_renderer_unrealize(ghostty_surface_t);
+ void ghostty_surface_set_content_scale(ghostty_surface_t, double, double);
+ void ghostty_surface_set_focus(ghostty_surface_t, bool);
+ void ghostty_surface_set_occlusion(ghostty_surface_t, bool);
+diff --git a/src/apprt/embedded.zig b/src/apprt/embedded.zig
+index 0d5a4f8da..e94e9ab6d 100644
+--- a/src/apprt/embedded.zig
++++ b/src/apprt/embedded.zig
+@@ -26,6 +26,10 @@ const log = std.log.scoped(.embedded_window);
+ pub const resourcesDir = internal_os.resourcesDir;
+ 
+ pub const App = struct {
++    /// The embedded apprt relies on the host to manage the GL context on
++    /// the main/app thread, so drawing must be dispatched there.
++    pub const must_draw_from_app_thread = true;
++
+     /// Because we only expect the embedding API to be used in embedded
+     /// environments, the options are extern so that we can expose it
+     /// directly to a C callconv and not pay for any translation costs.
+@@ -343,6 +347,7 @@ pub const App = struct {
+ pub const Platform = union(PlatformTag) {
+     macos: MacOS,
+     ios: IOS,
++    none: void,
+ 
+     // If our build target for libghostty is not darwin then we do
+     // not include macos support at all.
+@@ -385,6 +390,8 @@ pub const Platform = union(PlatformTag) {
+                     break :ios error.UIViewMustBeSet);
+                 break :ios .{ .ios = .{ .uiview = uiview } };
+             } else error.UnsupportedPlatform,
++
++            .none => .{ .none = {} },
+         };
+     }
+ };
+@@ -395,6 +402,7 @@ pub const PlatformTag = enum(c_int) {
+ 
+     macos = 1,
+     ios = 2,
++    none = 3,
+ };
+ 
+ pub const EnvVar = extern struct {
+@@ -1690,6 +1698,25 @@ pub const CAPI = struct {
+         surface.draw();
+     }
+ 
++    /// Reinitialize the renderer's GPU resources after a new GL context
++    /// has been made current. This is needed when the host application
++    /// reparents the surface widget (e.g. split/close in a GTK app).
++    /// Returns 0 on success, non-zero on failure.
++    export fn ghostty_surface_renderer_realize(surface: *Surface) c_int {
++        surface.core_surface.renderer.displayRealized() catch |err| {
++            log.err("renderer realize failed err={}", .{err});
++            return 1;
++        };
++        return 0;
++    }
++
++    /// Tear down the renderer's GPU resources before the current GL
++    /// context is destroyed. Call this before reparenting or destroying
++    /// the GL surface so resources can be cleanly recreated.
++    export fn ghostty_surface_renderer_unrealize(surface: *Surface) void {
++        surface.core_surface.renderer.displayUnrealized();
++    }
++
+     /// Update the size of a surface. This will trigger resize notifications
+     /// to the pty and the renderer.
+     export fn ghostty_surface_set_size(surface: *Surface, w: u32, h: u32) void {
+diff --git a/src/build/GhosttyLib.zig b/src/build/GhosttyLib.zig
+index 2ac383544..bdd0ace0c 100644
+--- a/src/build/GhosttyLib.zig
++++ b/src/build/GhosttyLib.zig
+@@ -10,6 +10,9 @@ const LipoStep = @import("LipoStep.zig");
+ /// The step that generates the file.
+ step: *std.Build.Step,
+ 
++/// The underlying compile step (if available) for artifact registration.
++compile: ?*std.Build.Step.Compile = null,
++
+ /// The final static library file
+ output: std.Build.LazyPath,
+ dsym: ?std.Build.LazyPath,
+@@ -104,6 +107,7 @@ pub fn initShared(
+ 
+     return .{
+         .step = &lib.step,
++        .compile = lib,
+         .output = lib.getEmittedBin(),
+         .dsym = dsymutil,
+     };
+diff --git a/src/renderer/OpenGL.zig b/src/renderer/OpenGL.zig
+index 4b01da0c5..fbac8765d 100644
+--- a/src/renderer/OpenGL.zig
++++ b/src/renderer/OpenGL.zig
+@@ -165,15 +165,10 @@ pub fn surfaceInit(surface: *apprt.Surface) !void {
+     switch (apprt.runtime) {
+         else => @compileError("unsupported app runtime for OpenGL"),
+ 
+-        // GTK uses global OpenGL context so we load from null.
++        // GTK and embedded use global OpenGL context so we load from null.
+         apprt.gtk,
++        apprt.embedded,
+         => try prepareContext(null),
+-
+-        apprt.embedded => {
+-            // TODO(mitchellh): this does nothing today to allow libghostty
+-            // to compile for OpenGL targets but libghostty is strictly
+-            // broken for rendering on this platforms.
+-        },
+     }
+ 
+     // These are very noisy so this is commented, but easy to uncomment
+@@ -201,17 +196,13 @@ pub fn threadEnter(self: *const OpenGL, surface: *apprt.Surface) !void {
+     switch (apprt.runtime) {
+         else => @compileError("unsupported app runtime for OpenGL"),
+ 
+-        apprt.gtk => {
+-            // GTK doesn't support threaded OpenGL operations as far as I can
+-            // tell, so we use the renderer thread to setup all the state
+-            // but then do the actual draws and texture syncs and all that
+-            // on the main thread. As such, we don't do anything here.
+-        },
+-
+-        apprt.embedded => {
+-            // TODO(mitchellh): this does nothing today to allow libghostty
+-            // to compile for OpenGL targets but libghostty is strictly
+-            // broken for rendering on this platforms.
++        apprt.gtk,
++        apprt.embedded,
++        => {
++            // GTK (and embedded embedders managing their own GL context)
++            // don't support threaded OpenGL operations, so we use the
++            // renderer thread to setup all the state but then do the actual
++            // draws and texture syncs on the main thread.
+         },
+     }
+ }
+@@ -223,13 +214,10 @@ pub fn threadExit(self: *const OpenGL) void {
+     switch (apprt.runtime) {
+         else => @compileError("unsupported app runtime for OpenGL"),
+ 
+-        apprt.gtk => {
+-            // We don't need to do any unloading for GTK because we may
+-            // be sharing the global bindings with other windows.
+-        },
+-
+-        apprt.embedded => {
+-            // TODO: see threadEnter
++        apprt.gtk,
++        apprt.embedded,
++        => {
++            // No unloading needed — we may be sharing global bindings.
+         },
+     }
+ }
+@@ -238,14 +226,16 @@ pub fn displayRealized(self: *const OpenGL) void {
+     _ = self;
+ 
+     switch (apprt.runtime) {
+-        apprt.gtk => prepareContext(null) catch |err| {
++        apprt.gtk,
++        apprt.embedded,
++        => prepareContext(null) catch |err| {
+             log.warn(
+                 "Error preparing GL context in displayRealized, err={}",
+                 .{err},
+             );
+         },
+ 
+-        else => @compileError("only GTK should be calling displayRealized"),
++        else => @compileError("unsupported app runtime for displayRealized"),
+     }
+ }
+ 
+-- 
+2.53.0
+

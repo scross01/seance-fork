@@ -1,0 +1,108 @@
+From 6e3117a8ed37a22d7d546df32c781b2fd22a4661 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Sipka=20D=C3=A1niel?= <sipka.daniel@leviathan.hu>
+Date: Thu, 9 Apr 2026 12:44:06 +0200
+Subject: [PATCH 6/7] use include paths only for system libs to avoid .so
+ embedding in Zig 0.15
+
+---
+ pkg/dcimgui/build.zig   |  6 +++++-
+ pkg/freetype/build.zig  |  5 ++++-
+ pkg/harfbuzz/build.zig  | 17 ++++++++++++-----
+ pkg/oniguruma/build.zig |  6 ++++--
+ 4 files changed, 25 insertions(+), 9 deletions(-)
+
+diff --git a/pkg/dcimgui/build.zig b/pkg/dcimgui/build.zig
+index 2a1389834..72146b01f 100644
+--- a/pkg/dcimgui/build.zig
++++ b/pkg/dcimgui/build.zig
+@@ -100,7 +100,11 @@ pub fn build(b: *std.Build) !void {
+             });
+ 
+             if (b.systemIntegrationOption("freetype", .{})) {
+-                lib.linkSystemLibrary2("freetype2", dynamic_link_opts);
++                // Include paths only; Zig 0.15 embeds .so in static archives.
++                const ft = b.dependency("freetype", .{ .target = target, .optimize = optimize, .@"enable-libpng" = true });
++                if (ft.builder.lazyDependency("freetype", .{})) |ft_upstream| {
++                    lib.addIncludePath(ft_upstream.path("include"));
++                }
+             } else {
+                 const freetype_dep = b.dependency("freetype", .{
+                     .target = target,
+diff --git a/pkg/freetype/build.zig b/pkg/freetype/build.zig
+index ecb22cb6c..7277bdfea 100644
+--- a/pkg/freetype/build.zig
++++ b/pkg/freetype/build.zig
+@@ -37,7 +37,10 @@ pub fn build(b: *std.Build) !void {
+     module.addIncludePath(b.path(""));
+ 
+     if (b.systemIntegrationOption("freetype", .{})) {
+-        module.linkSystemLibrary("freetype2", dynamic_link_opts);
++        // Include paths only; Zig 0.15 embeds .so in static archives.
++        if (b.lazyDependency("freetype", .{})) |upstream| {
++            module.addIncludePath(upstream.path("include"));
++        }
+         if (test_exe) |exe| {
+             exe.linkSystemLibrary2("freetype2", dynamic_link_opts);
+         }
+diff --git a/pkg/harfbuzz/build.zig b/pkg/harfbuzz/build.zig
+index 8696c0203..bf801c103 100644
+--- a/pkg/harfbuzz/build.zig
++++ b/pkg/harfbuzz/build.zig
+@@ -64,7 +64,14 @@ pub fn build(b: *std.Build) !void {
+     }
+ 
+     if (b.systemIntegrationOption("harfbuzz", .{})) {
+-        module.linkSystemLibrary("harfbuzz", dynamic_link_opts);
++        // Include paths only; Zig 0.15 embeds .so in static archives.
++        if (b.lazyDependency("harfbuzz", .{})) |upstream| {
++            module.addIncludePath(upstream.path("src"));
++        }
++        // hb-ft.h needs freetype headers too
++        if (freetype.builder.lazyDependency("freetype", .{})) |ft_upstream| {
++            module.addIncludePath(ft_upstream.path("include"));
++        }
+         test_exe.linkSystemLibrary2("harfbuzz", dynamic_link_opts);
+     } else {
+         const lib = try buildLib(b, module, .{
+@@ -109,8 +116,6 @@ fn buildLib(b: *std.Build, module: *std.Build.Module, options: anytype) !*std.Bu
+         try apple_sdk.addPaths(b, lib);
+     }
+ 
+-    const dynamic_link_opts = options.dynamic_link_opts;
+-
+     var flags: std.ArrayList([]const u8) = .empty;
+     defer flags.deinit(b.allocator);
+     try flags.appendSlice(b.allocator, &.{
+@@ -138,8 +143,10 @@ fn buildLib(b: *std.Build, module: *std.Build.Module, options: anytype) !*std.Bu
+         });
+ 
+         if (b.systemIntegrationOption("freetype", .{})) {
+-            lib.linkSystemLibrary2("freetype2", dynamic_link_opts);
+-            module.linkSystemLibrary("freetype2", dynamic_link_opts);
++            // Include paths only; Zig 0.15 embeds .so in static archives.
++            if (freetype.builder.lazyDependency("freetype", .{})) |ft_upstream| {
++                lib.addIncludePath(ft_upstream.path("include"));
++            }
+         } else {
+             lib.linkLibrary(freetype.artifact("freetype"));
+ 
+diff --git a/pkg/oniguruma/build.zig b/pkg/oniguruma/build.zig
+index ea39b4814..8d9320d47 100644
+--- a/pkg/oniguruma/build.zig
++++ b/pkg/oniguruma/build.zig
+@@ -38,8 +38,10 @@ pub fn build(b: *std.Build) !void {
+     }
+ 
+     if (b.systemIntegrationOption("oniguruma", .{})) {
+-        module.linkSystemLibrary("oniguruma", dynamic_link_opts);
+-
++        // Include paths only; Zig 0.15 embeds .so in static archives.
++        if (b.lazyDependency("oniguruma", .{})) |upstream| {
++            module.addIncludePath(upstream.path("src"));
++        }
+         if (test_exe) |exe| {
+             exe.linkSystemLibrary2("oniguruma", dynamic_link_opts);
+         }
+-- 
+2.53.0
+

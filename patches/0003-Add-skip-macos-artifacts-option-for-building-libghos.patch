@@ -1,0 +1,192 @@
+From 7e6de610a8211e090b1b52d97caa8ee89d68b1d8 Mon Sep 17 00:00:00 2001
+From: msd <msd@msds-iMac.local>
+Date: Thu, 2 Apr 2026 22:24:36 +0200
+Subject: [PATCH 3/7] Add skip-macos-artifacts option for building libghostty
+ without Xcode
+
+When building ghostty as a library dependency on macOS (e.g. for seance),
+Xcode is not needed. This adds a `skip-macos-artifacts` build option that:
+- Skips XCFramework, macOS app, and Metal shader compilation
+- Falls back to OpenGL renderer when Metal artifacts are skipped
+- Exposes the static lib artifact on all platforms (not just Linux)
+- Makes metallib compilation conditional on the Metal renderer
+
+Co-Authored-By: Claude Opus 4.6 (1M context) <noreply@anthropic.com>
+---
+ build.zig                | 87 +++++++++++++++++++++++++---------------
+ src/build/GhosttyLib.zig |  1 +
+ src/build/SharedDeps.zig | 17 ++++----
+ 3 files changed, 64 insertions(+), 41 deletions(-)
+
+diff --git a/build.zig b/build.zig
+index 8415b087b..642c4c919 100644
+--- a/build.zig
++++ b/build.zig
+@@ -15,7 +15,23 @@ pub fn build(b: *std.Build) !void {
+     // want to know what options are available, you can run `--help` or
+     // you can read `src/build/Config.zig`.
+ 
+-    const config = try buildpkg.Config.init(b, appVersion);
++    var config = try buildpkg.Config.init(b, appVersion);
++
++    // When used as a library dependency, the consumer can disable
++    // macOS-specific build artifacts that require Xcode (XCFramework,
++    // macOS app, Metal shader compilation).
++    const skip_macos_artifacts = b.option(
++        bool,
++        "skip-macos-artifacts",
++        "Skip building macOS-specific artifacts (XCFramework, macOS app, Metal shaders). " ++
++            "Useful when building libghostty as a dependency without Xcode.",
++    ) orelse false;
++
++
++    if (skip_macos_artifacts and config.renderer == .metal) {
++        config.renderer = .opengl;
++    }
++
+     const test_filters = b.option(
+         [][]const u8,
+         "test-filter",
+@@ -149,44 +165,49 @@ pub fn build(b: *std.Build) !void {
+             if (libghostty_shared.compile) |compile| {
+                 b.installArtifact(compile);
+             }
+-            if (libghostty_static.compile) |compile| {
+-                compile.name = "ghostty_static";
+-                b.installArtifact(compile);
+-            }
++        }
++
++        // Register the static lib artifact on all platforms so downstream
++        // consumers (e.g. seance) can use artifact("ghostty_static").
++        if (libghostty_static.compile) |compile| {
++            compile.name = "ghostty_static";
++            b.installArtifact(compile);
+         }
+     }
+ 
+     // macOS only artifacts. These will error if they're initialized for
+     // other targets.
+-    if (config.target.result.os.tag.isDarwin()) {
+-        // Ghostty xcframework
+-        const xcframework = try buildpkg.GhosttyXCFramework.init(
+-            b,
+-            &deps,
+-            config.xcframework_target,
+-        );
+-        if (config.emit_xcframework) {
+-            xcframework.install();
++    if (config.target.result.os.tag.isDarwin() and !skip_macos_artifacts) {
++        if (config.emit_xcframework or config.emit_macos_app) {
++            // Ghostty xcframework
++            const xcframework = try buildpkg.GhosttyXCFramework.init(
++                b,
++                &deps,
++                config.xcframework_target,
++            );
++            if (config.emit_xcframework) {
++                xcframework.install();
+ 
+-            // The xcframework build always installs resources because our
+-            // macOS xcode project contains references to them.
+-            resources.install();
+-            if (i18n) |v| v.install();
+-        }
++                // The xcframework build always installs resources because our
++                // macOS xcode project contains references to them.
++                resources.install();
++                if (i18n) |v| v.install();
++            }
+ 
+-        // Ghostty macOS app
+-        const macos_app = try buildpkg.GhosttyXcodebuild.init(
+-            b,
+-            &config,
+-            .{
+-                .xcframework = &xcframework,
+-                .docs = &docs,
+-                .i18n = if (i18n) |v| &v else null,
+-                .resources = &resources,
+-            },
+-        );
+-        if (config.emit_macos_app) {
+-            macos_app.install();
++            // Ghostty macOS app
++            if (config.emit_macos_app) {
++                const macos_app = try buildpkg.GhosttyXcodebuild.init(
++                    b,
++                    &config,
++                    .{
++                        .xcframework = &xcframework,
++                        .docs = &docs,
++                        .i18n = if (i18n) |v| &v else null,
++                        .resources = &resources,
++                    },
++                );
++                macos_app.install();
++            }
+         }
+     }
+ 
+@@ -213,7 +234,7 @@ pub fn build(b: *std.Build) !void {
+ 
+         // On macOS we can run the macOS app. For "run" we always force
+         // a native-only build so that we can run as quickly as possible.
+-        if (config.target.result.os.tag.isDarwin()) {
++        if (config.target.result.os.tag.isDarwin() and config.emit_macos_app and !skip_macos_artifacts) {
+             const xcframework_native = try buildpkg.GhosttyXCFramework.init(
+                 b,
+                 &deps,
+diff --git a/src/build/GhosttyLib.zig b/src/build/GhosttyLib.zig
+index 1ecf29df0..b0ce521fd 100644
+--- a/src/build/GhosttyLib.zig
++++ b/src/build/GhosttyLib.zig
+@@ -64,6 +64,7 @@ pub fn initStatic(
+ 
+     return .{
+         .step = libtool.step,
++        .compile = lib,
+         .output = libtool.output,
+ 
+         // Static libraries cannot have dSYMs because they aren't linked.
+diff --git a/src/build/SharedDeps.zig b/src/build/SharedDeps.zig
+index 9276c9914..e5fd6cca4 100644
+--- a/src/build/SharedDeps.zig
++++ b/src/build/SharedDeps.zig
+@@ -82,12 +82,12 @@ fn initTarget(
+     b: *std.Build,
+     target: std.Build.ResolvedTarget,
+ ) !void {
+-    // Update our metallib
+-    self.metallib = .create(b, .{
++    // Update our metallib (only needed for Metal renderer)
++    self.metallib = if (self.config.renderer == .metal) .create(b, .{
+         .name = "Ghostty",
+         .target = target,
+         .sources = &.{b.path("src/renderer/shaders/shaders.metal")},
+-    });
++    }) else null;
+ 
+     // Change our config
+     const config = try b.allocator.create(Config);
+@@ -380,11 +380,12 @@ pub fn add(
+     if (step.rootModuleTarget().os.tag.isDarwin()) {
+         try @import("apple_sdk").addPaths(b, step);
+ 
+-        const metallib = self.metallib.?;
+-        metallib.output.addStepDependencies(&step.step);
+-        step.root_module.addAnonymousImport("ghostty_metallib", .{
+-            .root_source_file = metallib.output,
+-        });
++        if (self.metallib) |metallib| {
++            metallib.output.addStepDependencies(&step.step);
++            step.root_module.addAnonymousImport("ghostty_metallib", .{
++                .root_source_file = metallib.output,
++            });
++        }
+     }
+ 
+     // Other dependencies, mostly pure Zig
+-- 
+2.53.0
+
