@@ -79,6 +79,13 @@ Key source files:
 - `src/socket_server.zig` — ctl IPC server
 - `src/keybinds.zig` — keyboard shortcuts
 
+## Agent Guardrails
+
+- **Subagents must not commit.** Only the main (host) agent may run `git commit`, `git push`, or `gh pr create`. Subagents edit files and run verification commands, but all changes must be reviewed before committing.
+- If a subagent completes work, it reports what it did. The main agent reviews the diff, re-runs checks, and commits only after confirming correctness.
+- **Subagents must not force remove.** No `git clean -fd`, `rm -rf`, or `git checkout --force`. If a subagent needs to discard changes, it must report the obstacle instead of force-removing.
+- **Subagents must not force update.** No `git push --force`, `git reset --hard`, or `git branch -f`. If a force update is needed, the subagent must ask first.
+
 ## Conventions
 
 - Zig style: standard `zig fmt` formatting
