@@ -21,6 +21,19 @@ make appimage
 
 Requires: Zig 0.15.2+, GTK4, libadwaita, pkg-config, OpenGL 4.3+.
 
+## Worktrees
+
+To avoid re-cloning/rebuilding the ghostty submodule in each worktree:
+
+```bash
+scripts/worktree-add.sh <branch> [directory]
+```
+
+This symlinks the worktree's `ghostty/` to the main repo's submodule.
+Zig's global cache (`~/.cache/zig/`) reuses the compiled `ghostty_static` artifact.
+
+Do NOT modify the shared ghostty submodule from a worktree.
+
 ## Testing
 
 ```bash
