@@ -126,6 +126,7 @@ export const SeancePlugin = async ({ $ }) => {
                 childSessions.add(actorID);
                 subagentCount++;
                 await updateCounts();
+                await hook("prompt-submit");
               }
             }
           }
@@ -139,6 +140,7 @@ export const SeancePlugin = async ({ $ }) => {
               childSessions.delete(actorID);
               subagentCount = Math.max(0, subagentCount - 1);
               await updateCounts();
+              await hook("prompt-submit");
             }
           }
           break;

@@ -1,6 +1,6 @@
 // Séance plugin for OpenCode
 // Copy to ~/.config/opencode/plugins/seance-opencode.ts
-// @seance-version 4
+// @seance-version 13
 
 export const SeancePlugin = async ({ $ }) => {
   const socket = process.env.SEANCE_SOCKET_PATH;
@@ -18,6 +18,7 @@ export const SeancePlugin = async ({ $ }) => {
   let sessionIdle = false;
   let permissionPending = false;
   let childSessions: Set<string> = new Set();
+  let completedSessions: Set<string> = new Set();
   let subagentCount = 0;
   const shEscape = (s: string) => s.replace(/'/g, "'\\''");
 
@@ -41,16 +42,46 @@ export const SeancePlugin = async ({ $ }) => {
     await $`echo '${shEscape(payload)}' | ${seanceBin} ctl subagent-update >/dev/null`;
   }
 
+  async function trackChildSession(eventSessionId: string) {
+    if (completedSessions.has(eventSessionId)) return;
+    if (!childSessions.has(eventSessionId)) {
+      childSessions.add(eventSessionId);
+      subagentCount++;
+      await updateCounts();
+      if (!sessionIdle) {
+        await hook("prompt-submit");
+      }
+    }
+  }
+
+  async function untrackChildSession(eventSessionId: string) {
+    if (childSessions.has(eventSessionId)) {
+      childSessions.delete(eventSessionId);
+      completedSessions.add(eventSessionId);
+      subagentCount = Math.max(0, subagentCount - 1);
+      await updateCounts();
+      if (!sessionIdle) {
+        await hook("prompt-submit");
+      }
+    }
+  }
+
   return {
     event: async ({ event }) => {
       const eventSessionId = event.properties?.sessionID ?? event.properties?.info?.id;
+
       switch (event.type) {
         case "session.created":
           if (!currentSessionId) {
             currentSessionId = eventSessionId;
             sessionIdle = false;
+            childSessions.clear();
+            completedSessions.clear();
+            subagentCount = 0;
             await hook("session-start");
             await hook("prompt-submit");
+          } else if (eventSessionId && eventSessionId !== currentSessionId) {
+            await trackChildSession(eventSessionId);
           }
           break;
 
@@ -59,18 +90,12 @@ export const SeancePlugin = async ({ $ }) => {
             currentSessionId = eventSessionId;
             sessionIdle = false;
             childSessions.clear();
+            completedSessions.clear();
             subagentCount = 0;
             await hook("session-start");
             await hook("prompt-submit");
           } else if (eventSessionId && eventSessionId !== currentSessionId) {
-            const parentID = event.properties?.info?.parentID;
-            if (parentID && parentID === currentSessionId) {
-              if (!childSessions.has(eventSessionId)) {
-                childSessions.add(eventSessionId);
-                subagentCount++;
-                await updateCounts();
-              }
-            }
+            await trackChildSession(eventSessionId);
           }
           break;
 
@@ -82,24 +107,21 @@ export const SeancePlugin = async ({ $ }) => {
               sessionIdle = true;
               await hook("stop");
             }
-          } else if (childSessions.has(eventSessionId)) {
-            childSessions.delete(eventSessionId);
-            subagentCount = Math.max(0, subagentCount - 1);
-            await updateCounts();
+          } else {
+            await untrackChildSession(eventSessionId);
           }
           break;
 
         case "session.error":
           if (!eventSessionId || eventSessionId === currentSessionId) {
             childSessions.clear();
+            completedSessions.clear();
             subagentCount = 0;
             await updateCounts();
             await hook("session-end");
             currentSessionId = undefined;
-          } else if (childSessions.has(eventSessionId)) {
-            childSessions.delete(eventSessionId);
-            subagentCount = Math.max(0, subagentCount - 1);
-            await updateCounts();
+          } else {
+            await untrackChildSession(eventSessionId);
           }
           break;
 
@@ -121,9 +143,7 @@ export const SeancePlugin = async ({ $ }) => {
             const detail = Array.isArray(patterns) && patterns.length > 0
               ? `${permType}: ${patterns.join(", ")}`
               : String(permType);
-            await hook("notification", {
-              message: detail,
-            });
+            await hook("notification", { message: detail });
           }
           break;
 
