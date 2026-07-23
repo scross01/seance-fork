@@ -862,6 +862,7 @@ fn makeStatusLabel(entry: *const workspace_mod.StatusEntry, background_count: u3
 fn agentStatusIcon(value: []const u8) [*:0]const u8 {
     if (std.mem.eql(u8, value, "Idle")) return "pause-symbolic";
     if (std.mem.eql(u8, value, "Needs input")) return "bell-outline-symbolic";
+    if (std.mem.eql(u8, value, "Running")) return "camera-flash-symbolic";
     return "camera-flash-symbolic";
 }
 

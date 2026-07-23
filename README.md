@@ -75,7 +75,7 @@ Requires Zig **0.15.2+**, GTK4, libadwaita, OpenGL 4.3+, and Linux (X11 or Wayla
 **Install build dependencies (Ubuntu/Debian):**
 
 ```bash
-sudo apt install pkg-config libgtk-4-dev libadwaita-1-dev libnotify-dev libcanberra-dev
+sudo apt install pkg-config libgtk-4-dev libadwaita-1-dev libnotify-dev libcanberra-dev inotify-tools
 ```
 
 **Build:**
@@ -101,6 +101,7 @@ Claude Code, Codex, Pi, OpenCode, and Kilo Code are all tracked automatically �
 - **Claude Code, Codex, Pi**: Séance installs wrapper scripts that intercept calls to these agents and inject lifecycle hooks transparently.
 - **OpenCode**: On first launch, Séance auto-installs a plugin to `~/.config/opencode/plugins/` if the OpenCode config directory exists.
 - **Kilo Code**: On first launch, Séance auto-installs a plugin to `~/.config/kilo/plugins/` if the Kilo config directory exists.
+- **Poolside, Codebuff, Freebuff**: Requires `inotify-tools` for real-time agent status monitoring.
 
 To disable OpenCode integration: **Settings → Terminal → OpenCode Integration**, or set `opencode-hooks = false` in `~/.config/seance/config.toml`.
 
