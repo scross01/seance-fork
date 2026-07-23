@@ -18,6 +18,7 @@ const SEANCE_KILO_VERSION: u32 = 2;
 const SEANCE_MIMOCODE_VERSION: u32 = 36;
 const SEANCE_VIBE_VERSION: u32 = 1;
 const SEANCE_HERMES_PLUGIN_VERSION: u32 = 1;
+pub const SEANCE_POOL_VERSION: u32 = 1;
 
 /// Auto-install OpenCode plugin if OpenCode config dir exists but plugin is missing.
 pub fn installOpenCodePlugin() void {
@@ -441,7 +442,7 @@ pub fn removeVibeHooks() void {
     std.fs.renameAbsolute(tmp_path, hooks_path) catch {};
 }
 
-pub const PluginAgent = enum { opencode, kilo, mimocode, vibe, hermes };
+pub const PluginAgent = enum { opencode, kilo, mimocode, vibe, hermes, pool };
 
 /// Auto-install Hermes plugin if ~/.hermes exists.
 pub fn installHermesPlugin() void {
@@ -980,6 +981,13 @@ pub fn removeHermesPlugin() void {
     deletePluginFiles(alloc, home);
 }
 
+/// Pool uses shell wrapper — no plugin files to install.
+pub fn installPoolPlugin() void {
+    std.log.info("pool: integration enabled (wrapper in SEANCE_BIN_DIR)", .{});
+}
+
+pub fn removePoolPlugin() void {}
+
 fn deletePluginFiles(alloc: std.mem.Allocator, home: []const u8) void {
     // Delete plugin directory
     const plugin_dir = std.fmt.allocPrint(alloc, "{s}/.hermes/plugins/seance", .{home}) catch return;
@@ -1030,6 +1038,7 @@ pub fn syncPlugin(agent: PluginAgent, enabled: bool) void {
             .mimocode => installMimocodePlugin(),
             .vibe => installVibeHooks(),
             .hermes => installHermesPlugin(),
+            .pool => installPoolPlugin(),
         }
     } else {
         switch (agent) {
@@ -1038,6 +1047,7 @@ pub fn syncPlugin(agent: PluginAgent, enabled: bool) void {
             .mimocode => removeMimocodePlugin(),
             .vibe => removeVibeHooks(),
             .hermes => removeHermesPlugin(),
+            .pool => removePoolPlugin(),
         }
     }
 }
@@ -1095,6 +1105,7 @@ fn onActivate(app: *c.AdwApplication) callconv(.c) void {
         syncPlugin(.mimocode, config_mod.get().mimocode_hooks);
         syncPlugin(.vibe, config_mod.get().vibe_hooks);
         syncPlugin(.hermes, config_mod.get().hermes_hooks);
+        syncPlugin(.pool, config_mod.get().pool_hooks);
 
         // Set libadwaita to follow system dark/light, preferring dark when
         // the system has no opinion (or on non-Linux platforms).

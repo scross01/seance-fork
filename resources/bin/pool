@@ -1,0 +1,85 @@
+#!/usr/bin/env bash
+# seance Poolside wrapper — intercepts `pool` invocations inside seance
+# terminals and tracks the process lifecycle so seance can detect agent status.
+set -euo pipefail
+
+# ── Find the real pool binary, skipping seance wrappers ────────────────────
+
+WRAPPER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REAL_POOL=""
+IFS=: read -ra PATH_DIRS <<< "$PATH"
+for dir in "${PATH_DIRS[@]}"; do
+    [[ -z "$dir" ]] && continue
+    resolved="$(cd "$dir" 2>/dev/null && pwd)" || continue
+    [[ "$resolved" == "$WRAPPER_DIR" ]] && continue
+    if [[ -x "$dir/pool" ]]; then
+        REAL_POOL="$dir/pool"
+        break
+    fi
+done
+
+if [[ -z "$REAL_POOL" ]]; then
+    echo "pool: command not found" >&2
+    exit 127
+fi
+
+# Resolve seance to an absolute path
+REAL_SEANCE="$(PATH="$PATH" type -P seance 2>/dev/null || true)"
+if [[ -z "$REAL_SEANCE" ]]; then
+    echo "pool: seance not found — falling back to pass-through" >&2
+    exec "$REAL_POOL" "$@"
+fi
+
+# ── Pass-through conditions ──────────────────────────────────────────────
+
+# Not inside seance
+if [[ -z "${SEANCE_SURFACE_ID:-}" ]]; then
+    exec "$REAL_POOL" "$@"
+fi
+
+# Hooks explicitly disabled
+if [[ "${SEANCE_POOL_HOOKS_DISABLED:-}" == "1" ]]; then
+    exec "$REAL_POOL" "$@"
+fi
+
+# Socket health check (0.75s timeout)
+if ! timeout 0.75 "$REAL_SEANCE" ctl --socket "${SEANCE_SOCKET_PATH:-}" ping >/dev/null 2>&1; then
+    exec "$REAL_POOL" "$@"
+fi
+
+# ── Pass-through subcommands ─────────────────────────────────────────────
+
+case "${1:-}" in
+    config|login|logout|update|mcp|secrets|completion|acp)
+        exec "$REAL_POOL" "$@"
+        ;;
+esac
+
+# ── Export PID ─────────────────────────────────────────────────────────────
+
+export SEANCE_POOL_PID=$$
+
+# ── Session-end cleanup trap ───────────────────────────────────────────────
+# Pool may not fire session-end on crash, forced exit, or signal, so we
+# guarantee it via a trap. This fires on EXIT (normal exit + signal exits)
+# and covers SIGTERM, SIGINT, SIGHUP, etc.
+
+_session_end_cleanup() {
+    timeout 0.5 "$REAL_SEANCE" ctl pool-hook session-end <<'EOF' >/dev/null 2>&1 &
+{}
+EOF
+}
+trap _session_end_cleanup EXIT
+
+# ── Set initial "Running" status ───────────────────────────────────────────
+
+seance ctl pool-hook prompt-submit <<'EOF' >/dev/null 2>&1 || true
+{}
+EOF
+
+# ── Launch pool (no exec — wrapper must survive for cleanup) ──────────────
+
+"$REAL_POOL" "$@"
+rc=$?
+
+exit $rc

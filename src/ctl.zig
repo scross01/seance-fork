@@ -148,6 +148,7 @@ fn dispatch(ctx: Ctx, command: []const u8) u8 {
     if (eql(command, "mimocode-hook")) return cmdMimocodeHook(ctx);
     if (eql(command, "vibe-hook")) return cmdVibeHook(ctx);
     if (eql(command, "hermes-hook")) return cmdHermesHook(ctx);
+    if (eql(command, "pool-hook")) return cmdPoolHook(ctx);
     if (eql(command, "subagent-update")) return cmdSubagentUpdate(ctx);
     if (eql(command, "set-idle")) return cmdSetIdle(ctx);
     if (eql(command, "help") or eql(command, "--help") or eql(command, "-h")) {
@@ -1316,6 +1317,21 @@ const hermes_agent = AgentConfig{
     .session_dir_env = null,
 };
 
+const pool_agent = AgentConfig{
+    .name = "Pool",
+    .display_name = "Poolside",
+    .usage = "usage: pool-hook <session-start|session-end|prompt-submit|pre-tool-use|post-tool-use|stop|notification>\n",
+    .pid_env = "SEANCE_POOL_PID",
+    .response = "OK\n",
+    .status_key_prefix = "pool",
+    .status_key_mode = .surface,
+    .has_ask_user_handling = false,
+    .has_notification_hook = true,
+    .has_post_tool_hook = true,
+    .clear_status_on_end = true,
+    .session_dir_env = null,
+};
+
 fn cmdClaudeHook(ctx: Ctx) u8 {
     return cmdAgentHook(ctx, claude_agent);
 }
@@ -1346,6 +1362,10 @@ fn cmdVibeHook(ctx: Ctx) u8 {
 
 fn cmdHermesHook(ctx: Ctx) u8 {
     return cmdAgentHook(ctx, hermes_agent);
+}
+
+fn cmdPoolHook(ctx: Ctx) u8 {
+    return cmdAgentHook(ctx, pool_agent);
 }
 
 fn cmdSubagentUpdate(ctx: Ctx) u8 {
@@ -1553,7 +1573,8 @@ fn agentHookSessionStart(h: HookCtx) u8 {
 
 fn agentHookPromptSubmit(h: HookCtx) u8 {
     if (h.workspace) |ws| {
-        const base = "Running";
+        // Allow callers to specify a custom status (e.g. "Idle"); default to "Running"
+        const base = getNestedString(h.input, "status") orelse "Running";
         const subagent_count = getJsonInt(h.input, "subagent_count") orelse 0;
         const status = statusWithSubagentCount(h.alloc, base, subagent_count);
         setAgentStatus(h, ws, status, 10);
@@ -2456,5 +2477,10 @@ fn printUsage() void {
         \\    Events: session-start, session-end, prompt-submit,
         \\            pre-tool-use, post-tool-use, llm-complete,
         \\            approval-request, approval-response, interrupt
+        \\
+        \\Pool Hooks:
+        \\  pool-hook <event>       Handle Poolside pool lifecycle event
+        \\    Events: session-start, session-end, prompt-submit,
+        \\            pre-tool-use, post-tool-use, stop, notification
     );
 }

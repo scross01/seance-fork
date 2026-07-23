@@ -80,6 +80,9 @@ pub const Config = struct {
     // Hermes Agent integration
     hermes_hooks: bool = true,
 
+    // Poolside pool integration
+    pool_hooks: bool = true,
+
     // Notifications
     notification_sound: NotificationSound = .default,
 
@@ -292,6 +295,7 @@ pub fn saveConfig(cfg: *const Config) void {
     writeBool(w, "mimocode-hooks", cfg.mimocode_hooks) catch return;
     writeBool(w, "vibe-hooks", cfg.vibe_hooks) catch return;
     writeBool(w, "hermes-hooks", cfg.hermes_hooks) catch return;
+    writeBool(w, "pool-hooks", cfg.pool_hooks) catch return;
 
     // [notifications]
     w.print("\n[notifications]\n", .{}) catch return;
@@ -481,6 +485,8 @@ fn applyValue(config: *Config, section: []const u8, key: []const u8, raw_val: []
             config.vibe_hooks = parseBool(val) orelse config.vibe_hooks; return true;
         } else if (eql(key, "hermes-hooks")) {
             config.hermes_hooks = parseBool(val) orelse config.hermes_hooks; return true;
+        } else if (eql(key, "pool-hooks")) {
+            config.pool_hooks = parseBool(val) orelse config.pool_hooks; return true;
         }
     } else if (eql(section, "notifications")) {
         if (eql(key, "sound")) {
