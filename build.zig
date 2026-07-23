@@ -309,7 +309,7 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run unit tests");
 
     // Standalone tests (no external dependencies)
-    for ([_][]const u8{ "src/osc_parser.zig", "src/port_scan.zig" }) |src| {
+    for ([_][]const u8{ "src/osc_parser.zig", "src/port_scan.zig", "src/ctl.zig" }) |src| {
         const mod = b.createModule(.{
             .root_source_file = b.path(src),
             .target = target,
@@ -346,7 +346,7 @@ pub fn build(b: *std.Build) void {
     }
 
     // Tests for files that need GTK/ghostty
-    for ([_][]const u8{ "src/config.zig", "src/keybinds.zig", "src/notification.zig", "src/workspace.zig", "src/session.zig" }) |src| {
+    for ([_][]const u8{ "src/config.zig", "src/keybinds.zig", "src/notification.zig", "src/workspace.zig", "src/session.zig", "src/socket_server.zig" }) |src| {
         const test_mod = b.createModule(.{
             .root_source_file = b.path(src),
             .target = target,

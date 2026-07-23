@@ -2064,3 +2064,88 @@ fn copySlice(dest: []u8, src: []const u8) usize {
     @memcpy(dest[0..len], src[0..len]);
     return len;
 }
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+test "jsonEscapeString: normal text passthrough" {
+    var buf: [256]u8 = undefined;
+    const result = SocketServer.jsonEscapeString("hello world", &buf);
+    try std.testing.expectEqualStrings("hello world", result);
+}
+
+test "jsonEscapeString: quotes and backslashes" {
+    var buf: [256]u8 = undefined;
+    const result = SocketServer.jsonEscapeString("say \"hello\" \\ there", &buf);
+    try std.testing.expectEqualStrings("say \\\"hello\\\" \\\\ there", result);
+}
+
+test "jsonEscapeString: newlines and tabs" {
+    var buf: [256]u8 = undefined;
+    const result = SocketServer.jsonEscapeString("a\nb\tc\rd", &buf);
+    try std.testing.expectEqualStrings("a\\nb\\tc\\rd", result);
+}
+
+test "jsonEscapeString: control characters use unicode escape" {
+    var buf: [256]u8 = undefined;
+    const result = SocketServer.jsonEscapeString("\x01\x1f", &buf);
+    try std.testing.expectEqualStrings("\\u0001\\u001F", result);
+}
+
+test "jsonEscapeString: NUL character" {
+    var buf: [256]u8 = undefined;
+    const result = SocketServer.jsonEscapeString("\x00", &buf);
+    try std.testing.expectEqualStrings("\\u0000", result);
+}
+
+test "jsonEscapeString: empty string" {
+    var buf: [256]u8 = undefined;
+    const result = SocketServer.jsonEscapeString("", &buf);
+    try std.testing.expectEqual(@as(usize, 0), result.len);
+}
+
+test "jsonEscapeString: buffer too small truncates" {
+    var buf: [4]u8 = undefined;
+    const result = SocketServer.jsonEscapeString("hello", &buf);
+    try std.testing.expectEqual(@as(usize, 4), result.len);
+    try std.testing.expectEqualStrings("hell", result);
+}
+
+test "jsonEscapeString: buffer too small for escape sequence" {
+    var buf: [1]u8 = undefined;
+    const result = SocketServer.jsonEscapeString("\"", &buf);
+    try std.testing.expectEqual(@as(usize, 0), result.len);
+}
+
+test "jsonEscapeString: mixed content" {
+    var buf: [256]u8 = undefined;
+    const result = SocketServer.jsonEscapeString("path: /home/user\nquote: \"hi\"\ttab\x01ctrl", &buf);
+    try std.testing.expectEqualStrings("path: /home/user\\nquote: \\\"hi\\\"\\ttab\\u0001ctrl", result);
+}
+
+test "jsonEscapeString: unicode passthrough" {
+    var buf: [256]u8 = undefined;
+    const result = SocketServer.jsonEscapeString("caf\xc3\xa9", &buf);
+    try std.testing.expectEqualStrings("caf\xc3\xa9", result);
+}
+
+test "jsonEscapeString: round-trip with JSON parser" {
+    const alloc = std.testing.allocator;
+    const original = "line1\nline2\ttab\r\n\"quoted\" and \\backslash\x01";
+
+    var buf: [1024]u8 = undefined;
+    const escaped = SocketServer.jsonEscapeString(original, &buf);
+
+    var json_buf: [1024]u8 = undefined;
+    var fbs = std.io.fixedBufferStream(&json_buf);
+    const w = fbs.writer();
+    try w.writeByte('"');
+    try w.writeAll(escaped);
+    try w.writeByte('"');
+
+    const parsed = try std.json.parseFromSlice(std.json.Value, alloc, fbs.getWritten(), .{});
+    defer parsed.deinit();
+
+    try std.testing.expectEqualStrings(original, parsed.value.string);
+}

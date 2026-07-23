@@ -2534,3 +2534,310 @@ fn printUsage() void {
         \\            pre-tool-use, post-tool-use, stop, notification
     );
 }
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+fn makeTempStore(alloc: Allocator) !SessionStore {
+    const base = std.posix.getenv("TMPDIR") orelse "/tmp";
+    const ts = std.time.timestamp();
+    const dir_path = try std.fmt.allocPrint(alloc, "{s}/seance-test-ctl-{d}", .{ base, ts });
+    try std.fs.makeDirAbsolute(dir_path);
+    const file_path = try std.fmt.allocPrint(alloc, "{s}/store.json", .{dir_path});
+    return SessionStore{ .path = file_path, .alloc = alloc };
+}
+
+fn cleanupTempStore(store: SessionStore) void {
+    std.posix.unlink(store.path) catch {};
+    if (std.fs.path.dirname(store.path)) |dir| {
+        std.fs.cwd().deleteDir(dir) catch {};
+    }
+}
+
+test "SessionStore: upsert creates new session" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer _ = arena.deinit();
+    const alloc = arena.allocator();
+    var store = try makeTempStore(alloc);
+    defer cleanupTempStore(store);
+
+    var fields = JsonFields.init(alloc);
+    fields.putStr("status", "working");
+    fields.putInt("workspace_id", 42);
+    store.upsert("sess-1", fields);
+
+    const result = store.lookup("sess-1");
+    try std.testing.expect(result != null);
+    const obj = result.?.object;
+    try std.testing.expectEqualStrings("working", obj.get("status").?.string);
+    try std.testing.expectEqual(@as(i64, 42), obj.get("workspace_id").?.integer);
+    try std.testing.expect(obj.get("updated_at") != null);
+}
+
+test "SessionStore: upsert updates existing session" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer _ = arena.deinit();
+    const alloc = arena.allocator();
+    var store = try makeTempStore(alloc);
+    defer cleanupTempStore(store);
+
+    var fields1 = JsonFields.init(alloc);
+    fields1.putStr("status", "working");
+    store.upsert("sess-1", fields1);
+
+    var fields2 = JsonFields.init(alloc);
+    fields2.putStr("status", "idle");
+    fields2.putInt("workspace_id", 99);
+    store.upsert("sess-1", fields2);
+
+    const result = store.lookup("sess-1");
+    try std.testing.expect(result != null);
+    const obj = result.?.object;
+    try std.testing.expectEqualStrings("idle", obj.get("status").?.string);
+    try std.testing.expectEqual(@as(i64, 99), obj.get("workspace_id").?.integer);
+    try std.testing.expectEqualStrings("sess-1", obj.get("session_id").?.string);
+}
+
+test "SessionStore: lookup returns null for missing session" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer _ = arena.deinit();
+    const alloc = arena.allocator();
+    var store = try makeTempStore(alloc);
+    defer cleanupTempStore(store);
+
+    var fields = JsonFields.init(alloc);
+    fields.putStr("status", "working");
+    store.upsert("sess-1", fields);
+
+    try std.testing.expect(store.lookup("nonexistent") == null);
+}
+
+test "SessionStore: lookup returns null for empty store" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer _ = arena.deinit();
+    const alloc = arena.allocator();
+    var store = try makeTempStore(alloc);
+    defer cleanupTempStore(store);
+
+    try std.testing.expect(store.lookup("anything") == null);
+}
+
+test "SessionStore: consume removes and returns session" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer _ = arena.deinit();
+    const alloc = arena.allocator();
+    var store = try makeTempStore(alloc);
+    defer cleanupTempStore(store);
+
+    var fields = JsonFields.init(alloc);
+    fields.putStr("status", "working");
+    store.upsert("sess-1", fields);
+
+    const result = store.consume("sess-1");
+    try std.testing.expect(result != null);
+    try std.testing.expectEqualStrings("working", result.?.object.get("status").?.string);
+
+    try std.testing.expect(store.lookup("sess-1") == null);
+}
+
+test "SessionStore: consume returns null for missing session" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer _ = arena.deinit();
+    const alloc = arena.allocator();
+    var store = try makeTempStore(alloc);
+    defer cleanupTempStore(store);
+
+    var fields = JsonFields.init(alloc);
+    fields.putStr("status", "working");
+    store.upsert("sess-1", fields);
+
+    try std.testing.expect(store.consume("nonexistent") == null);
+    try std.testing.expect(store.lookup("sess-1") != null);
+}
+
+test "SessionStore: consume on empty store returns null" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer _ = arena.deinit();
+    const alloc = arena.allocator();
+    var store = try makeTempStore(alloc);
+    defer cleanupTempStore(store);
+
+    try std.testing.expect(store.consume("anything") == null);
+}
+
+test "SessionStore: readStore returns null for missing file" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer _ = arena.deinit();
+    const alloc = arena.allocator();
+    var store = try makeTempStore(alloc);
+    defer cleanupTempStore(store);
+
+    try std.testing.expect(store.readStore() == null);
+}
+
+test "SessionStore: readStore returns null for empty file" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer _ = arena.deinit();
+    const alloc = arena.allocator();
+    var store = try makeTempStore(alloc);
+    defer cleanupTempStore(store);
+
+    const file = try std.fs.createFileAbsolute(store.path, .{});
+    file.close();
+
+    try std.testing.expect(store.readStore() == null);
+}
+
+test "SessionStore: readStore returns null for invalid version" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer _ = arena.deinit();
+    const alloc = arena.allocator();
+    var store = try makeTempStore(alloc);
+    defer cleanupTempStore(store);
+
+    const file = try std.fs.createFileAbsolute(store.path, .{});
+    try file.writeAll("{\"version\":2,\"sessions\":{}}");
+    file.close();
+
+    try std.testing.expect(store.readStore() == null);
+}
+
+test "SessionStore: readStore returns null for non-object root" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer _ = arena.deinit();
+    const alloc = arena.allocator();
+    var store = try makeTempStore(alloc);
+    defer cleanupTempStore(store);
+
+    const file = try std.fs.createFileAbsolute(store.path, .{});
+    try file.writeAll("[1,2,3]");
+    file.close();
+
+    try std.testing.expect(store.readStore() == null);
+}
+
+test "SessionStore: writeStore and readStore round-trip" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer _ = arena.deinit();
+    const alloc = arena.allocator();
+    var store = try makeTempStore(alloc);
+    defer cleanupTempStore(store);
+
+    var obj = std.json.ObjectMap.init(alloc);
+    obj.put("version", JsonValue{ .integer = 1 }) catch unreachable;
+    var sessions = std.json.ObjectMap.init(alloc);
+    var rec = std.json.ObjectMap.init(alloc);
+    rec.put("status", JsonValue{ .string = "running" }) catch unreachable;
+    sessions.put("sess-1", JsonValue{ .object = rec }) catch unreachable;
+    obj.put("sessions", JsonValue{ .object = sessions }) catch unreachable;
+
+    store.writeStore(JsonValue{ .object = obj });
+
+    const result = store.readStore();
+    try std.testing.expect(result != null);
+    const data = result.?.object;
+    try std.testing.expectEqual(@as(i64, 1), data.get("version").?.integer);
+    const sess = data.get("sessions").?.object.get("sess-1").?;
+    try std.testing.expectEqualStrings("running", sess.object.get("status").?.string);
+}
+
+test "SessionStore: pruneOld removes sessions older than 7 days" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer _ = arena.deinit();
+    const alloc = arena.allocator();
+    var store = try makeTempStore(alloc);
+    defer cleanupTempStore(store);
+
+    var data = std.json.ObjectMap.init(alloc);
+    data.put("version", JsonValue{ .integer = 1 }) catch unreachable;
+    var sessions = std.json.ObjectMap.init(alloc);
+
+    var old_rec = std.json.ObjectMap.init(alloc);
+    old_rec.put("updated_at", JsonValue{ .float = @floatFromInt(std.time.timestamp() - 8 * 86400) }) catch unreachable;
+    sessions.put("old-sess", JsonValue{ .object = old_rec }) catch unreachable;
+
+    var new_rec = std.json.ObjectMap.init(alloc);
+    new_rec.put("updated_at", JsonValue{ .float = @floatFromInt(std.time.timestamp() - 3600) }) catch unreachable;
+    sessions.put("new-sess", JsonValue{ .object = new_rec }) catch unreachable;
+
+    data.put("sessions", JsonValue{ .object = sessions }) catch unreachable;
+
+    var data_val: JsonValue = .{ .object = data };
+    store.pruneOld(data_val.object.getPtr("sessions").?);
+
+    const sess = data_val.object.get("sessions").?.object;
+    try std.testing.expect(sess.contains("new-sess"));
+    try std.testing.expect(!sess.contains("old-sess"));
+}
+
+test "SessionStore: pruneOld keeps sessions without updated_at" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer _ = arena.deinit();
+    const alloc = arena.allocator();
+    var store = try makeTempStore(alloc);
+    defer cleanupTempStore(store);
+
+    var data = std.json.ObjectMap.init(alloc);
+    data.put("version", JsonValue{ .integer = 1 }) catch unreachable;
+    var sessions = std.json.ObjectMap.init(alloc);
+
+    var rec = std.json.ObjectMap.init(alloc);
+    rec.put("status", JsonValue{ .string = "working" }) catch unreachable;
+    sessions.put("no-timestamp", JsonValue{ .object = rec }) catch unreachable;
+
+    data.put("sessions", JsonValue{ .object = sessions }) catch unreachable;
+
+    var data_val: JsonValue = .{ .object = data };
+    store.pruneOld(data_val.object.getPtr("sessions").?);
+
+    const sess = data_val.object.get("sessions").?.object;
+    try std.testing.expect(sess.contains("no-timestamp"));
+}
+
+test "JsonFields: putStr stores string value" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer _ = arena.deinit();
+    const alloc = arena.allocator();
+    var fields = JsonFields.init(alloc);
+    fields.putStr("status", "working");
+
+    try std.testing.expectEqual(@as(usize, 1), fields.keys.items.len);
+    try std.testing.expectEqualStrings("status", fields.keys.items[0]);
+    try std.testing.expectEqualStrings("working", fields.values.items[0].string);
+}
+
+test "JsonFields: putInt stores integer value" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer _ = arena.deinit();
+    const alloc = arena.allocator();
+    var fields = JsonFields.init(alloc);
+    fields.putInt("workspace_id", 42);
+
+    try std.testing.expectEqual(@as(i64, 42), fields.values.items[0].integer);
+}
+
+test "JsonFields: putFloat stores float value" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer _ = arena.deinit();
+    const alloc = arena.allocator();
+    var fields = JsonFields.init(alloc);
+    fields.putFloat("progress", 0.5);
+
+    try std.testing.expectEqual(@as(f64, 0.5), fields.values.items[0].float);
+}
+
+test "JsonFields: multiple fields" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer _ = arena.deinit();
+    const alloc = arena.allocator();
+    var fields = JsonFields.init(alloc);
+    fields.putStr("status", "working");
+    fields.putInt("workspace_id", 1);
+    fields.putInt("surface_id", 2);
+
+    try std.testing.expectEqual(@as(usize, 3), fields.keys.items.len);
+    try std.testing.expectEqualStrings("status", fields.keys.items[0]);
+    try std.testing.expectEqualStrings("workspace_id", fields.keys.items[1]);
+    try std.testing.expectEqualStrings("surface_id", fields.keys.items[2]);
+}
