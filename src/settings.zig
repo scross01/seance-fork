@@ -726,13 +726,10 @@ fn onSwitchChanged(obj: *c.GObject, _: *c.GParamSpec, _: c.gpointer) callconv(.c
         app.syncPlugin(.hermes, active);
     } else if (widget == w.pool_hooks) {
         cfg.pool_hooks = active;
-        app.syncPlugin(.pool, active);
     } else if (widget == w.codebuff_hooks) {
         cfg.codebuff_hooks = active;
-        app.syncPlugin(.codebuff, active);
     } else if (widget == w.freebuff_hooks) {
         cfg.freebuff_hooks = active;
-        app.syncPlugin(.freebuff, active);
     } else return;
 
     saveAndReload();
@@ -1061,9 +1058,6 @@ fn onResetResponse(_: *c.AdwAlertDialog, response: [*:0]const u8, _: c.gpointer)
     app.syncPlugin(.mimocode, cfg.mimocode_hooks);
     app.syncPlugin(.vibe, cfg.vibe_hooks);
     app.syncPlugin(.hermes, cfg.hermes_hooks);
-    app.syncPlugin(.pool, cfg.pool_hooks);
-    app.syncPlugin(.codebuff, cfg.codebuff_hooks);
-    app.syncPlugin(.freebuff, cfg.freebuff_hooks);
 
     // Reset keybinds
     keybinds.resetToDefaults();
