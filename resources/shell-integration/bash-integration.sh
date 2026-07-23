@@ -158,6 +158,7 @@ _seance_prompt_command() {
             {
                 local branch dirty_json=""
                 branch=$(git branch --show-current 2>/dev/null)
+                branch="${branch//\\/\\\\}"
                 branch="${branch//\"/\\\"}"
                 if [[ -n "$branch" ]]; then
                     local first

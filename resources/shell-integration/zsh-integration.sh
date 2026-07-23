@@ -94,6 +94,7 @@ _seance_report_git_branch_for_path() {
 
     local branch dirty_json="" first
     branch="$(git -C "$repo_path" branch --show-current 2>/dev/null)"
+    branch="${branch//\\/\\\\}"
     branch="${branch//\"/\\\"}"
     if [[ -n "$branch" ]]; then
         first="$(git -C "$repo_path" status --porcelain -uno 2>/dev/null | head -1)"
