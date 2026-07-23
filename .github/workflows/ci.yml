@@ -18,6 +18,9 @@ jobs:
         with:
           version: 0.15.2
 
+      - name: Apply Ghostty patches
+        run: bash scripts/apply-ghostty-patches.sh
+
       - name: Install system dependencies
         run: |
           sudo apt-get update

@@ -21,6 +21,9 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Apply Ghostty patches
+        run: bash scripts/apply-ghostty-patches.sh
+
       - name: Compute version
         run: |
           if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
