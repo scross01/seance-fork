@@ -149,6 +149,8 @@ fn dispatch(ctx: Ctx, command: []const u8) u8 {
     if (eql(command, "vibe-hook")) return cmdVibeHook(ctx);
     if (eql(command, "hermes-hook")) return cmdHermesHook(ctx);
     if (eql(command, "pool-hook")) return cmdPoolHook(ctx);
+    if (eql(command, "codebuff-hook")) return cmdCodebuffHook(ctx);
+    if (eql(command, "freebuff-hook")) return cmdFreebuffHook(ctx);
     if (eql(command, "subagent-update")) return cmdSubagentUpdate(ctx);
     if (eql(command, "set-idle")) return cmdSetIdle(ctx);
     if (eql(command, "help") or eql(command, "--help") or eql(command, "-h")) {
@@ -1332,6 +1334,36 @@ const pool_agent = AgentConfig{
     .session_dir_env = null,
 };
 
+const codebuff_agent = AgentConfig{
+    .name = "Codebuff",
+    .display_name = "Codebuff",
+    .usage = "usage: codebuff-hook <session-start|session-end|prompt-submit|pre-tool-use|post-tool-use|stop|notification>\n",
+    .pid_env = "SEANCE_CODEBUFF_PID",
+    .response = "OK\n",
+    .status_key_prefix = "codebuff",
+    .status_key_mode = .surface,
+    .has_ask_user_handling = false,
+    .has_notification_hook = true,
+    .has_post_tool_hook = true,
+    .clear_status_on_end = true,
+    .session_dir_env = null,
+};
+
+const freebuff_agent = AgentConfig{
+    .name = "Freebuff",
+    .display_name = "Freebuff",
+    .usage = "usage: freebuff-hook <session-start|session-end|prompt-submit|pre-tool-use|post-tool-use|stop|notification>\n",
+    .pid_env = "SEANCE_FREEBUFF_PID",
+    .response = "OK\n",
+    .status_key_prefix = "freebuff",
+    .status_key_mode = .surface,
+    .has_ask_user_handling = false,
+    .has_notification_hook = true,
+    .has_post_tool_hook = true,
+    .clear_status_on_end = true,
+    .session_dir_env = null,
+};
+
 fn cmdClaudeHook(ctx: Ctx) u8 {
     return cmdAgentHook(ctx, claude_agent);
 }
@@ -1366,6 +1398,14 @@ fn cmdHermesHook(ctx: Ctx) u8 {
 
 fn cmdPoolHook(ctx: Ctx) u8 {
     return cmdAgentHook(ctx, pool_agent);
+}
+
+fn cmdCodebuffHook(ctx: Ctx) u8 {
+    return cmdAgentHook(ctx, codebuff_agent);
+}
+
+fn cmdFreebuffHook(ctx: Ctx) u8 {
+    return cmdAgentHook(ctx, freebuff_agent);
 }
 
 fn cmdSubagentUpdate(ctx: Ctx) u8 {
@@ -2480,6 +2520,16 @@ fn printUsage() void {
         \\
         \\Pool Hooks:
         \\  pool-hook <event>       Handle Poolside pool lifecycle event
+        \\    Events: session-start, session-end, prompt-submit,
+        \\            pre-tool-use, post-tool-use, stop, notification
+        \\
+        \\Codebuff Hooks:
+        \\  codebuff-hook <event>   Handle Codebuff lifecycle event
+        \\    Events: session-start, session-end, prompt-submit,
+        \\            pre-tool-use, post-tool-use, stop, notification
+        \\
+        \\Freebuff Hooks:
+        \\  freebuff-hook <event>   Handle Freebuff lifecycle event
         \\    Events: session-start, session-end, prompt-submit,
         \\            pre-tool-use, post-tool-use, stop, notification
     );

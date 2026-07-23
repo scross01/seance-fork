@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+# seance Freebuff wrapper — intercepts `freebuff` invocations inside seance
+# terminals and tracks the process lifecycle so seance can detect agent exit.
+set -euo pipefail
+
+# ── Find the real freebuff binary, skipping our own directory ────────────
+
+WRAPPER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REAL_FREEBUFF=""
+IFS=: read -ra PATH_DIRS <<< "$PATH"
+for dir in "${PATH_DIRS[@]}"; do
+    [[ -z "$dir" ]] && continue
+    resolved="$(cd "$dir" 2>/dev/null && pwd)" || continue
+    [[ "$resolved" == "$WRAPPER_DIR" ]] && continue
+    if [[ -x "$dir/freebuff" ]]; then
+        REAL_FREEBUFF="$dir/freebuff"
+        break
+    fi
+done
+
+if [[ -z "$REAL_FREEBUFF" ]]; then
+    echo "freebuff: command not found" >&2
+    exit 127
+fi
+
+# Resolve seance to an absolute path
+REAL_SEANCE="$(PATH="$PATH" type -P seance 2>/dev/null || true)"
+if [[ -z "$REAL_SEANCE" ]]; then
+    echo "freebuff: seance not found — falling back to pass-through" >&2
+    exec "$REAL_FREEBUFF" "$@"
+fi
+
+# ── Pass-through conditions ──────────────────────────────────────────────
+
+# Not inside seance
+if [[ -z "${SEANCE_SURFACE_ID:-}" ]]; then
+    exec "$REAL_FREEBUFF" "$@"
+fi
+
+# Hooks explicitly disabled
+if [[ "${SEANCE_FREEBUFF_HOOKS_DISABLED:-}" == "1" ]]; then
+    exec "$REAL_FREEBUFF" "$@"
+fi
+
+# Socket health check (0.75s timeout)
+if ! timeout 0.75 "$REAL_SEANCE" ctl --socket "${SEANCE_SOCKET_PATH:-}" ping >/dev/null 2>&1; then
+    exec "$REAL_FREEBUFF" "$@"
+fi
+
+# ── Export PID ─────────────────────────────────────────────────────────────
+
+export SEANCE_FREEBUFF_PID=$$
+
+# ── Session-end cleanup trap ───────────────────────────────────────────────
+
+_session_end_cleanup() {
+    timeout 0.5 "$REAL_SEANCE" ctl freebuff-hook session-end <<'EOF' >/dev/null 2>&1 &
+{}
+EOF
+}
+trap _session_end_cleanup EXIT
+
+# ── Set initial "Running" status ───────────────────────────────────────────
+
+"$REAL_SEANCE" ctl freebuff-hook prompt-submit <<'EOF' >/dev/null 2>&1 || true
+{}
+EOF
+
+# ── Launch freebuff (no exec — wrapper must survive for cleanup) ───────────
+
+"$REAL_FREEBUFF" "$@"
+rc=$?
+
+exit $rc

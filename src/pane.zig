@@ -726,7 +726,7 @@ fn initSurface(pane: *Pane, width: u32, height: u32) void {
 
     // Build env var array. Keep this ceiling above the sum of all possible entries
     // (unconditional + every conditional hook-disabled flag + port/path/socket vars).
-    const max_env_vars = 24;
+    const max_env_vars = 26;
     var env_vars: [max_env_vars]c.ghostty_env_var_s = undefined;
     var env_count: usize = 0;
 
@@ -788,6 +788,14 @@ fn initSurface(pane: *Pane, width: u32, height: u32) void {
     }
     if (!cfg.pool_hooks) {
         env_vars[env_count] = .{ .key = "SEANCE_POOL_HOOKS_DISABLED", .value = "1" };
+        env_count += 1;
+    }
+    if (!cfg.codebuff_hooks) {
+        env_vars[env_count] = .{ .key = "SEANCE_CODEBUFF_HOOKS_DISABLED", .value = "1" };
+        env_count += 1;
+    }
+    if (!cfg.freebuff_hooks) {
+        env_vars[env_count] = .{ .key = "SEANCE_FREEBUFF_HOOKS_DISABLED", .value = "1" };
         env_count += 1;
     }
     env_vars[env_count] = .{ .key = "SEANCE_SHELL_INTEGRATION", .value = "1" };

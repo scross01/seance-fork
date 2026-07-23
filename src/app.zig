@@ -442,7 +442,7 @@ pub fn removeVibeHooks() void {
     std.fs.renameAbsolute(tmp_path, hooks_path) catch {};
 }
 
-pub const PluginAgent = enum { opencode, kilo, mimocode, vibe, hermes, pool };
+pub const PluginAgent = enum { opencode, kilo, mimocode, vibe, hermes, pool, codebuff, freebuff };
 
 /// Auto-install Hermes plugin if ~/.hermes exists.
 pub fn installHermesPlugin() void {
@@ -988,6 +988,18 @@ pub fn installPoolPlugin() void {
 
 pub fn removePoolPlugin() void {}
 
+pub fn installCodebuffPlugin() void {
+    std.log.info("codebuff: integration enabled (wrapper in SEANCE_BIN_DIR)", .{});
+}
+
+pub fn removeCodebuffPlugin() void {}
+
+pub fn installFreebuffPlugin() void {
+    std.log.info("freebuff: integration enabled (wrapper in SEANCE_BIN_DIR)", .{});
+}
+
+pub fn removeFreebuffPlugin() void {}
+
 fn deletePluginFiles(alloc: std.mem.Allocator, home: []const u8) void {
     // Delete plugin directory
     const plugin_dir = std.fmt.allocPrint(alloc, "{s}/.hermes/plugins/seance", .{home}) catch return;
@@ -1039,6 +1051,8 @@ pub fn syncPlugin(agent: PluginAgent, enabled: bool) void {
             .vibe => installVibeHooks(),
             .hermes => installHermesPlugin(),
             .pool => installPoolPlugin(),
+            .codebuff => installCodebuffPlugin(),
+            .freebuff => installFreebuffPlugin(),
         }
     } else {
         switch (agent) {
@@ -1048,6 +1062,8 @@ pub fn syncPlugin(agent: PluginAgent, enabled: bool) void {
             .vibe => removeVibeHooks(),
             .hermes => removeHermesPlugin(),
             .pool => removePoolPlugin(),
+            .codebuff => removeCodebuffPlugin(),
+            .freebuff => removeFreebuffPlugin(),
         }
     }
 }
@@ -1106,6 +1122,8 @@ fn onActivate(app: *c.AdwApplication) callconv(.c) void {
         syncPlugin(.vibe, config_mod.get().vibe_hooks);
         syncPlugin(.hermes, config_mod.get().hermes_hooks);
         syncPlugin(.pool, config_mod.get().pool_hooks);
+        syncPlugin(.codebuff, config_mod.get().codebuff_hooks);
+        syncPlugin(.freebuff, config_mod.get().freebuff_hooks);
 
         // Set libadwaita to follow system dark/light, preferring dark when
         // the system has no opinion (or on non-Linux platforms).

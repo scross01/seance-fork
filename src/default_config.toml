@@ -45,6 +45,8 @@
 # vibe-hooks = true
 # hermes-hooks = true
 # pool-hooks = true
+# codebuff-hooks = true
+# freebuff-hooks = true
 
 [notifications]
 # sound = "default"              # "default", "none", or path to .wav/.ogg file

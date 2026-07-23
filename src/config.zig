@@ -83,6 +83,12 @@ pub const Config = struct {
     // Poolside pool integration
     pool_hooks: bool = true,
 
+    // Codebuff integration
+    codebuff_hooks: bool = true,
+
+    // Freebuff integration
+    freebuff_hooks: bool = true,
+
     // Notifications
     notification_sound: NotificationSound = .default,
 
@@ -296,6 +302,8 @@ pub fn saveConfig(cfg: *const Config) void {
     writeBool(w, "vibe-hooks", cfg.vibe_hooks) catch return;
     writeBool(w, "hermes-hooks", cfg.hermes_hooks) catch return;
     writeBool(w, "pool-hooks", cfg.pool_hooks) catch return;
+    writeBool(w, "codebuff-hooks", cfg.codebuff_hooks) catch return;
+    writeBool(w, "freebuff-hooks", cfg.freebuff_hooks) catch return;
 
     // [notifications]
     w.print("\n[notifications]\n", .{}) catch return;
@@ -487,6 +495,10 @@ fn applyValue(config: *Config, section: []const u8, key: []const u8, raw_val: []
             config.hermes_hooks = parseBool(val) orelse config.hermes_hooks; return true;
         } else if (eql(key, "pool-hooks")) {
             config.pool_hooks = parseBool(val) orelse config.pool_hooks; return true;
+        } else if (eql(key, "codebuff-hooks")) {
+            config.codebuff_hooks = parseBool(val) orelse config.codebuff_hooks; return true;
+        } else if (eql(key, "freebuff-hooks")) {
+            config.freebuff_hooks = parseBool(val) orelse config.freebuff_hooks; return true;
         }
     } else if (eql(section, "notifications")) {
         if (eql(key, "sound")) {

@@ -47,6 +47,8 @@ const Widgets = struct {
     vibe_hooks: ?*c.GtkWidget = null,
     hermes_hooks: ?*c.GtkWidget = null,
     pool_hooks: ?*c.GtkWidget = null,
+    codebuff_hooks: ?*c.GtkWidget = null,
+    freebuff_hooks: ?*c.GtkWidget = null,
 
     // Combos
     notification_sound: ?*c.GtkWidget = null,
@@ -454,6 +456,8 @@ fn buildIntegrationsSection(page: *c.GtkWidget, cfg: *const config_mod.Config) v
     w.vibe_hooks = addSwitchRow(g2, "Mistral Vibe Integration", if (cfg.vibe_hooks) "Sidebar shows Vibe session status." else "Vibe runs without seance integration.", cfg.vibe_hooks);
     w.hermes_hooks = addSwitchRow(g2, "Hermes Agent Integration", if (cfg.hermes_hooks) "Sidebar shows Hermes Agent session status and notifications." else "Hermes Agent runs without seance integration.", cfg.hermes_hooks);
     w.pool_hooks = addSwitchRow(g2, "Poolside Pool Integration", if (cfg.pool_hooks) "Sidebar shows Poolside pool session status and tool use." else "Poolside pool runs without seance integration.", cfg.pool_hooks);
+    w.codebuff_hooks = addSwitchRow(g2, "Codebuff Integration", if (cfg.codebuff_hooks) "Sidebar shows Codebuff session status and tool use." else "Codebuff runs without seance integration.", cfg.codebuff_hooks);
+    w.freebuff_hooks = addSwitchRow(g2, "Freebuff Integration", if (cfg.freebuff_hooks) "Sidebar shows Freebuff session status and tool use." else "Freebuff runs without seance integration.", cfg.freebuff_hooks);
     addToPage(page, g2);
 
     // Card 3: Port Configuration
@@ -723,6 +727,12 @@ fn onSwitchChanged(obj: *c.GObject, _: *c.GParamSpec, _: c.gpointer) callconv(.c
     } else if (widget == w.pool_hooks) {
         cfg.pool_hooks = active;
         app.syncPlugin(.pool, active);
+    } else if (widget == w.codebuff_hooks) {
+        cfg.codebuff_hooks = active;
+        app.syncPlugin(.codebuff, active);
+    } else if (widget == w.freebuff_hooks) {
+        cfg.freebuff_hooks = active;
+        app.syncPlugin(.freebuff, active);
     } else return;
 
     saveAndReload();
@@ -1052,6 +1062,8 @@ fn onResetResponse(_: *c.AdwAlertDialog, response: [*:0]const u8, _: c.gpointer)
     app.syncPlugin(.vibe, cfg.vibe_hooks);
     app.syncPlugin(.hermes, cfg.hermes_hooks);
     app.syncPlugin(.pool, cfg.pool_hooks);
+    app.syncPlugin(.codebuff, cfg.codebuff_hooks);
+    app.syncPlugin(.freebuff, cfg.freebuff_hooks);
 
     // Reset keybinds
     keybinds.resetToDefaults();
