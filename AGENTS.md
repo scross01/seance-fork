@@ -34,6 +34,11 @@ Zig's global cache (`~/.cache/zig/`) reuses the compiled `ghostty_static` artifa
 
 Do NOT modify the shared ghostty submodule from a worktree.
 
+**Agent worktree policy:** Do NOT use worktrees for feature branches in this
+repo. The ghostty submodule symlink setup is fragile and breaks `zig build test`.
+Make changes directly on a feature branch in the main working tree. If a skill
+implies using a worktree, skip it unless the user explicitly confirms.
+
 ## Testing
 
 ```bash

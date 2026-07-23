@@ -1945,13 +1945,17 @@ fn ncFindPane(ctx: *anyopaque, pane_id: u64) ?*anyopaque {
 fn ncCheckVisible(ctx: *anyopaque, pane_id: u64, ws_id: u64) notification.NotificationCenter.Visibility {
     const state: *WindowState = @ptrCast(@alignCast(ctx));
     if (state.workspaces.items.len == 0) return .{ .visible = false, .in_active_group = false };
+    // Window not active → pane is never "visible" for notification suppression,
+    // even if it has GTK focus within the workspace.  This lets desktop
+    // notifications fire when the seance window is in the background.
+    const window_active = c.gtk_window_is_active(@as(*c.GtkWindow, @ptrCast(state.gtk_window))) != 0;
     const is_active_ws = state.workspaces.items[state.active_workspace].id == ws_id;
     if (!is_active_ws) return .{ .visible = false, .in_active_group = false };
     const ws = state.activeWorkspace() orelse return .{ .visible = false, .in_active_group = false };
     const grp = ws.findGroupContainingPane(pane_id) orelse return .{ .visible = false, .in_active_group = false };
     const is_active_in_group = if (grp.focusedTerminalPane()) |fp| fp.id == pane_id else false;
     const is_focused = if (ws.focusedGroup()) |fg| fg == grp and is_active_in_group else false;
-    return .{ .visible = is_focused, .in_active_group = is_active_in_group };
+    return .{ .visible = window_active and is_focused, .in_active_group = window_active and is_active_in_group };
 }
 
 fn ncClearWsVisuals(ws_ptr: *anyopaque) void {
