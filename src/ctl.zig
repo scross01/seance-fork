@@ -2180,12 +2180,18 @@ const SessionStore = struct {
             };
         }
 
-        const file = std.fs.createFileAbsolute(self.path, .{}) catch return;
-        defer file.close();
+        // Write to a temp file, then atomically rename
+        var tmp_buf: [std.fs.max_path_bytes]u8 = undefined;
+        const tmp_path = std.fmt.bufPrint(&tmp_buf, "{s}.tmp", .{self.path}) catch return;
 
-        // Serialize using Stringify.valueAlloc and write
+        const file = std.fs.createFileAbsolute(tmp_path, .{}) catch return;
+
         const json_bytes = Stringify.valueAlloc(self.alloc, data, .{ .whitespace = .indent_2 }) catch return;
         file.writeAll(json_bytes) catch return;
+        file.close();
+
+        // Atomic rename — on Linux, rename(2) is atomic for same-filesystem
+        std.fs.renameAbsolute(tmp_path, self.path) catch {};
     }
 
     fn pruneOld(self: SessionStore, sessions: *JsonValue) void {
