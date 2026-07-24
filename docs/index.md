@@ -82,7 +82,7 @@ features:
 }
 
 .comparison-table th {
-  padding: 16px 24px;
+  padding: 16px 14px;
   text-align: left;
   font-weight: 600;
   font-size: 12px;
@@ -90,16 +90,66 @@ features:
   letter-spacing: 0.06em;
   color: var(--vp-c-text-2);
   border-bottom: 1px solid var(--vp-c-border);
-  width: 33.33%;
+  vertical-align: bottom;
+  width: 14.4%;
+}
+
+.comparison-table th.col-feature {
+  width: 28%;
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 13px;
+}
+
+.comparison-table th a {
+  color: inherit;
+  text-decoration: none;
+  border-bottom: 1px dashed var(--vp-c-divider);
+}
+
+.comparison-table th a:hover {
+  border-bottom-color: currentColor;
+}
+
+.comparison-table th.col-fork {
+  color: var(--vp-c-brand-1);
 }
 
 .dark .comparison-table th.col-fork {
   color: #F9A825;
 }
 
+.comparison-table tbody td:nth-child(3) {
+  background: var(--vp-c-brand-soft);
+}
+
 .comparison-table td {
-  padding: 12px 24px;
+  padding: 11px 14px;
   border-bottom: 1px solid var(--vp-c-border);
+}
+
+.comparison-table td:not(:first-child) {
+  text-align: center;
+}
+
+.comparison-table td:first-child {
+  font-weight: 500;
+}
+
+.comparison-note {
+  margin: 20px 0 0;
+  font-size: 13px;
+  line-height: 1.65;
+  color: var(--vp-c-text-2);
+}
+
+.comparison-note a {
+  color: var(--vp-c-brand-1);
+  text-decoration: none;
+}
+
+.comparison-note a:hover {
+  text-decoration: underline;
 }
 
 .comparison-table tr:last-child td {
@@ -160,6 +210,23 @@ features:
   letter-spacing: 0.08em;
 }
 
+.install-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 12px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--vp-c-brand-1);
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+  transition: border-color 0.2s;
+}
+
+.install-link:hover {
+  border-bottom-color: var(--vp-c-brand-1);
+}
+
 @media (max-width: 768px) {
   .install-grid {
     grid-template-columns: 1fr;
@@ -173,6 +240,9 @@ features:
   <div class="install-grid">
     <div class="install-card">
       <h4>AppImage</h4>
+      <a class="install-link" href="https://github.com/scross01/seance-fork/releases/latest">
+        &darr; Download the latest AppImage
+      </a>
       <div class="vp-doc">
         <div class="language-bash active"><pre><span class="line"><span class="pfx">$ </span>chmod +x seance-*-x86_64.AppImage</span>
 <span class="line"><span class="pfx">$ </span>./seance-*-x86_64.AppImage</span></pre></div>
@@ -190,28 +260,48 @@ features:
 
 <div class="comparison-section">
   <div class="section-eyebrow">What's different</div>
-  <h2 class="section-title">Original Séance vs. Séance-fork</h2>
+  <h2 class="section-title">Séance-fork vs. other Linux agent terminals</h2>
   <table class="comparison-table">
     <thead>
       <tr>
-        <th>Feature</th>
-        <th>Original Séance</th>
+        <th class="col-feature">Feature</th>
+        <th><a href="https://github.com/no1msd/seance" title="Original Séance by no1msd">Séance (orig)</a></th>
         <th class="col-fork">Séance-fork</th>
+        <th><a href="https://github.com/am-will/limux">Limux</a></th>
+        <th><a href="https://github.com/patcito/prettymux">PrettyMux</a></th>
+        <th><a href="https://github.com/tony1223/better-agent-terminal">Better Agent Terminal</a></th>
       </tr>
     </thead>
     <tbody>
       <tr>
-        <td>Scrolling panes</td>
+        <td>Scrolling pane layout</td>
         <td><span class="check">&#10003;</span></td>
         <td><span class="check">&#10003;</span></td>
+        <td><span class="dash">&mdash;</span></td>
+        <td><span class="dash">&mdash;</span></td>
+        <td><span class="dash">&mdash;</span></td>
       </tr>
       <tr>
-        <td>GPU rendering</td>
+        <td>GPU rendering (libghostty)</td>
         <td><span class="check">&#10003;</span></td>
         <td><span class="check">&#10003;</span></td>
+        <td><span class="check">&#10003;</span></td>
+        <td><span class="check">&#10003;</span></td>
+        <td><span class="dash">&mdash;</span></td>
       </tr>
       <tr>
-        <td>Scriptable socket</td>
+        <td>Scriptable control socket</td>
+        <td><span class="check">&#10003;</span></td>
+        <td><span class="check">&#10003;</span></td>
+        <td><span class="check">&#10003;</span></td>
+        <td><span class="check">&#10003;</span></td>
+        <td><span class="dash">&mdash;</span></td>
+      </tr>
+      <tr>
+        <td>Windows / macOS builds</td>
+        <td><span class="dash">&mdash;</span></td>
+        <td><span class="dash">&mdash;</span></td>
+        <td><span class="dash">&mdash;</span></td>
         <td><span class="check">&#10003;</span></td>
         <td><span class="check">&#10003;</span></td>
       </tr>
@@ -219,9 +309,7 @@ features:
         <td>Claude Code</td>
         <td><span class="check">&#10003;</span></td>
         <td><span class="check">&#10003;</span></td>
-      </tr>
-      <tr>
-        <td>Codebuff</td>
+        <td><span class="check">&#10003;</span></td>
         <td><span class="dash">&mdash;</span></td>
         <td><span class="check">&#10003;</span></td>
       </tr>
@@ -229,49 +317,101 @@ features:
         <td>Codex</td>
         <td><span class="check">&#10003;</span></td>
         <td><span class="check">&#10003;</span></td>
+        <td><span class="check">&#10003;</span></td>
+        <td><span class="dash">&mdash;</span></td>
+        <td><span class="check">&#10003;</span></td>
+      </tr>
+      <tr>
+        <td>Gemini CLI</td>
+        <td><span class="dash">&mdash;</span></td>
+        <td><span class="dash">&mdash;</span></td>
+        <td><span class="check">&#10003;</span></td>
+        <td><span class="dash">&mdash;</span></td>
+        <td><span class="dash">&mdash;</span></td>
+      </tr>
+      <tr>
+        <td>Codebuff</td>
+        <td><span class="dash">&mdash;</span></td>
+        <td><span class="check">&#10003;</span></td>
+        <td><span class="dash">&mdash;</span></td>
+        <td><span class="dash">&mdash;</span></td>
+        <td><span class="dash">&mdash;</span></td>
       </tr>
       <tr>
         <td>Freebuff</td>
         <td><span class="dash">&mdash;</span></td>
         <td><span class="check">&#10003;</span></td>
+        <td><span class="dash">&mdash;</span></td>
+        <td><span class="dash">&mdash;</span></td>
+        <td><span class="dash">&mdash;</span></td>
       </tr>
       <tr>
         <td>Hermes Agent</td>
         <td><span class="dash">&mdash;</span></td>
         <td><span class="check">&#10003;</span></td>
+        <td><span class="dash">&mdash;</span></td>
+        <td><span class="dash">&mdash;</span></td>
+        <td><span class="dash">&mdash;</span></td>
       </tr>
       <tr>
         <td>Kilo Code</td>
         <td><span class="dash">&mdash;</span></td>
         <td><span class="check">&#10003;</span></td>
+        <td><span class="dash">&mdash;</span></td>
+        <td><span class="dash">&mdash;</span></td>
+        <td><span class="dash">&mdash;</span></td>
       </tr>
       <tr>
         <td>MiMo Code</td>
         <td><span class="dash">&mdash;</span></td>
         <td><span class="check">&#10003;</span></td>
+        <td><span class="dash">&mdash;</span></td>
+        <td><span class="dash">&mdash;</span></td>
+        <td><span class="dash">&mdash;</span></td>
       </tr>
       <tr>
         <td>Mistral Vibe</td>
         <td><span class="dash">&mdash;</span></td>
         <td><span class="check">&#10003;</span></td>
+        <td><span class="dash">&mdash;</span></td>
+        <td><span class="dash">&mdash;</span></td>
+        <td><span class="dash">&mdash;</span></td>
       </tr>
       <tr>
         <td>OpenCode</td>
         <td><span class="dash">&mdash;</span></td>
         <td><span class="check">&#10003;</span></td>
+        <td><span class="dash">&mdash;</span></td>
+        <td><span class="dash">&mdash;</span></td>
+        <td><span class="dash">&mdash;</span></td>
       </tr>
       <tr>
         <td>Pi Agent</td>
         <td><span class="check">&#10003;</span></td>
         <td><span class="check">&#10003;</span></td>
+        <td><span class="dash">&mdash;</span></td>
+        <td><span class="dash">&mdash;</span></td>
+        <td><span class="dash">&mdash;</span></td>
       </tr>
       <tr>
         <td>Poolside Agent CLI</td>
         <td><span class="dash">&mdash;</span></td>
         <td><span class="check">&#10003;</span></td>
+        <td><span class="dash">&mdash;</span></td>
+        <td><span class="dash">&mdash;</span></td>
+        <td><span class="dash">&mdash;</span></td>
       </tr>
     </tbody>
   </table>
+  <p class="comparison-note">
+    Séance-fork auto-detects every agent above with zero config.
+    <a href="https://github.com/am-will/limux">Limux</a> ships hooks for Codex, Claude Code, and Gemini CLI;
+    <a href="https://github.com/tony1223/better-agent-terminal">Better Agent Terminal</a> builds Claude Code and Codex in directly.
+    <a href="https://github.com/patcito/prettymux">PrettyMux</a> exposes a generic agent-status socket any agent can call, but ships no
+    built-in auto-detection, so it isn't checked for specific agents. The others all use split or tabbed
+    pane layouts rather than a scrolling strip. Better Agent Terminal is a Tauri/webview app (xterm.js),
+    not GPU-rendered, and is driven by a remote WebSocket server instead of a local control socket.
+  </p>
 </div>
 
 <div class="attribution-section">

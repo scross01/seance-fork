@@ -47,3 +47,17 @@
   --vp-home-hero-name-color: transparent;
   --vp-home-hero-name-background: linear-gradient(135deg, #F5D547 0%, #50c6f7 100%);
 }
+
+/* ── Landing hero ──
+   VitePress positions the hero image slot with translate(-32px, -32px) and no
+   gap, tuned for a small centered logo. With our full-frame demo video that
+   pulls the frame over the headline/tagline. Drop the horizontal shift (keep
+   the vertical alignment) and add a gutter between the text and the video. */
+@media (min-width: 960px) {
+  .VPHero .image-container {
+    transform: translateY(-32px) !important;
+  }
+  .VPHero.has-image .container {
+    column-gap: 32px !important;
+  }
+}
