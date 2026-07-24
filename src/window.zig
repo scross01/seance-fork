@@ -2312,18 +2312,34 @@ fn loadThemeCss() void {
     if (pos >= css_buf.len) return;
     css_buf[pos] = 0;
 
-    if (css_provider_global) |provider| {
-        c.gtk_css_provider_load_from_string(provider, @ptrCast(&css_buf));
-    } else {
-        const provider = c.gtk_css_provider_new();
-        c.gtk_css_provider_load_from_string(provider, @ptrCast(&css_buf));
-        c.gtk_style_context_add_provider_for_display(
-            c.gdk_display_get_default(),
-            @ptrCast(provider),
-            c.GTK_STYLE_PROVIDER_PRIORITY_APPLICATION,
-        );
-        css_provider_global = provider;
+    // Resolve the default display once for the CSS swap below.  Returning
+    // early on null avoids a speculative null-deref during the swap, and
+    // keeps the per-pane queue_draw loop below coherent with the swap.
+    const disp = c.gdk_display_get_default() orelse return;
+
+    // Atomic swap: build a fresh provider, attach it BEFORE detaching the
+    // previous one, then drop the old.  The display always holds at least
+    // one provider covering css_provider_global's CSS slots, so widgets
+    // never query their style during a gap where the provider is unbound.
+    // This closes the nit where a future maintainer who splits the
+    // detach/attach across a g_idle_add boundary or off-thread callback
+    // could open a real style gap.  GTK4 resolves overlapping providers at
+    // the same priority to the most-recently-added for new lookups, so
+    // consumers immediately pick up the new CSS; combined with the
+    // per-pane queue_draw loop below, the stale-background-on-pane=1 bug
+    // stays fixed.
+    const new_provider = c.gtk_css_provider_new();
+    c.gtk_css_provider_load_from_string(new_provider, @ptrCast(&css_buf));
+    c.gtk_style_context_add_provider_for_display(
+        disp,
+        @ptrCast(new_provider),
+        c.GTK_STYLE_PROVIDER_PRIORITY_APPLICATION,
+    );
+    if (css_provider_global) |old| {
+        c.gtk_style_context_remove_provider_for_display(disp, @ptrCast(old));
+        c.g_object_unref(@ptrCast(old));
     }
+    css_provider_global = new_provider;
 
     // Sync window transparency: toggle the "background" CSS class on all
     // windows.  Adwaita paints a solid background when this class is present;
@@ -2337,6 +2353,24 @@ fn loadThemeCss() void {
             else
                 c.gtk_widget_remove_css_class(win, "background");
             blur.syncBlur(@ptrCast(state.gtk_window));
+        }
+    }
+
+    // Redraw every pane wrapper so the wrapper-painted bg (`.pane-focused`
+    // / `.pane-unfocused`) tracks the new theme even if the provider
+    // detach/re-attach above doesn't reach a widget already deep in the
+    // GTK style cache.
+    if (window_manager) |wm| {
+        for (wm.windows.items) |state| {
+            for (state.workspaces.items) |ws| {
+                for (ws.columns.items) |col| {
+                    for (col.groups.items) |grp| {
+                        for (grp.panels.items) |panel| {
+                            c.gtk_widget_queue_draw(panel.getWidget());
+                        }
+                    }
+                }
+            }
         }
     }
 }
