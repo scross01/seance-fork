@@ -37,6 +37,9 @@ jobs:
         working-directory: docs
         run: npm run build
 
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
