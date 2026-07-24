@@ -100,7 +100,7 @@ jobs:
       - name: Stage AppImage top-level files
         run: |
           cp resources/com.seance-fork.app.desktop AppDir/com.seance-fork.app.desktop
-          cp resources/icons/hicolor/scalable/apps/com.seance-fork.app.svg AppDir/com.seance-fork.app.svg
+          cp resources/icons/hicolor/256x256/apps/com.seance-fork.app.png AppDir/com.seance-fork.app.png
 
       - name: Download linuxdeploy and GTK plugin
         run: |
@@ -121,7 +121,7 @@ jobs:
             --appdir AppDir \
             --plugin gtk \
             --desktop-file AppDir/com.seance-fork.app.desktop \
-            --icon-file AppDir/com.seance-fork.app.svg
+            --icon-file AppDir/com.seance-fork.app.png
 
       - name: Verify glibc floor
         run: |
