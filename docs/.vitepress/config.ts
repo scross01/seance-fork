@@ -87,6 +87,15 @@ export default defineConfig({
     search: {
       provider: 'local',
     },
+    outline: {
+      level: [2, 3],
+      label: 'On this page',
+    },
+    editLink: {
+      pattern: 'https://github.com/scross01/seance-fork/edit/main/docs/:path',
+      text: 'Edit this page on GitHub',
+    },
+    lastUpdated: true,
     footer: {
       message: 'MIT Licensed',
       copyright: 'Built with Zig, GTK4, and libghostty',
