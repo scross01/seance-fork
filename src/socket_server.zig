@@ -287,6 +287,7 @@ pub const SocketServer = struct {
         if (eql(method, "surface.report_state")) return handleSurfaceReportState(params, id, buf);
 
         // Browser methods
+        if (eql(method, "browser.open")) return handleBrowserOpen(params, id, buf);
         if (eql(method, "browser.navigate")) return handleBrowserNavigate(params, id, buf);
         if (eql(method, "browser.reload")) return handleBrowserReload(params, id, buf);
         if (eql(method, "browser.back")) return handleBrowserBack(params, id, buf);
@@ -519,7 +520,7 @@ pub const SocketServer = struct {
             "\"surface.read_screen\",\"surface.expel\",\"surface.resize_row\",\"surface.reorder\"," ++
             "\"notification.create\",\"notification.list\",\"notification.clear\"," ++
             "\"surface.report_cwd\",\"surface.report_git\",\"surface.clear_git\",\"surface.report_state\"," ++
-            "\"browser.navigate\",\"browser.reload\",\"browser.back\",\"browser.forward\"," ++
+            "\"browser.open\",\"browser.navigate\",\"browser.reload\",\"browser.back\",\"browser.forward\"," ++
             "\"browser.get_url\",\"browser.list\"]";
         var result_buf: [1024]u8 = undefined;
         const result = std.fmt.bufPrint(&result_buf, "{{\"methods\":{s}}}", .{methods}) catch
@@ -2084,6 +2085,29 @@ pub const SocketServer = struct {
             }
         }
         return null;
+    }
+
+    fn handleBrowserOpen(params: ?std.json.Value, id: []const u8, buf: []u8) []const u8 {
+        const url = getParamString(params, "url") orelse
+            return writeJsonError(buf, id, "invalid_params", "Missing 'url' parameter");
+
+        if (!@import("web_panel.zig").isAllowedUrl(url))
+            return writeJsonError(buf, id, "invalid_url", "URL scheme or host not allowed");
+
+        const state = getActiveState() orelse
+            return writeJsonError(buf, id, "not_ready", "No active window");
+        const ws = state.activeWorkspace() orelse
+            return writeJsonError(buf, id, "no_workspace", "No active workspace");
+        const group = ws.focusedGroup() orelse
+            return writeJsonError(buf, id, "no_tab", "No focused pane group");
+
+        const wp = group.newBrowserPanel(url) catch
+            return writeJsonError(buf, id, "internal", "Failed to create browser panel");
+
+        var result_buf: [256]u8 = undefined;
+        const result = std.fmt.bufPrint(&result_buf, "{{\"panel_id\":{d}}}", .{wp.id}) catch
+            return writeJsonError(buf, id, "internal", "Buffer overflow");
+        return writeJsonOk(buf, id, result);
     }
 
     fn handleBrowserNavigate(params: ?std.json.Value, id: []const u8, buf: []u8) []const u8 {
