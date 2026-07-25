@@ -1,6 +1,8 @@
 const std = @import("std");
 const c = @import("c.zig").c;
 
+const WEBKIT_LOAD_COMMITTED: c_int = 1;
+
 var id_counter: u64 = 0;
 
 fn nextId() u64 {
@@ -64,6 +66,26 @@ pub const WebPanel = struct {
             .title = "",
             .alloc = alloc,
         };
+
+        // Navigate on Enter in address bar
+        _ = c.g_signal_connect_data(
+            @as(c.gpointer, @ptrCast(entry)),
+            "activate",
+            @as(c.GCallback, @ptrCast(&onEntryActivate)),
+            @ptrCast(panel),
+            null,
+            0,
+        );
+
+        // Sync entry text on page load
+        _ = c.g_signal_connect_data(
+            @as(c.gpointer, @ptrCast(webview)),
+            "load-changed",
+            @as(c.GCallback, @ptrCast(&onLoadChanged)),
+            @ptrCast(panel),
+            null,
+            0,
+        );
 
         // Load URL if valid
         if (isAllowedUrl(url)) {
@@ -207,6 +229,37 @@ fn getHostFromUrl(url: []const u8) []const u8 {
         if (ch == '/' or ch == ':' or ch == '?') break i;
     } else rest.len;
     return rest[0..end];
+}
+
+fn onEntryActivate(entry_: ?*c.GtkEditable, user_data: ?*anyopaque) callconv(.c) void {
+    const panel: *WebPanel = @ptrCast(@alignCast(user_data orelse return));
+    const editable = entry_ orelse return;
+    const text = c.gtk_editable_get_text(editable);
+    if (text == null) return;
+    const url = std.mem.span(text.?);
+    if (url.len == 0) return;
+    panel.navigating_from_entry = true;
+    panel.navigate(url);
+}
+
+fn onLoadChanged(webview: ?*c.WebKitWebView, event: c_int, user_data: ?*anyopaque) callconv(.c) void {
+    _ = webview;
+    const panel: *WebPanel = @ptrCast(@alignCast(user_data orelse return));
+    if (event != WEBKIT_LOAD_COMMITTED) return;
+    const uri = c.webkit_web_view_get_uri(panel.webview);
+    if (uri) |u| {
+        const new_url = std.mem.span(u);
+        if (!std.mem.eql(u8, panel.url, new_url)) {
+            const owned = panel.alloc.dupe(u8, new_url) catch return;
+            panel.alloc.free(panel.url);
+            panel.url = owned;
+        }
+    }
+    if (!panel.navigating_from_entry) {
+        const url_str = if (uri) |u| std.mem.span(u) else panel.url;
+        c.gtk_editable_set_text(@ptrCast(panel.entry), url_str.ptr);
+    }
+    panel.navigating_from_entry = false;
 }
 
 test "isAllowedUrl: https accepted" {
