@@ -279,8 +279,8 @@ fn initDefaults() void {
 
     // Browser
     set(.new_browser_panel, .{ .key = c.GDK_KEY_B, .ctrl = true, .alt = true });
-    set(.browser_back, .{ .key = c.GDK_KEY_Left, .alt = true });
-    set(.browser_forward, .{ .key = c.GDK_KEY_Right, .alt = true });
+    set(.browser_back, .{ .key = c.GDK_KEY_Left, .ctrl = true, .alt = true });
+    set(.browser_forward, .{ .key = c.GDK_KEY_Right, .ctrl = true, .alt = true });
     set(.browser_reload, .{ .key = c.GDK_KEY_R, .ctrl = true });
     set(.browser_focus_bar, .{ .key = c.GDK_KEY_L, .ctrl = true });
     set(.toggle_browser_focus_mode, .{ .key = c.GDK_KEY_F, .ctrl = true, .alt = true });
@@ -429,8 +429,15 @@ fn onKeyPressed(
         return 0; // let palette handle it
     }
 
-    // Browser focus mode: when enabled, Alt+arrows always route to browser
-    // navigation (handled by browser_back/browser_forward actions in the loop below).
+    // Browser focus mode: pass all keystrokes through to browser content,
+    // except for the toggle binding which always works.
+    if (state.browser_focus_mode) {
+        const toggle_kb = bindings[@intFromEnum(Action.toggle_browser_focus_mode)];
+        if (toggle_kb.matches(keyval, base_keyval, is_ctrl, is_shift, is_alt)) {
+            return executeAction(Action.toggle_browser_focus_mode, state);
+        }
+        return 0; // pass through to browser
+    }
 
     for (bindings, 0..) |kb, i| {
         if (kb.matches(keyval, base_keyval, is_ctrl, is_shift, is_alt)) {
@@ -613,6 +620,21 @@ pub fn executeAction(action: Action, state: *Window.WindowState) c.gboolean {
         },
         .toggle_browser_focus_mode => {
             state.browser_focus_mode = !state.browser_focus_mode;
+            if (state.activeWorkspace()) |ws| {
+                if (ws.focusedGroup()) |grp| {
+                    if (grp.getActivePanel()) |panel| {
+                        if (panel.asWebPanel()) |wp| {
+                            if (state.browser_focus_mode) {
+                                // Entering focus mode: grab focus on webview
+                                _ = c.gtk_widget_grab_focus(@ptrCast(wp.webview));
+                            } else {
+                                // Exiting focus mode: grab focus on entry
+                                _ = c.gtk_widget_grab_focus(@ptrCast(wp.entry));
+                            }
+                        }
+                    }
+                }
+            }
         },
 
         // Config
