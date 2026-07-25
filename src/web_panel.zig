@@ -145,10 +145,12 @@ pub fn isAllowedUrl(url: []const u8) bool {
     if (std.mem.startsWith(u8, url, "blob:")) return false;
 
     // Must be http or https
-    if (!std.mem.startsWith(u8, url, "http://") and !std.mem.startsWith(u8, url, "https://")) return false;
-
-    // SSRF: reject link-local, loopback, and RFC1918
-    const after_scheme = url["https://".len..];
+    const after_scheme: []const u8 = if (std.mem.startsWith(u8, url, "https://"))
+        url["https://".len..]
+    else if (std.mem.startsWith(u8, url, "http://"))
+        url["http://".len..]
+    else
+        return false;
     if (std.mem.startsWith(u8, after_scheme, "169.254.") or
         std.mem.startsWith(u8, after_scheme, "127.") or
         std.mem.startsWith(u8, after_scheme, "10.") or
