@@ -286,6 +286,14 @@ pub const SocketServer = struct {
         if (eql(method, "surface.clear_git")) return handleSurfaceClearGit(params, id, buf);
         if (eql(method, "surface.report_state")) return handleSurfaceReportState(params, id, buf);
 
+        // Browser methods
+        if (eql(method, "browser.navigate")) return handleBrowserNavigate(params, id, buf);
+        if (eql(method, "browser.reload")) return handleBrowserReload(params, id, buf);
+        if (eql(method, "browser.back")) return handleBrowserBack(params, id, buf);
+        if (eql(method, "browser.forward")) return handleBrowserForward(params, id, buf);
+        if (eql(method, "browser.get_url")) return handleBrowserGetUrl(params, id, buf);
+        if (eql(method, "browser.list")) return handleBrowserList(id, buf);
+
         return writeJsonError(buf, id, "method_not_found", "Unknown method");
     }
 
@@ -510,7 +518,9 @@ pub const SocketServer = struct {
             "\"surface.send_text\",\"surface.send_key\",\"surface.trigger_flash\",\"surface.health\"," ++
             "\"surface.read_screen\",\"surface.expel\",\"surface.resize_row\",\"surface.reorder\"," ++
             "\"notification.create\",\"notification.list\",\"notification.clear\"," ++
-            "\"surface.report_cwd\",\"surface.report_git\",\"surface.clear_git\",\"surface.report_state\"]";
+            "\"surface.report_cwd\",\"surface.report_git\",\"surface.clear_git\",\"surface.report_state\"," ++
+            "\"browser.navigate\",\"browser.reload\",\"browser.back\",\"browser.forward\"," ++
+            "\"browser.get_url\",\"browser.list\"]";
         var result_buf: [1024]u8 = undefined;
         const result = std.fmt.bufPrint(&result_buf, "{{\"methods\":{s}}}", .{methods}) catch
             return writeJsonError(buf, id, "internal", "Buffer overflow");
@@ -2055,6 +2065,136 @@ pub const SocketServer = struct {
         const fg = ws.focusedGroup() orelse return false;
         const fp = fg.focusedTerminalPane() orelse return false;
         return fp.id == pane_id;
+    }
+
+    // ── Browser handlers ────────────────────────────────────────────
+
+    fn findBrowserPanel(panel_id: u64) ?*@import("web_panel.zig").WebPanel {
+        const Window = @import("window.zig");
+        const wm = Window.window_manager orelse return null;
+        for (wm.windows.items) |state| {
+            for (state.workspaces.items) |ws| {
+                for (ws.columns.items) |col| {
+                    for (col.groups.items) |grp| {
+                        if (grp.findPanelById(panel_id)) |result| {
+                            return result.panel.asWebPanel();
+                        }
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    fn handleBrowserNavigate(params: ?std.json.Value, id: []const u8, buf: []u8) []const u8 {
+        const panel_id = getParamInt(params, "panel_id") orelse
+            return writeJsonError(buf, id, "invalid_params", "Missing 'panel_id' parameter");
+        const url = getParamString(params, "url") orelse
+            return writeJsonError(buf, id, "invalid_params", "Missing 'url' parameter");
+
+        const wp = findBrowserPanel(panel_id) orelse
+            return writeJsonError(buf, id, "not_found", "Browser panel not found");
+
+        if (!@import("web_panel.zig").isAllowedUrl(url))
+            return writeJsonError(buf, id, "invalid_url", "URL scheme or host not allowed");
+
+        wp.navigate(url);
+
+        var url_esc: [2048]u8 = undefined;
+        const escaped = jsonEscapeString(url, &url_esc);
+        var result_buf: [2200]u8 = undefined;
+        const result = std.fmt.bufPrint(&result_buf, "{{\"url\":\"{s}\"}}", .{escaped}) catch
+            return writeJsonError(buf, id, "internal", "Buffer overflow");
+        return writeJsonOk(buf, id, result);
+    }
+
+    fn handleBrowserReload(params: ?std.json.Value, id: []const u8, buf: []u8) []const u8 {
+        const panel_id = getParamInt(params, "panel_id") orelse
+            return writeJsonError(buf, id, "invalid_params", "Missing 'panel_id' parameter");
+
+        const wp = findBrowserPanel(panel_id) orelse
+            return writeJsonError(buf, id, "not_found", "Browser panel not found");
+
+        wp.reload();
+        return writeJsonOk(buf, id, "{}");
+    }
+
+    fn handleBrowserBack(params: ?std.json.Value, id: []const u8, buf: []u8) []const u8 {
+        const panel_id = getParamInt(params, "panel_id") orelse
+            return writeJsonError(buf, id, "invalid_params", "Missing 'panel_id' parameter");
+
+        const wp = findBrowserPanel(panel_id) orelse
+            return writeJsonError(buf, id, "not_found", "Browser panel not found");
+
+        wp.back();
+        return writeJsonOk(buf, id, "{}");
+    }
+
+    fn handleBrowserForward(params: ?std.json.Value, id: []const u8, buf: []u8) []const u8 {
+        const panel_id = getParamInt(params, "panel_id") orelse
+            return writeJsonError(buf, id, "invalid_params", "Missing 'panel_id' parameter");
+
+        const wp = findBrowserPanel(panel_id) orelse
+            return writeJsonError(buf, id, "not_found", "Browser panel not found");
+
+        wp.forward();
+        return writeJsonOk(buf, id, "{}");
+    }
+
+    fn handleBrowserGetUrl(params: ?std.json.Value, id: []const u8, buf: []u8) []const u8 {
+        const panel_id = getParamInt(params, "panel_id") orelse
+            return writeJsonError(buf, id, "invalid_params", "Missing 'panel_id' parameter");
+
+        const wp = findBrowserPanel(panel_id) orelse
+            return writeJsonError(buf, id, "not_found", "Browser panel not found");
+
+        const uri = c.webkit_web_view_get_uri(wp.webview);
+        const url_str = if (uri) |u| std.mem.span(u) else wp.url;
+
+        var url_esc: [2048]u8 = undefined;
+        const escaped = jsonEscapeString(url_str, &url_esc);
+        var result_buf: [2200]u8 = undefined;
+        const result = std.fmt.bufPrint(&result_buf, "{{\"url\":\"{s}\"}}", .{escaped}) catch
+            return writeJsonError(buf, id, "internal", "Buffer overflow");
+        return writeJsonOk(buf, id, result);
+    }
+
+    fn handleBrowserList(id: []const u8, buf: []u8) []const u8 {
+        const wm = getWindowManager() orelse return writeJsonError(buf, id, "not_ready", "Window manager not initialized");
+
+        var result_buf: [8192]u8 = undefined;
+        var pos: usize = 0;
+
+        pos += copySlice(result_buf[pos..], "{\"panels\":[");
+
+        var first = true;
+        for (wm.windows.items) |state| {
+            for (state.workspaces.items) |ws| {
+                for (ws.columns.items) |col| {
+                    for (col.groups.items) |grp| {
+                        for (grp.panels.items) |panel| {
+                            const wp = panel.asWebPanel() orelse continue;
+                            if (!first) pos += copySlice(result_buf[pos..], ",");
+                            first = false;
+
+                            const uri = c.webkit_web_view_get_uri(wp.webview);
+                            const url_str = if (uri) |u| std.mem.span(u) else wp.url;
+                            var url_esc: [2048]u8 = undefined;
+                            const escaped_url = jsonEscapeString(url_str, &url_esc);
+
+                            const entry = std.fmt.bufPrint(result_buf[pos..], "{{\"id\":{d},\"url\":\"{s}\"}}", .{
+                                wp.id,
+                                escaped_url,
+                            }) catch continue;
+                            pos += entry.len;
+                        }
+                    }
+                }
+            }
+        }
+
+        pos += copySlice(result_buf[pos..], "]}");
+        return writeJsonOk(buf, id, result_buf[0..pos]);
     }
 
 };
