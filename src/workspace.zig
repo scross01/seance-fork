@@ -635,9 +635,13 @@ pub const Workspace = struct {
 
         for (grp.panels.items, 0..) |panel, i| {
             const pw = panel.getWidget();
-            // All panels are terminals (see panel.zig); stacked layout
-            // requires per-pane animation state.
-            const pane = panel.asTerminal().?;
+
+            // Webkit panels don't have terminal animation state; use defaults
+            // so they fill the full available height when in stacked mode.
+            const pane_opt = panel.asTerminal();
+            const slot_y: f64 = if (pane_opt) |pane| pane.stacked_frac_y * available_h else 0;
+            const slot_h: f64 = if (pane_opt) |pane| pane.stacked_frac_h * available_h else available_h;
+            const anim: f64 = if (pane_opt) |pane| pane.stacked_open_anim else 1.0;
 
             // Deferred AdwTabView page disposal after a tabbed-mode
             // expel can unparent the widget from GtkFixed.  Re-attach
@@ -655,10 +659,7 @@ pub const Workspace = struct {
                 }
             }
 
-            const slot_y = pane.stacked_frac_y * available_h;
-            const slot_h = pane.stacked_frac_h * available_h;
-            // Horizontal offset for cross-column move animation
-            const panel_x = ctx.screen_x + pane.stacked_offset_x;
+            const panel_x: f64 = if (pane_opt) |pane| ctx.screen_x + pane.stacked_offset_x else ctx.screen_x;
 
             setCssClass(pw, "column-has-divider", ctx.col_idx > 0);
             setCssClass(pw, "row-has-divider", i > 0);
@@ -676,7 +677,6 @@ pub const Workspace = struct {
                 setChildTransform(self.fixed, pw, @floatCast(ctx.col_scale), @floatCast(ctx.pixel_w), @floatCast(panel_h), panel_x, panel_y);
             } else {
                 // Inactive panel: fade+scale animation via transform
-                const anim = pane.stacked_open_anim;
                 const target_y = tab_area_h + slot_y;
 
                 if (anim <= 0.01 and i != grp.active_panel) {
