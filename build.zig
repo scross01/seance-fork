@@ -63,6 +63,7 @@ fn addSeanceDeps(
     if (is_linux) {
         mod.linkSystemLibrary("libnotify", sys_lib);
         mod.linkSystemLibrary("libcanberra", sys_lib);
+        mod.linkSystemLibrary("webkitgtk-6.0", sys_lib);
 
         // System fontconfig must be linked by seance directly so there's
         // exactly one copy in the process; otherwise ELF symbol
@@ -135,6 +136,7 @@ pub fn build(b: *std.Build) void {
         "libadwaita-1",
         "libnotify",
         "libcanberra",
+        "webkitgtk-6.0",
         "x11",
         "wayland-client",
         "gl",

@@ -14,6 +14,7 @@ pub const c = @cImport({
 
         @cInclude("libnotify/notify.h");
         @cInclude("canberra.h");
+        @cInclude("webkit/webkit.h");
     }
 
     @cInclude("ghostty.h");
