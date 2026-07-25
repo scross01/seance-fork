@@ -22,7 +22,6 @@ pub fn main() !void {
         }
     }
 
-    // Normal GUI startup
     // Ghostty requires desktop OpenGL 4.3+, not GLES. Disable GLES
     // and Vulkan before GTK/GDK initialization so that GDK creates a
     // desktop GL context. See ghostty GTK apprt setGtkEnv().

@@ -19,7 +19,9 @@ pub const WebPanel = struct {
     id: u64,
     widget: *c.GtkWidget,
     toolbar: *c.GtkWidget,
+    url_stack: *c.GtkWidget,
     entry: *c.GtkEntry,
+    url_label: *c.GtkLabel,
     webview: *c.WebKitWebView,
     btn_reload: *c.GtkWidget,
     progress_bar: *c.GtkWidget,
@@ -76,10 +78,23 @@ pub const WebPanel = struct {
         c.gtk_widget_set_tooltip_text(btn_reload, "Reload");
         c.gtk_box_append(@ptrCast(toolbar), btn_reload);
 
+        // URL display stack: label (styled display) + entry (editing)
+        const url_stack = c.gtk_stack_new();
+        c.gtk_widget_set_hexpand(url_stack, 1);
+
+        const url_label: *c.GtkWidget = c.gtk_label_new(null);
+        c.gtk_label_set_ellipsize(@ptrCast(url_label), c.PANGO_ELLIPSIZE_START);
+        c.gtk_label_set_xalign(@ptrCast(url_label), 0);
+        c.gtk_widget_add_css_class(url_label, "url-display");
+        _ = c.gtk_stack_add_named(@ptrCast(url_stack), url_label, "display");
+
         const entry = c.gtk_entry_new();
         c.gtk_widget_set_hexpand(@ptrCast(entry), 1);
         c.gtk_entry_set_placeholder_text(@ptrCast(entry), "Enter URL...");
-        c.gtk_box_append(@ptrCast(toolbar), @ptrCast(entry));
+        _ = c.gtk_stack_add_named(@ptrCast(url_stack), @ptrCast(entry), "edit");
+
+        c.gtk_stack_set_visible_child_name(@ptrCast(url_stack), "display");
+        c.gtk_box_append(@ptrCast(toolbar), url_stack);
 
         const btn_close = c.gtk_button_new_from_icon_name("window-close-symbolic");
         c.gtk_widget_set_tooltip_text(btn_close, "Close browser pane");
@@ -105,7 +120,9 @@ pub const WebPanel = struct {
             .id = id,
             .widget = box,
             .toolbar = toolbar,
+            .url_stack = url_stack,
             .entry = @ptrCast(entry),
+            .url_label = @ptrCast(url_label),
             .webview = webview,
             .btn_reload = btn_reload,
             .progress_bar = progress_bar,
@@ -171,6 +188,31 @@ pub const WebPanel = struct {
         );
         c.gtk_widget_add_controller(webview_widget, @ptrCast(webview_focus_ctrl));
 
+        // Label click → switch to edit mode
+        const label_click = c.gtk_gesture_click_new();
+        c.gtk_gesture_single_set_button(@ptrCast(label_click), 0);
+        _ = c.g_signal_connect_data(
+            @as(c.gpointer, @ptrCast(label_click)),
+            "pressed",
+            @as(c.GCallback, @ptrCast(&onLabelPressed)),
+            @ptrCast(panel),
+            null,
+            0,
+        );
+        c.gtk_widget_add_controller(url_label, @ptrCast(label_click));
+
+        // Entry focus lost → switch back to display mode
+        const entry_focus_leave = c.gtk_event_controller_focus_new();
+        _ = c.g_signal_connect_data(
+            @as(c.gpointer, @ptrCast(entry_focus_leave)),
+            "leave",
+            @as(c.GCallback, @ptrCast(&onEntryFocusLeave)),
+            @ptrCast(panel),
+            null,
+            0,
+        );
+        c.gtk_widget_add_controller(@ptrCast(entry), @ptrCast(entry_focus_leave));
+
         // Back button
         _ = c.g_signal_connect_data(
             @as(c.gpointer, @ptrCast(btn_back)),
@@ -223,6 +265,7 @@ pub const WebPanel = struct {
                 0,
             );
             c.gtk_editable_set_text(@ptrCast(entry), url.ptr);
+            panel.syncDisplay();
         }
 
         return panel;
@@ -252,6 +295,7 @@ pub const WebPanel = struct {
             const url_str = std.mem.span(u);
             c.gtk_editable_set_text(@ptrCast(self.entry), url_str.ptr);
         }
+        c.gtk_stack_set_visible_child_name(@ptrCast(self.url_stack), "edit");
         _ = c.gtk_widget_grab_focus(@ptrCast(self.entry));
     }
 
@@ -288,6 +332,7 @@ pub const WebPanel = struct {
         url_buf[len] = 0;
         c.webkit_web_view_load_uri(self.webview, &url_buf);
         c.gtk_editable_set_text(@ptrCast(self.entry), &url_buf);
+        self.syncDisplay();
     }
 
     pub fn reload(self: *WebPanel) void {
@@ -329,6 +374,15 @@ pub const WebPanel = struct {
             c.gtk_button_set_icon_name(@ptrCast(self.btn_reload), "view-refresh-symbolic");
             c.gtk_widget_set_tooltip_text(self.btn_reload, "Reload");
         }
+    }
+
+    fn syncDisplay(self: *WebPanel) void {
+        const text = c.gtk_editable_get_text(@ptrCast(self.entry));
+        if (text == null) return;
+        const url = std.mem.span(text.?);
+        var markup_buf: [2048:0]u8 = .{0} ** 2048;
+        const markup = buildUrlMarkup(url, &markup_buf);
+        c.gtk_label_set_markup(self.url_label, markup.ptr);
     }
 };
 
@@ -376,11 +430,21 @@ fn onMap(widget_: ?*c.GtkWidget, user_data: ?*anyopaque) callconv(.c) void {
     const w = widget_ orelse return;
     _ = w;
     if (!isAllowedUrl(panel.url)) return;
+    // Defer load_uri to idle so GTK layout sets the webview size first.
+    // Idle callbacks run after frame clock ticks (lower priority),
+    // so applyLayout will have set proper dimensions before we load.
+    _ = c.g_idle_add(@ptrCast(&onDeferredLoad), @ptrCast(panel));
+}
+
+fn onDeferredLoad(user_data: ?*anyopaque) callconv(.c) c.gboolean {
+    const panel: *WebPanel = @ptrCast(@alignCast(user_data orelse return 0));
+    if (!isAllowedUrl(panel.url)) return 0;
     var url_buf: [4096:0]u8 = .{0} ** 4096;
     const len = @min(panel.url.len, 4095);
     @memcpy(url_buf[0..len], panel.url[0..len]);
     url_buf[len] = 0;
     c.webkit_web_view_load_uri(panel.webview, &url_buf);
+    return 0; // remove from idle source
 }
 
 fn onEntryActivate(entry_: ?*c.GtkEditable, user_data: ?*anyopaque) callconv(.c) void {
@@ -390,6 +454,20 @@ fn onEntryActivate(entry_: ?*c.GtkEditable, user_data: ?*anyopaque) callconv(.c)
     if (text == null) return;
     const url = std.mem.span(text.?);
     if (url.len == 0) return;
+    // Auto-prepend https:// for bare domains
+    const needs_scheme = !std.mem.containsAtLeast(u8, url, 1, "://") and
+        !std.mem.startsWith(u8, url, "about:");
+    if (needs_scheme) {
+        var full_buf: [4096:0]u8 = .{0} ** 4096;
+        const prefix = "https://";
+        const copy_len = @min(url.len, 4096 - prefix.len - 1);
+        @memcpy(full_buf[0..prefix.len], prefix);
+        @memcpy(full_buf[prefix.len .. prefix.len + copy_len], url[0..copy_len]);
+        full_buf[prefix.len + copy_len] = 0;
+        panel.navigating_from_entry = true;
+        panel.navigate(full_buf[0 .. prefix.len + copy_len]);
+        return;
+    }
     panel.navigating_from_entry = true;
     panel.navigate(url);
 }
@@ -412,6 +490,7 @@ fn onLoadChanged(_: ?*c.WebKitWebView, event: c_int, user_data: ?*anyopaque) cal
                 }
                 if (!panel.navigating_from_entry) {
                     c.gtk_editable_set_text(@ptrCast(panel.entry), new_url.ptr);
+                    panel.syncDisplay();
                 }
             }
         },
@@ -464,6 +543,100 @@ fn onCloseClicked(_: ?*c.GtkWidget, user_data: ?*anyopaque) callconv(.c) void {
             cb(data);
         }
     }
+}
+
+fn onLabelPressed(_: *c.GtkGestureClick, _: c_int, _: f64, _: f64, user_data: ?*anyopaque) callconv(.c) void {
+    const panel: *WebPanel = @ptrCast(@alignCast(user_data orelse return));
+    c.gtk_stack_set_visible_child_name(@ptrCast(panel.url_stack), "edit");
+    _ = c.gtk_widget_grab_focus(@ptrCast(panel.entry));
+}
+
+fn onEntryFocusLeave(_: ?*c.GtkEventControllerFocus, user_data: ?*anyopaque) callconv(.c) void {
+    const panel: *WebPanel = @ptrCast(@alignCast(user_data orelse return));
+    panel.syncDisplay();
+    c.gtk_stack_set_visible_child_name(@ptrCast(panel.url_stack), "display");
+}
+
+/// Build Pango markup for URL display: domain in normal color,
+/// scheme and path/port in muted color (alpha 50%).
+fn buildUrlMarkup(url: []const u8, buf: *[2048:0]u8) [:0]const u8 {
+    if (url.len == 0) {
+        buf[0] = 0;
+        return buf[0..0 :0];
+    }
+
+    const muted_open = "<span alpha=\"50%\">";
+    const muted_close = "</span>";
+
+    // Find scheme end (after "://")
+    var scheme_end: usize = 0;
+    var domain_start: usize = 0;
+    if (std.mem.indexOf(u8, url, "://")) |idx| {
+        scheme_end = idx + 3;
+        domain_start = scheme_end;
+    } else if (std.mem.startsWith(u8, url, "about:")) {
+        // about:blank — plain text, no styling
+        const copy_len = @min(url.len, 2047);
+        @memcpy(buf[0..copy_len], url[0..copy_len]);
+        buf[copy_len] = 0;
+        return buf[0..copy_len :0];
+    } else {
+        domain_start = 0;
+    }
+
+    // Find domain end (first /, :, ?, # after domain_start)
+    var domain_end: usize = url.len;
+    for (url[domain_start..], 0..) |ch, i| {
+        if (ch == '/' or ch == ':' or ch == '?' or ch == '#') {
+            domain_end = domain_start + i;
+            break;
+        }
+    }
+
+    var pos: usize = 0;
+
+    // Muted scheme
+    if (scheme_end > 0) {
+        pos = appendStr(buf, pos, muted_open);
+        pos = appendEscapedRange(buf, pos, url[0..scheme_end]);
+        pos = appendStr(buf, pos, muted_close);
+    }
+
+    // Domain (normal color — no span)
+    pos = appendEscapedRange(buf, pos, url[domain_start..domain_end]);
+
+    // Muted port + path
+    if (domain_end < url.len) {
+        pos = appendStr(buf, pos, muted_open);
+        pos = appendEscapedRange(buf, pos, url[domain_end..]);
+        pos = appendStr(buf, pos, muted_close);
+    }
+
+    buf[pos] = 0;
+    return buf[0..pos :0];
+}
+
+fn appendStr(buf: *[2048:0]u8, pos: usize, s: []const u8) usize {
+    const space = buf.len - 1 - pos;
+    const n = @min(s.len, space);
+    @memcpy(buf[pos..][0..n], s[0..n]);
+    return pos + n;
+}
+
+fn appendEscapedRange(buf: *[2048:0]u8, pos: usize, range: []const u8) usize {
+    var p = pos;
+    for (range) |ch| {
+        if (p + 8 >= buf.len) break;
+        switch (ch) {
+            '<' => { @memcpy(buf[p..][0..4], "&lt;"); p += 4; },
+            '>' => { @memcpy(buf[p..][0..4], "&gt;"); p += 4; },
+            '&' => { @memcpy(buf[p..][0..5], "&amp;"); p += 5; },
+            '"' => { @memcpy(buf[p..][0..6], "&quot;"); p += 6; },
+            '\'' => { @memcpy(buf[p..][0..6], "&apos;"); p += 6; },
+            else => { buf[p] = ch; p += 1; },
+        }
+    }
+    return p;
 }
 
 test "isAllowedUrl: https accepted" {
@@ -520,4 +693,40 @@ test "isAllowedUrl: javascript rejected" {
 
 test "isAllowedUrl: empty rejected" {
     try std.testing.expect(!isAllowedUrl(""));
+}
+
+test "buildUrlMarkup: https with path" {
+    var buf: [2048:0]u8 = .{0} ** 2048;
+    const result = buildUrlMarkup("https://www.example.com/path/to/page", &buf);
+    try std.testing.expectEqualStrings("<span alpha=\"50%\">https://</span>www.example.com<span alpha=\"50%\">/path/to/page</span>", result);
+}
+
+test "buildUrlMarkup: http with port and path" {
+    var buf: [2048:0]u8 = .{0} ** 2048;
+    const result = buildUrlMarkup("http://localhost:3000/api", &buf);
+    try std.testing.expectEqualStrings("<span alpha=\"50%\">http://</span>localhost<span alpha=\"50%\">:3000/api</span>", result);
+}
+
+test "buildUrlMarkup: about:blank plain" {
+    var buf: [2048:0]u8 = .{0} ** 2048;
+    const result = buildUrlMarkup("about:blank", &buf);
+    try std.testing.expectEqualStrings("about:blank", result);
+}
+
+test "buildUrlMarkup: bare domain no scheme" {
+    var buf: [2048:0]u8 = .{0} ** 2048;
+    const result = buildUrlMarkup("www.example.com", &buf);
+    try std.testing.expectEqualStrings("www.example.com", result);
+}
+
+test "buildUrlMarkup: domain only with trailing slash" {
+    var buf: [2048:0]u8 = .{0} ** 2048;
+    const result = buildUrlMarkup("https://example.com/", &buf);
+    try std.testing.expectEqualStrings("<span alpha=\"50%\">https://</span>example.com<span alpha=\"50%\">/</span>", result);
+}
+
+test "buildUrlMarkup: domain with query string" {
+    var buf: [2048:0]u8 = .{0} ** 2048;
+    const result = buildUrlMarkup("https://example.com/search?q=test", &buf);
+    try std.testing.expectEqualStrings("<span alpha=\"50%\">https://</span>example.com<span alpha=\"50%\">/search?q=test</span>", result);
 }
