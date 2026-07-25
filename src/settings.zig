@@ -29,6 +29,7 @@ const Widgets = struct {
     desktop_notifications: ?*c.GtkWidget = null,
     bell_notification: ?*c.GtkWidget = null,
     confirm_close_window: ?*c.GtkWidget = null,
+    open_url_in_browser: ?*c.GtkWidget = null,
     focus_follows_mouse: ?*c.GtkWidget = null,
     show_notification_text: ?*c.GtkWidget = null,
     show_status: ?*c.GtkWidget = null,
@@ -118,6 +119,7 @@ fn createWindow() void {
     buildAppearanceSection(page, cfg);
     buildWindowSection(page, cfg);
     buildTerminalSection(page, cfg);
+    buildBrowserSection(page, cfg);
     buildNotificationsSection(page, cfg);
     buildIntegrationsSection(page, cfg);
     buildKeyboardSection(page, cfg);
@@ -271,6 +273,16 @@ fn buildTerminalSection(page: *c.GtkWidget, cfg: *const config_mod.Config) void 
     const g1 = newGroup("Terminal");
     w.scrollback_lines = addSpinRow(g1, "Scrollback Lines", "Maximum number of lines kept in scrollback buffer per pane.", 0, 100000, 1000, @floatFromInt(cfg.scrollback_lines));
     w.focus_follows_mouse = addSwitchRow(g1, "Focus Follows Mouse", "Automatically focus the pane under the mouse cursor.", cfg.focus_follows_mouse);
+    addToPage(page, g1);
+}
+
+// ---------------------------------------------------------------------------
+// Section: Browser
+// ---------------------------------------------------------------------------
+
+fn buildBrowserSection(page: *c.GtkWidget, cfg: *const config_mod.Config) void {
+    const g1 = newGroup("Browser");
+    w.open_url_in_browser = addSwitchRow(g1, "Open URLs in Browser Panel", "When an agent opens a URL, open it in an in-app browser panel instead of the system browser.", cfg.open_url_in_browser);
     addToPage(page, g1);
 }
 
@@ -685,6 +697,8 @@ fn onSwitchChanged(obj: *c.GObject, _: *c.GParamSpec, _: c.gpointer) callconv(.c
         cfg.bell_notification = active;
     } else if (widget == w.confirm_close_window) {
         cfg.confirm_close_window = active;
+    } else if (widget == w.open_url_in_browser) {
+        cfg.open_url_in_browser = active;
     } else if (widget == w.focus_follows_mouse) {
         cfg.focus_follows_mouse = active;
     } else if (widget == w.show_notification_text) {
