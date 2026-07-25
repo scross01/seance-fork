@@ -56,6 +56,7 @@ pub const Config = struct {
     desktop_notifications: bool = true,
     focus_follows_mouse: bool = false,
     confirm_close_window: bool = true,
+    open_url_in_browser: bool = false,
     // Claude Code integration
     claude_code_hooks: bool = true,
 
@@ -293,6 +294,7 @@ pub fn saveConfig(cfg: *const Config) void {
     writeBool(w, "desktop-notifications", cfg.desktop_notifications) catch return;
     writeBool(w, "focus-follows-mouse", cfg.focus_follows_mouse) catch return;
     writeBool(w, "confirm-close-window", cfg.confirm_close_window) catch return;
+    writeBool(w, "open-url-in-browser", cfg.open_url_in_browser) catch return;
     writeBool(w, "claude-code-hooks", cfg.claude_code_hooks) catch return;
     writeBool(w, "codex-hooks", cfg.codex_hooks) catch return;
     writeBool(w, "pi-hooks", cfg.pi_hooks) catch return;
@@ -477,6 +479,8 @@ fn applyValue(config: *Config, section: []const u8, key: []const u8, raw_val: []
             config.focus_follows_mouse = parseBool(val) orelse config.focus_follows_mouse; return true;
         } else if (eql(key, "confirm-close-window")) {
             config.confirm_close_window = parseBool(val) orelse config.confirm_close_window; return true;
+        } else if (eql(key, "open-url-in-browser")) {
+            config.open_url_in_browser = parseBool(val) orelse config.open_url_in_browser; return true;
         } else if (eql(key, "claude-code-hooks")) {
             config.claude_code_hooks = parseBool(val) orelse config.claude_code_hooks; return true;
         } else if (eql(key, "codex-hooks")) {
