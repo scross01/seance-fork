@@ -85,6 +85,9 @@ pub const Action = enum(u8) {
     // Folder
     open_folder,
 
+    // Browser
+    new_browser_panel,
+
     // Config
     reload_config,
 
@@ -267,6 +270,9 @@ fn initDefaults() void {
 
     // Folder
     set(.open_folder, .{ .key = c.GDK_KEY_O, .ctrl = true, .shift = true });
+
+    // Browser
+    set(.new_browser_panel, .{ .key = c.GDK_KEY_B, .ctrl = true, .alt = true });
 
     // Config
     set(.reload_config, .{ .key = c.GDK_KEY_comma, .ctrl = true, .shift = true });
@@ -566,6 +572,15 @@ pub fn executeAction(action: Action, state: *Window.WindowState) c.gboolean {
 
         // Folder
         .open_folder => state.showOpenFolderDialog(),
+
+        // Browser
+        .new_browser_panel => {
+            if (state.activeWorkspace()) |ws| {
+                if (ws.focusedGroup()) |group| {
+                    _ = group.newBrowserPanel("about:blank") catch {};
+                }
+            }
+        },
 
         // Config
         .reload_config => {
