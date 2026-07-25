@@ -109,6 +109,7 @@ const static_commands = [_]Command{
     .{ .label = "New Window", .action = .new_window, .keywords = "create new window" },
     .{ .label = "Open Folder...", .action = .open_folder, .keywords = "open folder repository project directory" },
     .{ .label = "New Tab", .action = .new_tab, .keywords = "new terminal tab create add" },
+    .{ .label = "New Browser Panel", .action = .new_browser_panel, .keywords = "browser web url internet" },
     .{ .label = "Close Tab", .action = .close_tab, .keywords = "close tab remove delete", .visible = .has_tab_focus },
     .{ .label = "Close Workspace", .action = .close_workspace, .keywords = "close workspace remove delete", .visible = .workspace_exists },
     .{ .label = "Toggle Sidebar", .action = .toggle_sidebar, .keywords = "toggle sidebar show hide layout" },
