@@ -96,6 +96,9 @@ pub const WebPanel = struct {
             c.webkit_web_view_load_uri(webview, &url_buf);
         }
 
+        // Auto-focus address bar on creation
+        _ = c.gtk_widget_grab_focus(@ptrCast(entry));
+
         return panel;
     }
 
