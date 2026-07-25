@@ -115,6 +115,7 @@ pub const WindowState = struct {
     // chosen ssd mode isn't honorable on this compositor.  Prevents a toast
     // on every reloadConfig tick.
     ssd_unavailable_warned: bool = false,
+    browser_focus_mode: bool = false,
 
     pub fn activeWorkspace(self: *WindowState) ?*Workspace {
         if (self.workspaces.items.len == 0) return null;

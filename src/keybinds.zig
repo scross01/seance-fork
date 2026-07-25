@@ -92,6 +92,7 @@ pub const Action = enum(u8) {
     browser_forward,
     browser_reload,
     browser_focus_bar,
+    toggle_browser_focus_mode,
 
     // Config
     reload_config,
@@ -282,6 +283,7 @@ fn initDefaults() void {
     set(.browser_forward, .{ .key = c.GDK_KEY_Right, .alt = true });
     set(.browser_reload, .{ .key = c.GDK_KEY_R, .ctrl = true });
     set(.browser_focus_bar, .{ .key = c.GDK_KEY_L, .ctrl = true });
+    set(.toggle_browser_focus_mode, .{ .key = c.GDK_KEY_F, .ctrl = true, .alt = true });
 
     // Config
     set(.reload_config, .{ .key = c.GDK_KEY_comma, .ctrl = true, .shift = true });
@@ -426,6 +428,9 @@ fn onKeyPressed(
         }
         return 0; // let palette handle it
     }
+
+    // Browser focus mode: when enabled, Alt+arrows always route to browser
+    // navigation (handled by browser_back/browser_forward actions in the loop below).
 
     for (bindings, 0..) |kb, i| {
         if (kb.matches(keyval, base_keyval, is_ctrl, is_shift, is_alt)) {
@@ -605,6 +610,9 @@ pub fn executeAction(action: Action, state: *Window.WindowState) c.gboolean {
         .browser_focus_bar => {
             const panel = getFocusedWebPanel(state) orelse return 0;
             panel.focus();
+        },
+        .toggle_browser_focus_mode => {
+            state.browser_focus_mode = !state.browser_focus_mode;
         },
 
         // Config
