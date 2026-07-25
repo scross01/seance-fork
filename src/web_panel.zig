@@ -11,10 +11,12 @@ fn nextId() u64 {
 pub const WebPanel = struct {
     id: u64,
     widget: *c.GtkWidget,
+    entry: *c.GtkEntry,
     webview: *c.WebKitWebView,
     url: []u8,
     title: []u8,
     alloc: std.mem.Allocator,
+    navigating_from_entry: bool = false,
 
     pub fn create(alloc: std.mem.Allocator, url: []const u8) !*WebPanel {
         const id = nextId();
@@ -35,10 +37,18 @@ pub const WebPanel = struct {
         c.gtk_widget_set_hexpand(webview_widget, 1);
         c.gtk_widget_set_vexpand(webview_widget, 1);
 
-        // Create a GtkBox to hold the webview
+        // Create a GtkBox to hold the address bar and webview
         const box = c.gtk_box_new(c.GTK_ORIENTATION_VERTICAL, 0);
         c.gtk_widget_set_hexpand(box, 1);
         c.gtk_widget_set_vexpand(box, 1);
+
+        // Address bar
+        const entry = c.gtk_entry_new();
+        c.gtk_widget_set_hexpand(@ptrCast(entry), 1);
+        c.gtk_entry_set_placeholder_text(@ptrCast(entry), "Enter URL...");
+        c.gtk_box_append(@ptrCast(box), @ptrCast(entry));
+
+        // Webview
         c.gtk_box_append(@ptrCast(box), webview_widget);
 
         const owned_url = try alloc.dupe(u8, url);
@@ -48,6 +58,7 @@ pub const WebPanel = struct {
         panel.* = .{
             .id = id,
             .widget = box,
+            .entry = @ptrCast(entry),
             .webview = webview,
             .url = owned_url,
             .title = "",
@@ -75,8 +86,10 @@ pub const WebPanel = struct {
     }
 
     pub fn focus(self: *WebPanel) void {
-        const w: *c.GtkWidget = @ptrCast(self.webview);
-        _ = c.gtk_widget_grab_focus(w);
+        const uri = c.webkit_web_view_get_uri(self.webview);
+        const url_str = if (uri) |u| std.mem.span(u) else self.url;
+        c.gtk_editable_set_text(@ptrCast(self.entry), url_str.ptr);
+        _ = c.gtk_widget_grab_focus(@ptrCast(self.entry));
     }
 
     pub fn unfocus(self: *WebPanel) void {
