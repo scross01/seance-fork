@@ -890,6 +890,10 @@ pub const Workspace = struct {
 
             // Animate per-panel stacked_open_anim and layout fractions
             for (col.groups.items) |grp| {
+                if (grp.needs_stacked_layout) {
+                    grp.needs_stacked_layout = false;
+                    needs_layout = true;
+                }
                 // Compute total height weight for weight-based distribution
                 var total_weight: f64 = 0.0;
                 for (grp.panels.items) |p2| {

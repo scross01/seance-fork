@@ -37,6 +37,9 @@ pub const PaneGroup = struct {
     in_stacked_mode: bool = false,
     /// GtkFixed widget where panels are placed in stacked mode.
     fixed: ?*c.GtkWidget = null,
+    /// Set when a non-terminal panel was added in stacked mode so the
+    /// workspace's onTick triggers a layout pass.
+    needs_stacked_layout: bool = false,
 
     pub fn create(alloc: std.mem.Allocator, cwd: ?[*:0]const u8, workspace_id: u64) !*PaneGroup {
         const self = try initGroupWidgets(alloc, workspace_id);
@@ -189,6 +192,11 @@ pub const PaneGroup = struct {
                     const i_f: f64 = @floatFromInt(self.panels.items.len - 1);
                     pane.stacked_frac_y = i_f / n_f;
                     pane.stacked_frac_h = 1.0 / n_f;
+                } else {
+                    // Non-terminal panels (e.g. webkit) have no animation
+                    // state; signal the workspace to run a layout pass so
+                    // set_size_request is applied on the next tick.
+                    self.needs_stacked_layout = true;
                 }
             }
             // Focus the newly added panel
