@@ -565,11 +565,41 @@ fn handleAction(target: c.ghostty_target_s, action: c.ghostty_action_s) bool {
                     var buf: [4096]u8 = undefined;
                     @memcpy(buf[0..url_data.len], url_ptr[0..url_data.len]);
                     buf[url_data.len] = 0;
-                    _ = c.g_app_info_launch_default_for_uri(
-                        @as([*c]const u8, @ptrCast(&buf)),
-                        null,
-                        null,
-                    );
+                    const url_slice = buf[0..url_data.len];
+
+                    // Check if we should open in the browser panel
+                    const cfg = config_mod.get();
+                    if (cfg.open_url_in_browser) {
+                        const Window = @import("window.zig");
+                        if (paneFromTarget(target)) |pane| {
+                            if (Window.window_manager) |wm| {
+                                if (wm.findByWorkspaceId(pane.workspace_id)) |state| {
+                                    if (state.activeWorkspace()) |ws| {
+                                        if (ws.focusedGroup()) |group| {
+                                            // Find existing browser panel or create one
+                                            var found_browser = false;
+                                            for (group.panels.items) |panel| {
+                                                if (panel.asWebPanel()) |wp| {
+                                                    wp.navigate(url_slice);
+                                                    found_browser = true;
+                                                    break;
+                                                }
+                                            }
+                                            if (!found_browser) {
+                                                _ = group.newBrowserPanel(url_slice) catch {};
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        _ = c.g_app_info_launch_default_for_uri(
+                            @as([*c]const u8, @ptrCast(&buf)),
+                            null,
+                            null,
+                        );
+                    }
                 }
             }
             return true;
