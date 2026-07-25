@@ -3,6 +3,7 @@ const c = @import("c.zig").c;
 const Window = @import("window.zig");
 const Pane = @import("pane.zig").Pane;
 const Column = @import("column.zig").Column;
+const WebPanel = @import("web_panel.zig").WebPanel;
 
 /// All bindable keyboard shortcut actions.
 pub const Action = enum(u8) {
@@ -87,6 +88,10 @@ pub const Action = enum(u8) {
 
     // Browser
     new_browser_panel,
+    browser_back,
+    browser_forward,
+    browser_reload,
+    browser_focus_bar,
 
     // Config
     reload_config,
@@ -234,7 +239,7 @@ fn initDefaults() void {
 
     // Tab management
     set(.close_other_tabs, .{ .key = c.GDK_KEY_T, .ctrl = true, .alt = true });
-    set(.rename_tab, .{ .key = c.GDK_KEY_R, .ctrl = true, .alt = true });
+    set(.rename_tab, .{}); // command-palette only
 
     // Terminal
     set(.copy, .{ .key = c.GDK_KEY_C, .ctrl = true, .shift = true });
@@ -273,6 +278,10 @@ fn initDefaults() void {
 
     // Browser
     set(.new_browser_panel, .{ .key = c.GDK_KEY_B, .ctrl = true, .alt = true });
+    set(.browser_back, .{ .key = c.GDK_KEY_Left, .alt = true });
+    set(.browser_forward, .{ .key = c.GDK_KEY_Right, .alt = true });
+    set(.browser_reload, .{ .key = c.GDK_KEY_R, .ctrl = true });
+    set(.browser_focus_bar, .{ .key = c.GDK_KEY_L, .ctrl = true });
 
     // Config
     set(.reload_config, .{ .key = c.GDK_KEY_comma, .ctrl = true, .shift = true });
@@ -581,6 +590,22 @@ pub fn executeAction(action: Action, state: *Window.WindowState) c.gboolean {
                 }
             }
         },
+        .browser_back => {
+            const panel = getFocusedWebPanel(state) orelse return 0;
+            panel.back();
+        },
+        .browser_forward => {
+            const panel = getFocusedWebPanel(state) orelse return 0;
+            panel.forward();
+        },
+        .browser_reload => {
+            const panel = getFocusedWebPanel(state) orelse return 0;
+            panel.reload();
+        },
+        .browser_focus_bar => {
+            const panel = getFocusedWebPanel(state) orelse return 0;
+            panel.focus();
+        },
 
         // Config
         .reload_config => {
@@ -759,6 +784,13 @@ fn getFocusedPane(state: *Window.WindowState) ?*Pane {
     const ws = state.activeWorkspace() orelse return null;
     const group = ws.focusedGroup() orelse return null;
     return group.focusedTerminalPane();
+}
+
+fn getFocusedWebPanel(state: *Window.WindowState) ?*WebPanel {
+    const ws = state.activeWorkspace() orelse return null;
+    const group = ws.focusedGroup() orelse return null;
+    const panel = group.getActivePanel() orelse return null;
+    return panel.asWebPanel();
 }
 
 // --- Keybind string parsing ---
