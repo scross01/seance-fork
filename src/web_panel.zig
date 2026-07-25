@@ -96,9 +96,6 @@ pub const WebPanel = struct {
             c.webkit_web_view_load_uri(webview, &url_buf);
         }
 
-        // Auto-focus address bar on creation
-        _ = c.gtk_widget_grab_focus(@ptrCast(entry));
-
         return panel;
     }
 
@@ -112,8 +109,10 @@ pub const WebPanel = struct {
 
     pub fn focus(self: *WebPanel) void {
         const uri = c.webkit_web_view_get_uri(self.webview);
-        const url_str = if (uri) |u| std.mem.span(u) else self.url;
-        c.gtk_editable_set_text(@ptrCast(self.entry), url_str.ptr);
+        if (uri) |u| {
+            const url_str = std.mem.span(u);
+            c.gtk_editable_set_text(@ptrCast(self.entry), url_str.ptr);
+        }
         _ = c.gtk_widget_grab_focus(@ptrCast(self.entry));
     }
 
@@ -259,8 +258,10 @@ fn onLoadChanged(webview: ?*c.WebKitWebView, event: c_int, user_data: ?*anyopaqu
         }
     }
     if (!panel.navigating_from_entry) {
-        const url_str = if (uri) |u| std.mem.span(u) else panel.url;
-        c.gtk_editable_set_text(@ptrCast(panel.entry), url_str.ptr);
+        if (uri) |u| {
+            const url_str = std.mem.span(u);
+            c.gtk_editable_set_text(@ptrCast(panel.entry), url_str.ptr);
+        }
     }
     panel.navigating_from_entry = false;
 }

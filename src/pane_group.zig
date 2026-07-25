@@ -221,6 +221,7 @@ pub const PaneGroup = struct {
         const wp = try WebPanel.create(self.alloc, url);
         const panel = Panel{ .webkit = wp };
         try self.addPanel(panel);
+        wp.focus();
         return wp;
     }
 
