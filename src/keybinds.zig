@@ -439,6 +439,19 @@ fn onKeyPressed(
         return 0; // pass through to browser
     }
 
+    // If a text entry (e.g. browser URL bar, command palette entry, settings)
+    // has focus, let GTK handle the keystroke — don't intercept for seance
+    // keybinds. Only pass through bare keybinds (no modifiers).
+    if (is_ctrl or is_shift or is_alt) {
+        if (c.gtk_window_get_focus(@ptrCast(state.gtk_window))) |focused| {
+            const entry_type = c.g_type_from_name("GtkEntry");
+            if (entry_type != 0 and c.g_type_check_instance_is_a(
+                @ptrCast(focused),
+                entry_type,
+            ) != 0) return 0;
+        }
+    }
+
     for (bindings, 0..) |kb, i| {
         if (kb.matches(keyval, base_keyval, is_ctrl, is_shift, is_alt)) {
             return executeAction(@enumFromInt(i), state);

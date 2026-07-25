@@ -61,6 +61,13 @@ pub const Panel = union(PanelType) {
         }
     }
 
+    pub fn queueResize(self: Panel) void {
+        switch (self) {
+            .terminal => {},
+            .webkit => |wp| wp.queueResize(),
+        }
+    }
+
     /// Returns the terminal pane if this is a terminal panel, null otherwise.
     pub fn asTerminal(self: Panel) ?*Pane {
         return switch (self) {

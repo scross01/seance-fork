@@ -456,6 +456,9 @@ pub const Workspace = struct {
         // Close callback: finds this column and removes it
         wp.setCloseCallback(&closeBrowserColumn, @ptrCast(self));
 
+        // Focus callback: when user clicks the browser URL entry, update workspace focus
+        wp.setFocusCallback(&onBrowserEntryFocus, @ptrCast(self));
+
         // If there's exactly one live column, animate the transition
         if (self.liveColumnCount() == 1) {
             for (self.columns.items) |*existing| {
@@ -493,7 +496,7 @@ pub const Workspace = struct {
         return grp;
     }
 
-    fn closeBrowserColumn(data: *anyopaque) callconv(.c) void {
+    pub fn closeBrowserColumn(data: *anyopaque) callconv(.c) void {
         const self: *Workspace = @ptrCast(@alignCast(data));
         // Find the column containing a webkit panel and close it
         for (self.columns.items, 0..) |*col, i| {
@@ -502,6 +505,35 @@ pub const Workspace = struct {
                 for (grp.panels.items) |p| {
                     if (p == .webkit) {
                         _ = self.removeColumn(i);
+                        return;
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn onBrowserEntryFocus(data: *anyopaque) callconv(.c) void {
+        const self: *Workspace = @ptrCast(@alignCast(data));
+        // Unfocus ALL terminal panes across ALL columns so ghostty stops
+        // intercepting key events and CSS focus indicators are removed.
+        // We can't rely on focusedGroup() alone — focused_column may lag
+        // behind the actual GTK focus state.
+        for (self.columns.items) |col| {
+            if (col.closing) continue;
+            for (col.groups.items) |grp| {
+                grp.unfocus();
+            }
+        }
+
+        // Find the column containing a webkit panel and focus it
+        for (self.columns.items, 0..) |*col, i| {
+            if (col.closing) continue;
+            for (col.groups.items) |grp| {
+                for (grp.panels.items) |p| {
+                    if (p == .webkit) {
+                        self.focused_column = i;
+                        self.panToFocusedColumn();
+                        self.applyLayout();
                         return;
                     }
                 }
@@ -740,6 +772,7 @@ pub const Workspace = struct {
                 c.gtk_widget_set_visible(pw, 1);
                 c.gtk_widget_set_opacity(pw, ctx.open_anim);
                 c.gtk_widget_set_size_request(pw, iw, ih);
+                panel.queueResize();
                 setChildTransform(self.fixed, pw, @floatCast(ctx.col_scale), @floatCast(ctx.pixel_w), @floatCast(panel_h), panel_x, panel_y);
             } else {
                 // Inactive panel: fade+scale animation via transform
@@ -755,6 +788,7 @@ pub const Workspace = struct {
                     c.gtk_widget_set_visible(pw, 1);
                     c.gtk_widget_set_opacity(pw, anim * ctx.open_anim);
                     c.gtk_widget_set_size_request(pw, iw, ih);
+                    panel.queueResize();
                     setChildTransform(self.fixed, pw, @floatCast(combined_scale), @floatCast(ctx.pixel_w), @floatCast(slot_h), panel_x, target_y);
                 }
             }

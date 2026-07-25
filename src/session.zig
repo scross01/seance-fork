@@ -732,7 +732,7 @@ fn restoreWorkspaceColumns(state: *WindowState, obj: std.json.ObjectMap, layout_
                             else => null,
                         };
                         if (go) |grp_obj| {
-                            restoreGroupPanels(ws.columns.items[0].groups.items[0], grp_obj);
+                            restoreGroupPanels(ws.columns.items[0].groups.items[0], grp_obj, ws);
                         }
                     }
                 }
@@ -787,7 +787,7 @@ fn restoreWorkspaceColumns(state: *WindowState, obj: std.json.ObjectMap, layout_
                 ws.columns.items[new_col_idx].stacked_anim = 0.0;
             }
         }
-        restoreGroupPanels(new_grp, grp_obj);
+        restoreGroupPanels(new_grp, grp_obj, ws);
         // Same as above: exit stacked mode for tabbed columns.
         if (ws.columns.items[new_col_idx].layout_mode == .tabbed) {
             new_grp.exitStackedMode();
@@ -820,23 +820,46 @@ fn getFirstCwdFromGroupObj(obj: std.json.ObjectMap) ?[]const u8 {
     return jsonStr(first_panel, "cwd");
 }
 
-fn restoreGroupPanels(group: *PaneGroup, obj: std.json.ObjectMap) void {
+fn restoreGroupPanels(group: *PaneGroup, obj: std.json.ObjectMap, ws: *Workspace) void {
     const panels_array = switch (obj.get("panels") orelse return) {
         .array => |a| a,
         else => return,
     };
     if (panels_array.items.len == 0) return;
 
-    // Restore first panel (already created with the group)
-    if (group.panels.items.len > 0) {
-        const first_panel_obj = switch (panels_array.items[0]) {
-            .object => |o| o,
-            else => null,
-        };
-        if (first_panel_obj) |fpo| {
-            restorePanelScrollback(group.panels.items[0], fpo);
-            restorePanelCustomTitle(group, group.panels.items[0], fpo);
-            restorePanelHeightWeight(group.panels.items[0], fpo);
+    // Check first panel type — if it's webkit, replace the pre-existing terminal
+    const first_panel_obj = switch (panels_array.items[0]) {
+        .object => |o| o,
+        else => null,
+    };
+
+    if (first_panel_obj) |fpo| {
+        const first_type = jsonStr(fpo, "type");
+        if (first_type) |t| {
+            if (std.mem.eql(u8, t, "webkit")) {
+                // Remove the default terminal pane and replace with webkit
+                if (group.panels.items.len > 0) {
+                    _ = group.removePanel(0);
+                }
+                const url = jsonStr(fpo, "url") orelse "about:blank";
+                const wp = group.newBrowserPanel(url) catch return;
+                wp.setCloseCallback(&Workspace.closeBrowserColumn, @ptrCast(ws));
+                wp.setFocusCallback(&Workspace.onBrowserEntryFocus, @ptrCast(ws));
+            } else {
+                // Terminal: restore scrollback, title, weight as before
+                if (group.panels.items.len > 0) {
+                    restorePanelScrollback(group.panels.items[0], fpo);
+                    restorePanelCustomTitle(group, group.panels.items[0], fpo);
+                    restorePanelHeightWeight(group.panels.items[0], fpo);
+                }
+            }
+        } else {
+            // No type field — backward compat, treat as terminal
+            if (group.panels.items.len > 0) {
+                restorePanelScrollback(group.panels.items[0], fpo);
+                restorePanelCustomTitle(group, group.panels.items[0], fpo);
+                restorePanelHeightWeight(group.panels.items[0], fpo);
+            }
         }
     }
 
@@ -858,7 +881,8 @@ fn restoreGroupPanels(group: *PaneGroup, obj: std.json.ObjectMap) void {
         } else if (std.mem.eql(u8, panel_type, "webkit")) {
             const url = jsonStr(panel_obj, "url") orelse "about:blank";
             const wp = group.newBrowserPanel(url) catch continue;
-            _ = wp;
+            wp.setCloseCallback(&Workspace.closeBrowserColumn, @ptrCast(ws));
+            wp.setFocusCallback(&Workspace.onBrowserEntryFocus, @ptrCast(ws));
         }
     }
 
