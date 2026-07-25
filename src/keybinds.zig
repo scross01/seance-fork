@@ -597,9 +597,7 @@ pub fn executeAction(action: Action, state: *Window.WindowState) c.gboolean {
         // Browser
         .new_browser_panel => {
             if (state.activeWorkspace()) |ws| {
-                if (ws.focusedGroup()) |group| {
-                    _ = group.newBrowserPanel("about:blank") catch {};
-                }
+                _ = ws.addBrowserColumn("about:blank") catch {};
             }
         },
         .browser_back => {

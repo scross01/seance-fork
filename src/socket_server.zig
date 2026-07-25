@@ -2098,16 +2098,20 @@ pub const SocketServer = struct {
             return writeJsonError(buf, id, "not_ready", "No active window");
         const ws = state.activeWorkspace() orelse
             return writeJsonError(buf, id, "no_workspace", "No active workspace");
-        const group = ws.focusedGroup() orelse
-            return writeJsonError(buf, id, "no_tab", "No focused pane group");
 
-        const wp = group.newBrowserPanel(url) catch
-            return writeJsonError(buf, id, "internal", "Failed to create browser panel");
+        const grp = ws.addBrowserColumn(url) catch
+            return writeJsonError(buf, id, "internal", "Failed to create browser column");
 
-        var result_buf: [256]u8 = undefined;
-        const result = std.fmt.bufPrint(&result_buf, "{{\"panel_id\":{d}}}", .{wp.id}) catch
-            return writeJsonError(buf, id, "internal", "Buffer overflow");
-        return writeJsonOk(buf, id, result);
+        // Find the webkit panel in the new group to return its id
+        for (grp.panels.items) |p| {
+            if (p.asWebPanel()) |wp| {
+                var result_buf: [256]u8 = undefined;
+                const result = std.fmt.bufPrint(&result_buf, "{{\"panel_id\":{d}}}", .{wp.id}) catch
+                    return writeJsonError(buf, id, "internal", "Buffer overflow");
+                return writeJsonOk(buf, id, result);
+            }
+        }
+        return writeJsonError(buf, id, "internal", "Browser panel not found after creation");
     }
 
     fn handleBrowserNavigate(params: ?std.json.Value, id: []const u8, buf: []u8) []const u8 {

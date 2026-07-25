@@ -575,19 +575,24 @@ fn handleAction(target: c.ghostty_target_s, action: c.ghostty_action_s) bool {
                             if (Window.window_manager) |wm| {
                                 if (wm.findByWorkspaceId(pane.workspace_id)) |state| {
                                     if (state.activeWorkspace()) |ws| {
-                                        if (ws.focusedGroup()) |group| {
-                                            // Find existing browser panel or create one
-                                            var found_browser = false;
-                                            for (group.panels.items) |panel| {
-                                                if (panel.asWebPanel()) |wp| {
-                                                    wp.navigate(url_slice);
-                                                    found_browser = true;
-                                                    break;
+                                        // Find existing browser panel across all columns
+                                        var found_browser = false;
+                                        for (ws.columns.items) |col| {
+                                            if (col.closing) continue;
+                                            for (col.groups.items) |grp| {
+                                                for (grp.panels.items) |p| {
+                                                    if (p.asWebPanel()) |wp| {
+                                                        wp.navigate(url_slice);
+                                                        found_browser = true;
+                                                        break;
+                                                    }
                                                 }
+                                                if (found_browser) break;
                                             }
-                                            if (!found_browser) {
-                                                _ = group.newBrowserPanel(url_slice) catch {};
-                                            }
+                                            if (found_browser) break;
+                                        }
+                                        if (!found_browser) {
+                                            _ = ws.addBrowserColumn(url_slice) catch {};
                                         }
                                     }
                                 }

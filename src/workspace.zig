@@ -4,6 +4,7 @@ const PaneGroup = @import("pane_group.zig").PaneGroup;
 const Pane = @import("pane.zig").Pane;
 const Panel = @import("panel.zig").Panel;
 const Column = @import("column.zig").Column;
+const WebPanel = @import("web_panel.zig").WebPanel;
 
 pub const StatusEntry = struct {
     key: [64]u8 = undefined,
@@ -441,6 +442,71 @@ pub const Workspace = struct {
 
         self.applyLayout();
         return grp;
+    }
+
+    /// Create a new column with a browser panel to the right of the active column.
+    pub fn addBrowserColumn(self: *Workspace, url: []const u8) !*PaneGroup {
+        const grp = try PaneGroup.createEmpty(self.alloc, self.id);
+        errdefer grp.destroy();
+
+        const wp = try WebPanel.create(self.alloc, url);
+        const panel = Panel{ .webkit = wp };
+        try grp.addPanel(panel);
+
+        // Close callback: finds this column and removes it
+        wp.setCloseCallback(&closeBrowserColumn, @ptrCast(self));
+
+        // If there's exactly one live column, animate the transition
+        if (self.liveColumnCount() == 1) {
+            for (self.columns.items) |*existing| {
+                if (!existing.closing) {
+                    existing.width = Column.max_width;
+                    break;
+                }
+            }
+        }
+
+        var col = try Column.init(self.alloc, Column.default_width, grp);
+        errdefer col.deinit(self.alloc);
+
+        col.open_anim = 0.0;
+        col.layout_mode = .stacked;
+        col.stacked_anim = 1.0;
+
+        const insert_idx = @min(self.focused_column + 1, self.columns.items.len);
+        try self.columns.insert(self.alloc, insert_idx, col);
+        self.focused_column = insert_idx;
+        self.panToFocusedColumn();
+
+        const widget = grp.getWidget();
+        c.gtk_fixed_put(@ptrCast(self.fixed), widget, 0, 0);
+        grp.enterStackedMode(self.fixed);
+
+        // Hide initially
+        c.gtk_widget_set_opacity(widget, 0);
+        for (grp.panels.items) |p| {
+            c.gtk_widget_set_opacity(p.getWidget(), 0);
+        }
+
+        self.applyLayout();
+        wp.focus();
+        return grp;
+    }
+
+    fn closeBrowserColumn(data: *anyopaque) callconv(.c) void {
+        const self: *Workspace = @ptrCast(@alignCast(data));
+        // Find the column containing a webkit panel and close it
+        for (self.columns.items, 0..) |*col, i| {
+            if (col.closing) continue;
+            for (col.groups.items) |grp| {
+                for (grp.panels.items) |p| {
+                    if (p == .webkit) {
+                        _ = self.removeColumn(i);
+                        return;
+                    }
+                }
+            }
+        }
     }
 
     /// Position all pane group widgets according to column layout and camera.

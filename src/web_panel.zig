@@ -10,15 +10,20 @@ fn nextId() u64 {
     return id_counter;
 }
 
+pub const CloseFn = *const fn (*anyopaque) callconv(.c) void;
+
 pub const WebPanel = struct {
     id: u64,
     widget: *c.GtkWidget,
+    toolbar: *c.GtkWidget,
     entry: *c.GtkEntry,
     webview: *c.WebKitWebView,
     url: []u8,
     title: []u8,
     alloc: std.mem.Allocator,
     navigating_from_entry: bool = false,
+    close_cb: ?CloseFn = null,
+    close_data: ?*anyopaque = null,
 
     pub fn create(alloc: std.mem.Allocator, url: []const u8) !*WebPanel {
         const id = nextId();
@@ -39,16 +44,41 @@ pub const WebPanel = struct {
         c.gtk_widget_set_hexpand(webview_widget, 1);
         c.gtk_widget_set_vexpand(webview_widget, 1);
 
-        // Create a GtkBox to hold the address bar and webview
+        // Root container
         const box = c.gtk_box_new(c.GTK_ORIENTATION_VERTICAL, 0);
         c.gtk_widget_set_hexpand(box, 1);
         c.gtk_widget_set_vexpand(box, 1);
 
-        // Address bar
+        // Toolbar: [◀] [▶] [⟲] [URL entry] [✕]
+        const toolbar = c.gtk_box_new(c.GTK_ORIENTATION_HORIZONTAL, 4);
+        c.gtk_widget_set_hexpand(toolbar, 1);
+        c.gtk_widget_set_margin_start(toolbar, 4);
+        c.gtk_widget_set_margin_end(toolbar, 4);
+        c.gtk_widget_set_margin_top(toolbar, 4);
+        c.gtk_widget_set_margin_bottom(toolbar, 4);
+
+        const btn_back = c.gtk_button_new_from_icon_name("go-previous-symbolic");
+        c.gtk_widget_set_tooltip_text(btn_back, "Back");
+        c.gtk_box_append(@ptrCast(toolbar), btn_back);
+
+        const btn_forward = c.gtk_button_new_from_icon_name("go-next-symbolic");
+        c.gtk_widget_set_tooltip_text(btn_forward, "Forward");
+        c.gtk_box_append(@ptrCast(toolbar), btn_forward);
+
+        const btn_reload = c.gtk_button_new_from_icon_name("view-refresh-symbolic");
+        c.gtk_widget_set_tooltip_text(btn_reload, "Reload");
+        c.gtk_box_append(@ptrCast(toolbar), btn_reload);
+
         const entry = c.gtk_entry_new();
         c.gtk_widget_set_hexpand(@ptrCast(entry), 1);
         c.gtk_entry_set_placeholder_text(@ptrCast(entry), "Enter URL...");
-        c.gtk_box_append(@ptrCast(box), @ptrCast(entry));
+        c.gtk_box_append(@ptrCast(toolbar), @ptrCast(entry));
+
+        const btn_close = c.gtk_button_new_from_icon_name("window-close-symbolic");
+        c.gtk_widget_set_tooltip_text(btn_close, "Close browser pane");
+        c.gtk_box_append(@ptrCast(toolbar), btn_close);
+
+        c.gtk_box_append(@ptrCast(box), toolbar);
 
         // Webview
         c.gtk_box_append(@ptrCast(box), webview_widget);
@@ -60,6 +90,7 @@ pub const WebPanel = struct {
         panel.* = .{
             .id = id,
             .widget = box,
+            .toolbar = toolbar,
             .entry = @ptrCast(entry),
             .webview = webview,
             .url = owned_url,
@@ -87,6 +118,46 @@ pub const WebPanel = struct {
             0,
         );
 
+        // Back button
+        _ = c.g_signal_connect_data(
+            @as(c.gpointer, @ptrCast(btn_back)),
+            "clicked",
+            @as(c.GCallback, @ptrCast(&onBackClicked)),
+            @ptrCast(panel),
+            null,
+            0,
+        );
+
+        // Forward button
+        _ = c.g_signal_connect_data(
+            @as(c.gpointer, @ptrCast(btn_forward)),
+            "clicked",
+            @as(c.GCallback, @ptrCast(&onForwardClicked)),
+            @ptrCast(panel),
+            null,
+            0,
+        );
+
+        // Reload button
+        _ = c.g_signal_connect_data(
+            @as(c.gpointer, @ptrCast(btn_reload)),
+            "clicked",
+            @as(c.GCallback, @ptrCast(&onReloadClicked)),
+            @ptrCast(panel),
+            null,
+            0,
+        );
+
+        // Close button
+        _ = c.g_signal_connect_data(
+            @as(c.gpointer, @ptrCast(btn_close)),
+            "clicked",
+            @as(c.GCallback, @ptrCast(&onCloseClicked)),
+            @ptrCast(panel),
+            null,
+            0,
+        );
+
         // Load URL if valid
         if (isAllowedUrl(url)) {
             var url_buf: [4096:0]u8 = .{0} ** 4096;
@@ -97,6 +168,11 @@ pub const WebPanel = struct {
         }
 
         return panel;
+    }
+
+    pub fn setCloseCallback(self: *WebPanel, cb: CloseFn, data: *anyopaque) void {
+        self.close_cb = cb;
+        self.close_data = data;
     }
 
     pub fn getWidget(self: *WebPanel) *c.GtkWidget {
@@ -264,6 +340,30 @@ fn onLoadChanged(webview: ?*c.WebKitWebView, event: c_int, user_data: ?*anyopaqu
         }
     }
     panel.navigating_from_entry = false;
+}
+
+fn onBackClicked(_: ?*c.GtkWidget, user_data: ?*anyopaque) callconv(.c) void {
+    const panel: *WebPanel = @ptrCast(@alignCast(user_data orelse return));
+    panel.back();
+}
+
+fn onForwardClicked(_: ?*c.GtkWidget, user_data: ?*anyopaque) callconv(.c) void {
+    const panel: *WebPanel = @ptrCast(@alignCast(user_data orelse return));
+    panel.forward();
+}
+
+fn onReloadClicked(_: ?*c.GtkWidget, user_data: ?*anyopaque) callconv(.c) void {
+    const panel: *WebPanel = @ptrCast(@alignCast(user_data orelse return));
+    panel.reload();
+}
+
+fn onCloseClicked(_: ?*c.GtkWidget, user_data: ?*anyopaque) callconv(.c) void {
+    const panel: *WebPanel = @ptrCast(@alignCast(user_data orelse return));
+    if (panel.close_cb) |cb| {
+        if (panel.close_data) |data| {
+            cb(data);
+        }
+    }
 }
 
 test "isAllowedUrl: https accepted" {
