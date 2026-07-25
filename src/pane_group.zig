@@ -2,6 +2,7 @@ const std = @import("std");
 const c = @import("c.zig").c;
 const Pane = @import("pane.zig").Pane;
 const Panel = @import("panel.zig").Panel;
+const WebPanel = @import("web_panel.zig").WebPanel;
 
 // Module-level state for cross-group tab transfer via AdwTabView.
 // When a page is detached during a transfer, we stash the panel here
@@ -214,6 +215,13 @@ pub const PaneGroup = struct {
         const panel = Panel{ .terminal = pane };
         try self.addPanel(panel);
         return pane;
+    }
+
+    pub fn newBrowserPanel(self: *PaneGroup, url: []const u8) !*WebPanel {
+        const wp = try WebPanel.create(self.alloc, url);
+        const panel = Panel{ .webkit = wp };
+        try self.addPanel(panel);
+        return wp;
     }
 
     /// Remove panel at index. Returns true if the group is now empty.
@@ -574,10 +582,13 @@ pub const PaneGroup = struct {
 };
 
 fn panelTitle(panel: Panel) []const u8 {
-    if (panel.asTerminal()) |pane| {
-        if (pane.getDisplayTitle()) |title| return title;
+    switch (panel) {
+        .terminal => |pane| {
+            if (pane.getDisplayTitle()) |title| return title;
+            return "Terminal";
+        },
+        .webkit => |wp| return wp.getTitle(),
     }
-    return "Terminal";
 }
 
 // ── AdwTabView signal handlers ─────────────────────────────────────

@@ -180,6 +180,12 @@ fn writePanel(w: anytype, panel: Panel, include_scrollback: bool) !void {
             }
             try w.writeByte('}');
         },
+        .webkit => |wp| {
+            try w.writeAll("{\"type\":\"webkit\"");
+            try writeKvStr(w, "url", wp.url, false);
+            try writeKvInt(w, "id", @intCast(wp.id), false);
+            try w.writeByte('}');
+        },
     }
 }
 
@@ -849,6 +855,10 @@ fn restoreGroupPanels(group: *PaneGroup, obj: std.json.ObjectMap) void {
             restorePanelScrollback(panel, panel_obj);
             restorePanelCustomTitle(group, panel, panel_obj);
             restorePanelHeightWeight(panel, panel_obj);
+        } else if (std.mem.eql(u8, panel_type, "webkit")) {
+            const url = jsonStr(panel_obj, "url") orelse "about:blank";
+            const wp = group.newBrowserPanel(url) catch continue;
+            _ = wp;
         }
     }
 
@@ -877,6 +887,7 @@ fn restorePanelScrollback(panel: Panel, obj: std.json.ObjectMap) void {
             if (scrollback.len == 0) return;
             setScrollbackOnPane(pane, scrollback);
         },
+        .webkit => {},
     }
 }
 

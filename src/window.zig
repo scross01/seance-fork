@@ -1304,6 +1304,7 @@ fn stopPanelTimers(panel: Panel) void {
                 pane.flash_timeout = 0;
             }
         },
+        .webkit => {},
     }
 }
 
