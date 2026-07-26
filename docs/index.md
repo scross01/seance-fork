@@ -32,6 +32,9 @@ features:
   - icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18"/></svg>
     title: GPU-accelerated rendering
     details: Built on Ghostty as a library. Fast, correct terminal rendering with ligatures, Unicode, and full GPU acceleration.
+  - icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+    title: In-app browser
+    details: Open docs, dashboards, and URLs alongside your agent. WebKitGTK panel with dev tools, JavaScript eval, and session restore.
   - icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7l-8 8-4-4"/><rect x="3" y="3" width="18" height="18" rx="3"/></svg>
     title: And the essentials
     details: Workspaces, session persistence, tabs within columns, command palette, focus-follows-mouse, blur and transparency.
@@ -295,6 +298,14 @@ features:
         <td><span class="check">&#10003;</span></td>
         <td><span class="check">&#10003;</span></td>
         <td><span class="check">&#10003;</span></td>
+        <td><span class="dash">&mdash;</span></td>
+      </tr>
+      <tr>
+        <td>In-app browser panel</td>
+        <td><span class="dash">&mdash;</span></td>
+        <td><span class="check">&#10003;</span></td>
+        <td><span class="dash">&mdash;</span></td>
+        <td><span class="dash">&mdash;</span></td>
         <td><span class="dash">&mdash;</span></td>
       </tr>
       <tr>

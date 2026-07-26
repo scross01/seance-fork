@@ -77,6 +77,25 @@ seance ctl list-notifications           # List all notifications
 seance ctl clear-notifications          # Clear all notifications
 ```
 
+## Browser Commands
+
+```bash
+seance ctl browser-open URL                          # Open URL in new browser panel
+seance ctl browser-navigate URL [--panel ID]         # Navigate panel to URL
+seance ctl browser-reload [--panel ID]               # Reload current page
+seance ctl browser-back [--panel ID]                 # Navigate back
+seance ctl browser-forward [--panel ID]              # Navigate forward
+seance ctl browser-get-url [--panel ID]              # Get current URL
+seance ctl browser-list                              # List all browser panels
+seance ctl browser-get-title [--panel ID]            # Get page title
+seance ctl browser-get-zoom [--panel ID]             # Get zoom level
+seance ctl browser-set-zoom LEVEL [--panel ID]       # Set zoom level
+seance ctl browser-is-loading [--panel ID]           # Check if loading
+seance ctl browser-get-progress [--panel ID]         # Get load progress
+seance ctl browser-eval SCRIPT [--panel ID]          # Evaluate JavaScript
+seance ctl browser-close [--panel ID]                # Close browser panel
+```
+
 ## JSON Output
 
 Use `--json` with any command to get structured output.
@@ -115,6 +134,6 @@ Séance uses a **horizontal scrolling column** layout. Adding a pane never shrin
 - **Windows** contain multiple workspaces as tabs in a sidebar
 - **Workspaces** are horizontal strips of columns you scroll through
 - **Columns** are vertical stacks with animated width; can be **stacked** (all visible) or **tabbed** (one pane + tab bar)
-- **Panes** are individual terminal instances, each with its own PTY
+- **Panes** are individual terminal instances, each with its own PTY, or **browser panels** with an embedded WebKit view
 
 Each pane has identifying environment variables: `SEANCE_PANEL_ID`, `SEANCE_WORKSPACE_ID`, `SEANCE_SURFACE_ID`.

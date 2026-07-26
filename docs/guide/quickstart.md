@@ -84,4 +84,5 @@ Press **Ctrl+Shift+P** to open the command palette. From here you can access any
 
 - **Configuration** — customize keybindings, appearance, and agent settings
 - **Keybindings** — full list of keyboard shortcuts
+- **Browser Panel** — open URLs alongside your agent sessions
 - **Agent Integrations** — set up specific agents like Claude Code, OpenCode, or Kilo

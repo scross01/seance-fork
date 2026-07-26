@@ -292,6 +292,172 @@ Clear all notifications.
 seance ctl clear-notifications
 ```
 
+## Browser Commands
+
+### browser-open
+
+Open a URL in a new browser panel.
+
+```bash
+seance ctl browser-open URL
+```
+
+With `--json`, returns:
+
+| Field | Description |
+|-------|-------------|
+| `panel_id` | ID of the newly created browser panel |
+
+### browser-navigate
+
+Navigate an existing browser panel to a URL.
+
+```bash
+seance ctl browser-navigate URL [--panel ID]
+```
+
+### browser-reload
+
+Reload the current page in a browser panel.
+
+```bash
+seance ctl browser-reload [--panel ID]
+```
+
+### browser-back
+
+Navigate back in browser history.
+
+```bash
+seance ctl browser-back [--panel ID]
+```
+
+### browser-forward
+
+Navigate forward in browser history.
+
+```bash
+seance ctl browser-forward [--panel ID]
+```
+
+### browser-get-url
+
+Get the current URL of a browser panel.
+
+```bash
+seance ctl browser-get-url [--panel ID]
+```
+
+With `--json`, returns:
+
+| Field | Description |
+|-------|-------------|
+| `url` | Current page URL |
+
+### browser-list
+
+List all open browser panels.
+
+```bash
+seance ctl browser-list
+```
+
+With `--json`, returns:
+
+| Field | Description |
+|-------|-------------|
+| `panels` | Array of browser panel objects |
+| `panels[].id` | Panel ID |
+| `panels[].url` | Current URL |
+
+### browser-get-title
+
+Get the page title of a browser panel.
+
+```bash
+seance ctl browser-get-title [--panel ID]
+```
+
+With `--json`, returns:
+
+| Field | Description |
+|-------|-------------|
+| `title` | Current page title |
+
+### browser-get-zoom
+
+Get the zoom level of a browser panel.
+
+```bash
+seance ctl browser-get-zoom [--panel ID]
+```
+
+With `--json`, returns:
+
+| Field | Description |
+|-------|-------------|
+| `zoom_level` | Current zoom level (1.0 = 100%) |
+
+### browser-set-zoom
+
+Set the zoom level of a browser panel.
+
+```bash
+seance ctl browser-set-zoom LEVEL [--panel ID]
+```
+
+### browser-is-loading
+
+Check if a browser panel is currently loading.
+
+```bash
+seance ctl browser-is-loading [--panel ID]
+```
+
+With `--json`, returns:
+
+| Field | Description |
+|-------|-------------|
+| `loading` | `true` if loading, `false` otherwise |
+
+### browser-get-progress
+
+Get the estimated load progress of a browser panel.
+
+```bash
+seance ctl browser-get-progress [--panel ID]
+```
+
+With `--json`, returns:
+
+| Field | Description |
+|-------|-------------|
+| `progress` | Load progress from 0.0 to 1.0 |
+
+### browser-eval
+
+Evaluate JavaScript in a browser panel and return the result.
+
+```bash
+seance ctl browser-eval SCRIPT [--panel ID]
+```
+
+Evaluates the script synchronously (pumps the glib main loop until the result is ready, up to 5 seconds).
+
+With `--json`, returns:
+
+| Field | Description |
+|-------|-------------|
+| `result` | JSON-serialized result of the JavaScript expression |
+
+### browser-close
+
+Close a browser panel.
+
+```bash
+seance ctl browser-close [--panel ID]
+```
+
 ## JSON Output Schemas
 
 ### read-screen
@@ -306,6 +472,21 @@ seance ctl clear-notifications
   "cols": 80
 }
 ```
+
+### identify
+
+```json
+{
+  "window_index": 0,
+  "workspace_id": 1,
+  "workspace_index": 0,
+  "pane_group_id": 5,
+  "surface_id": 12,
+  "browser_panel_id": null
+}
+```
+
+When the focused panel is a browser, `surface_id` is `null` and `browser_panel_id` contains the browser panel ID.
 
 ### split
 
@@ -361,4 +542,25 @@ STATE=$(seance ctl --json read-screen --surface $SURFACE_ID | python3 -c "import
 if [ "$STATE" = "prompt" ]; then
   seance ctl send "npm install\n" --surface $SURFACE_ID
 fi
+```
+
+### Open a URL and read page content
+
+```bash
+# Open a URL in the browser
+PANEL_ID=$(seance ctl --json browser-open "https://docs.example.com" | python3 -c "import sys,json; print(json.load(sys.stdin)['panel_id'])")
+
+# Wait for the page to load
+while [ "$(seance ctl --json browser-is-loading --panel $PANEL_ID | python3 -c "import sys,json; print(json.load(sys.stdin)['loading'])")" = "true" ]; do
+  sleep 0.5
+done
+
+# Read the page title
+seance ctl browser-get-title --panel $PANEL_ID
+
+# Extract text content via JavaScript
+seance ctl browser-eval "document.body.innerText" --panel $PANEL_ID
+
+# Clean up
+seance ctl browser-close --panel $PANEL_ID
 ```

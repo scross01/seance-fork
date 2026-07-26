@@ -34,6 +34,8 @@ This gives you a unified view of all your agents without switching between termi
 │                    Séance GUI (GTK4)                         │
 │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐   │
 │  │ Sidebar  │  │  Panes   │  │ Workspace│  │ Keybinds │   │
+│  │          │  │ Terminal │  │          │  │          │   │
+│  │          │  │ + Browser│  │          │  │          │   │
 │  └──────────┘  └──────────┘  └──────────┘  └──────────┘   │
 └─────────────────────────────────────────────────────────────┘
                            │
@@ -117,13 +119,25 @@ Window
   └── Workspace (horizontal strip you scroll through)
        └── Column (vertical stack)
             └── PaneGroup
-                 └── Pane (individual terminal)
+                 ├── Pane (terminal — PTY + libghostty)
+                 └── WebPanel (browser — WebKitGTK)
 ```
 
 - **Windows** contain multiple workspaces as tabs in a sidebar
 - **Workspaces** are horizontal strips of columns you scroll through (niri-inspired)
 - **Columns** are vertical stacks; each has an animated width and can be stacked or tabbed
-- **Panes** are individual terminal instances, each with its own PTY
+- **PaneGroup** holds one or more panels (terminal or browser) with shared tab bar
+- **Pane** is an individual terminal instance with its own PTY
+- **WebPanel** is an embedded browser panel powered by WebKitGTK
+
+The `Panel` union type dispatches between terminal and browser panels:
+
+```zig
+pub const Panel = union(PanelType) {
+    terminal: *Pane,
+    webkit: *WebPanel,
+};
+```
 
 ## Socket IPC
 
@@ -135,6 +149,8 @@ seance ctl tree                    # Full hierarchy
 seance ctl split                   # Create new pane
 seance ctl send "command\n"        # Send input to a pane
 seance ctl read-screen --lines 50  # Read terminal output
+seance ctl browser-open "https://example.com"  # Open URL in browser
+seance ctl browser-eval "document.title"       # Run JS in browser
 ```
 
 All commands support JSON output via `--json`.
@@ -147,6 +163,8 @@ All commands support JSON output via `--json`.
 | `src/app.zig` | GTK application initialization, plugin auto-install |
 | `src/ghostty_bridge.zig` | C FFI bridge to libghostty |
 | `src/pane.zig` | Terminal pane lifecycle |
+| `src/panel.zig` | Panel union type (terminal \| webkit) |
+| `src/web_panel.zig` | Browser panel (WebKitGTK), URL bar, TLS handling |
 | `src/session.zig` | Agent session tracking |
 | `src/sidebar.zig` | Agent status display |
 | `src/socket_server.zig` | `seance ctl` IPC server |

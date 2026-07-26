@@ -69,7 +69,13 @@ bell-notification = true
 desktop-notifications = true
 focus-follows-mouse = false
 confirm-close-window = true
+open-url-in-browser = false       # open URLs in-app instead of system browser
+dim-unfocused-panes = true        # dim unfocused terminal and browser panes
 ```
+
+When `open-url-in-browser` is enabled and an agent opens a URL, Séance opens it in an in-app browser panel next to the source terminal instead of launching the system browser.
+
+When `dim-unfocused-panes` is enabled, unfocused panes (terminal and browser) are rendered at 80% opacity.
 
 #### Agent Integration Toggles
 
