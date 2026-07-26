@@ -153,4 +153,11 @@ pub const Panel = union(PanelType) {
             .webkit => false,
         };
     }
+
+    pub fn updateBackgroundColor(self: Panel) void {
+        switch (self) {
+            .terminal => {},
+            .webkit => |wp| wp.updateBackgroundColor(),
+        }
+    }
 };

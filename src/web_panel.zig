@@ -63,6 +63,16 @@ pub const WebPanel = struct {
         c.webkit_settings_set_javascript_can_open_windows_automatically(settings, 1);
         c.webkit_settings_set_javascript_can_access_clipboard(settings, 1);
 
+        // Match terminal theme background for about:blank and similar pages
+        const theme_bg = @import("theme.zig").resolveColors().window_bg;
+        const bg_rgba: c.GdkRGBA = .{
+            .red = @as(f32, @floatFromInt(std.fmt.parseInt(u8, theme_bg[1..3], 16) catch 0x0e)) / 255.0,
+            .green = @as(f32, @floatFromInt(std.fmt.parseInt(u8, theme_bg[3..5], 16) catch 0x14)) / 255.0,
+            .blue = @as(f32, @floatFromInt(std.fmt.parseInt(u8, theme_bg[5..7], 16) catch 0x19)) / 255.0,
+            .alpha = 1.0,
+        };
+        c.webkit_web_view_set_background_color(webview, &bg_rgba);
+
         const webview_widget: *c.GtkWidget = @ptrCast(webview);
         c.gtk_widget_set_hexpand(webview_widget, 1);
         c.gtk_widget_set_vexpand(webview_widget, 1);
@@ -71,6 +81,7 @@ pub const WebPanel = struct {
         const box = c.gtk_box_new(c.GTK_ORIENTATION_VERTICAL, 0);
         c.gtk_widget_set_hexpand(box, 1);
         c.gtk_widget_set_vexpand(box, 1);
+        c.gtk_widget_add_css_class(box, "pane-unfocused");
 
         // Toolbar: [◀] [▶] [⟲/✕] [URL entry] [✕]
         const toolbar = c.gtk_box_new(c.GTK_ORIENTATION_HORIZONTAL, 4);
@@ -344,6 +355,10 @@ pub const WebPanel = struct {
     }
 
     pub fn focus(self: *WebPanel) void {
+        c.gtk_widget_remove_css_class(self.widget, "pane-unfocused");
+        c.gtk_widget_add_css_class(self.widget, "pane-focused");
+        if (@import("config.zig").get().dim_unfocused_panes)
+            c.gtk_widget_set_opacity(@ptrCast(self.webview), 1.0);
         const uri = c.webkit_web_view_get_uri(self.webview);
         if (uri) |u| {
             c.gtk_editable_set_text(@ptrCast(self.entry), u);
@@ -353,7 +368,21 @@ pub const WebPanel = struct {
     }
 
     pub fn unfocus(self: *WebPanel) void {
-        _ = self;
+        c.gtk_widget_remove_css_class(self.widget, "pane-focused");
+        c.gtk_widget_add_css_class(self.widget, "pane-unfocused");
+        if (@import("config.zig").get().dim_unfocused_panes)
+            c.gtk_widget_set_opacity(@ptrCast(self.webview), 0.8);
+    }
+
+    pub fn updateBackgroundColor(self: *WebPanel) void {
+        const theme_bg = @import("theme.zig").resolveColors().window_bg;
+        const bg_rgba: c.GdkRGBA = .{
+            .red = @as(f32, @floatFromInt(std.fmt.parseInt(u8, theme_bg[1..3], 16) catch 0x0e)) / 255.0,
+            .green = @as(f32, @floatFromInt(std.fmt.parseInt(u8, theme_bg[3..5], 16) catch 0x14)) / 255.0,
+            .blue = @as(f32, @floatFromInt(std.fmt.parseInt(u8, theme_bg[5..7], 16) catch 0x19)) / 255.0,
+            .alpha = 1.0,
+        };
+        c.webkit_web_view_set_background_color(self.webview, &bg_rgba);
     }
 
     pub fn disconnectSignals(self: *WebPanel) void {

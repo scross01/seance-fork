@@ -553,21 +553,32 @@ pub fn executeAction(action: Action, state: *Window.WindowState) c.gboolean {
 
         // Font
         .zoom_in => {
-            const pane = getFocusedPane(state) orelse return 0;
-            if (pane.surface) |s| {
-                _ = c.ghostty_surface_binding_action(s, "increase_font_size:1", 20);
+            if (getFocusedWebPanel(state)) |wp| {
+                const level = c.webkit_web_view_get_zoom_level(wp.webview);
+                c.webkit_web_view_set_zoom_level(wp.webview, level + 0.1);
+            } else if (getFocusedPane(state)) |pane| {
+                if (pane.surface) |s| {
+                    _ = c.ghostty_surface_binding_action(s, "increase_font_size:1", 20);
+                }
             }
         },
         .zoom_out => {
-            const pane = getFocusedPane(state) orelse return 0;
-            if (pane.surface) |s| {
-                _ = c.ghostty_surface_binding_action(s, "decrease_font_size:1", 20);
+            if (getFocusedWebPanel(state)) |wp| {
+                const level = c.webkit_web_view_get_zoom_level(wp.webview);
+                c.webkit_web_view_set_zoom_level(wp.webview, level - 0.1);
+            } else if (getFocusedPane(state)) |pane| {
+                if (pane.surface) |s| {
+                    _ = c.ghostty_surface_binding_action(s, "decrease_font_size:1", 20);
+                }
             }
         },
         .zoom_reset => {
-            const pane = getFocusedPane(state) orelse return 0;
-            if (pane.surface) |s| {
-                _ = c.ghostty_surface_binding_action(s, "reset_font_size", 15);
+            if (getFocusedWebPanel(state)) |wp| {
+                c.webkit_web_view_set_zoom_level(wp.webview, 1.0);
+            } else if (getFocusedPane(state)) |pane| {
+                if (pane.surface) |s| {
+                    _ = c.ghostty_surface_binding_action(s, "reset_font_size", 15);
+                }
             }
         },
 

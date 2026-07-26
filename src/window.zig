@@ -2369,6 +2369,7 @@ fn loadThemeCss() void {
                     for (col.groups.items) |grp| {
                         for (grp.panels.items) |panel| {
                             c.gtk_widget_queue_draw(panel.getWidget());
+                            panel.updateBackgroundColor();
                         }
                     }
                 }
