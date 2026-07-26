@@ -88,11 +88,13 @@ pub const Action = enum(u8) {
 
     // Browser
     new_browser_panel,
+    new_browser_tab,
     browser_back,
     browser_forward,
     browser_reload,
     browser_focus_bar,
     toggle_browser_focus_mode,
+    browser_inspector,
 
     // Config
     reload_config,
@@ -279,11 +281,13 @@ fn initDefaults() void {
 
     // Browser
     set(.new_browser_panel, .{ .key = c.GDK_KEY_B, .ctrl = true, .alt = true });
+    set(.new_browser_tab, .{ .key = c.GDK_KEY_E, .ctrl = true, .alt = true });
     set(.browser_back, .{ .key = c.GDK_KEY_Left, .ctrl = true, .alt = true });
     set(.browser_forward, .{ .key = c.GDK_KEY_Right, .ctrl = true, .alt = true });
     set(.browser_reload, .{ .key = c.GDK_KEY_R, .ctrl = true });
     set(.browser_focus_bar, .{ .key = c.GDK_KEY_L, .ctrl = true });
     set(.toggle_browser_focus_mode, .{ .key = c.GDK_KEY_F, .ctrl = true, .alt = true });
+    set(.browser_inspector, .{ .key = c.GDK_KEY_I, .ctrl = true, .shift = true });
 
     // Config
     set(.reload_config, .{ .key = c.GDK_KEY_comma, .ctrl = true, .shift = true });
@@ -613,6 +617,11 @@ pub fn executeAction(action: Action, state: *Window.WindowState) c.gboolean {
                 _ = ws.addBrowserColumn("about:blank") catch {};
             }
         },
+        .new_browser_tab => {
+            if (state.activeWorkspace()) |ws| {
+                ws.newBrowserTabInFocusedGroup();
+            }
+        },
         .browser_back => {
             const panel = getFocusedWebPanel(state) orelse return 0;
             panel.back();
@@ -646,6 +655,10 @@ pub fn executeAction(action: Action, state: *Window.WindowState) c.gboolean {
                     }
                 }
             }
+        },
+        .browser_inspector => {
+            const panel = getFocusedWebPanel(state) orelse return 0;
+            panel.showInspector();
         },
 
         // Config

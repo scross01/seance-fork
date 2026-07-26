@@ -185,19 +185,15 @@ pub const PaneGroup = struct {
             if (self.fixed) |fixed| {
                 c.gtk_fixed_put(@ptrCast(fixed), panel.getWidget(), 0, 0);
                 // Start with open animation at 0 (will animate in)
-                if (panel.asTerminal()) |pane| {
-                    pane.stacked_open_anim = 0.0;
-                    // Initialize layout fraction at target so new panel doesn't slide
-                    const n_f: f64 = @floatFromInt(self.panels.items.len);
-                    const i_f: f64 = @floatFromInt(self.panels.items.len - 1);
-                    pane.stacked_frac_y = i_f / n_f;
-                    pane.stacked_frac_h = 1.0 / n_f;
-                } else {
-                    // Non-terminal panels (e.g. webkit) have no animation
-                    // state; signal the workspace to run a layout pass so
-                    // set_size_request is applied on the next tick.
-                    self.needs_stacked_layout = true;
-                }
+                panel.setStackedOpenAnim(0.0);
+                // Initialize layout fraction at target so new panel doesn't slide
+                const n_f: f64 = @floatFromInt(self.panels.items.len);
+                const i_f: f64 = @floatFromInt(self.panels.items.len - 1);
+                panel.setStackedFracY(i_f / n_f);
+                panel.setStackedFracH(1.0 / n_f);
+                // Signal workspace to run a layout pass so
+                // set_size_request is applied on the next tick.
+                self.needs_stacked_layout = true;
             }
             // Focus the newly added panel
             if (self.active_panel < self.panels.items.len - 1) {
@@ -212,6 +208,9 @@ pub const PaneGroup = struct {
             const len = @min(title.len, 64);
             @memcpy(buf[0..len], title[0..len]);
             c.adw_tab_page_set_title(page, &buf);
+            if (panelIcon(panel)) |icon| {
+                setTabIcon(page, icon);
+            }
 
             c.adw_tab_view_set_selected_page(self.tab_view, page);
         }
@@ -443,6 +442,9 @@ pub const PaneGroup = struct {
             const len = @min(title.len, 64);
             @memcpy(buf[0..len], title[0..len]);
             c.adw_tab_page_set_title(page, &buf);
+            if (panelIcon(panel)) |icon| {
+                setTabIcon(page, icon);
+            }
             _ = c.g_object_unref(@ptrCast(w));
         }
 
@@ -553,6 +555,9 @@ pub const PaneGroup = struct {
                 const tlen = @min(title.len, 64);
                 @memcpy(buf[0..tlen], title[0..tlen]);
                 c.adw_tab_page_set_title(page, &buf);
+                if (panelIcon(panel)) |icon| {
+                    setTabIcon(page, icon);
+                }
                 return;
             }
         }
@@ -598,6 +603,20 @@ fn panelTitle(panel: Panel) []const u8 {
         },
         .webkit => |wp| return wp.getTitle(),
     }
+}
+
+fn panelIcon(panel: Panel) ?[*:0]const u8 {
+    return switch (panel) {
+        .terminal => "utilities-terminal-symbolic",
+        .webkit => "web-browser-symbolic",
+    };
+}
+
+fn setTabIcon(page_: ?*c.AdwTabPage, icon_name: [*:0]const u8) void {
+    const page = page_ orelse return;
+    const icon = c.g_themed_icon_new(icon_name);
+    c.adw_tab_page_set_icon(page, icon);
+    c.g_object_unref(@ptrCast(icon));
 }
 
 // ── AdwTabView signal handlers ─────────────────────────────────────
@@ -666,6 +685,9 @@ fn onPageAttached(_: *c.AdwTabView, page: *c.AdwTabPage, position: c.gint, user_
         const len = @min(title.len, 64);
         @memcpy(buf[0..len], title[0..len]);
         c.adw_tab_page_set_title(page, &buf);
+        if (panelIcon(panel)) |icon| {
+            setTabIcon(page, icon);
+        }
     }
 }
 

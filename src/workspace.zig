@@ -496,6 +496,72 @@ pub const Workspace = struct {
         return grp;
     }
 
+    /// Like addBrowserColumn, but inserts the new column to the right of a
+    /// specific column index. Used when opening a URL from a terminal.
+    pub fn addBrowserColumnRightOf(self: *Workspace, col_idx: usize, url: []const u8) !*PaneGroup {
+        const grp = try PaneGroup.createEmpty(self.alloc, self.id);
+        errdefer grp.destroy();
+
+        const wp = try WebPanel.create(self.alloc, url);
+        const panel = Panel{ .webkit = wp };
+        try grp.addPanel(panel);
+
+        wp.setCloseCallback(&closeBrowserColumn, @ptrCast(self));
+        wp.setFocusCallback(&onBrowserEntryFocus, @ptrCast(self));
+
+        if (self.liveColumnCount() == 1) {
+            for (self.columns.items) |*existing| {
+                if (!existing.closing) {
+                    existing.width = Column.max_width;
+                    break;
+                }
+            }
+        }
+
+        var col = try Column.init(self.alloc, Column.default_width, grp);
+        errdefer col.deinit(self.alloc);
+
+        col.open_anim = 0.0;
+        col.layout_mode = .stacked;
+        col.stacked_anim = 1.0;
+
+        const insert_idx = @min(col_idx + 1, self.columns.items.len);
+        try self.columns.insert(self.alloc, insert_idx, col);
+        self.focused_column = insert_idx;
+        self.panToFocusedColumn();
+
+        const widget = grp.getWidget();
+        c.gtk_fixed_put(@ptrCast(self.fixed), widget, 0, 0);
+        grp.enterStackedMode(self.fixed);
+
+        c.gtk_widget_set_opacity(widget, 0);
+        for (grp.panels.items) |p| {
+            c.gtk_widget_set_opacity(p.getWidget(), 0);
+        }
+
+        self.applyLayout();
+        wp.focus();
+        return grp;
+    }
+
+    pub fn newBrowserTabInFocusedGroup(self: *Workspace) void {
+        const col_idx = self.focused_column;
+        if (col_idx >= self.columns.items.len) return;
+        const col = &self.columns.items[col_idx];
+        if (col.closing) return;
+
+        const grp = col.groups.items[0];
+        const wp = WebPanel.create(self.alloc, "about:blank") catch return;
+        const panel = Panel{ .webkit = wp };
+        grp.addPanel(panel) catch return;
+
+        wp.setCloseCallback(&closeBrowserPanel, @ptrCast(self));
+        wp.setFocusCallback(&onBrowserEntryFocus, @ptrCast(self));
+
+        self.applyLayout();
+        wp.focus();
+    }
+
     pub fn closeBrowserColumn(data: *anyopaque) callconv(.c) void {
         const self: *Workspace = @ptrCast(@alignCast(data));
         // Find the column containing a webkit panel and close it
@@ -512,12 +578,27 @@ pub const Workspace = struct {
         }
     }
 
-    pub fn onBrowserEntryFocus(data: *anyopaque) callconv(.c) void {
+    pub fn closeBrowserPanel(data: *anyopaque) callconv(.c) void {
+        const self: *Workspace = @ptrCast(@alignCast(data));
+        const col_idx = self.focused_column;
+        if (col_idx >= self.columns.items.len) return;
+        const col = &self.columns.items[col_idx];
+        if (col.closing) return;
+
+        // Find and remove the webkit panel from the first group
+        for (col.groups.items[0].panels.items, 0..) |p, i| {
+            if (p == .webkit) {
+                _ = col.groups.items[0].removePanel(i);
+                break;
+            }
+        }
+        self.applyLayout();
+    }
+
+    pub fn onBrowserEntryFocus(data: *anyopaque, wp: *WebPanel) callconv(.c) void {
         const self: *Workspace = @ptrCast(@alignCast(data));
         // Unfocus ALL terminal panes across ALL columns so ghostty stops
         // intercepting key events and CSS focus indicators are removed.
-        // We can't rely on focusedGroup() alone — focused_column may lag
-        // behind the actual GTK focus state.
         for (self.columns.items) |col| {
             if (col.closing) continue;
             for (col.groups.items) |grp| {
@@ -525,16 +606,18 @@ pub const Workspace = struct {
             }
         }
 
-        // Find the column containing a webkit panel and focus it
+        // Find the column containing THIS specific webkit panel (by pointer identity)
         for (self.columns.items, 0..) |*col, i| {
             if (col.closing) continue;
             for (col.groups.items) |grp| {
                 for (grp.panels.items) |p| {
-                    if (p == .webkit) {
-                        self.focused_column = i;
-                        self.panToFocusedColumn();
-                        self.applyLayout();
-                        return;
+                    if (p.asWebPanel()) |panel| {
+                        if (panel == wp) {
+                            self.focused_column = i;
+                            self.panToFocusedColumn();
+                            self.applyLayout();
+                            return;
+                        }
                     }
                 }
             }
@@ -734,12 +817,9 @@ pub const Workspace = struct {
         for (grp.panels.items, 0..) |panel, i| {
             const pw = panel.getWidget();
 
-            // Webkit panels don't have terminal animation state; use defaults
-            // so they fill the full available height when in stacked mode.
-            const pane_opt = panel.asTerminal();
-            const slot_y: f64 = if (pane_opt) |pane| pane.stacked_frac_y * available_h else 0;
-            const slot_h: f64 = if (pane_opt) |pane| pane.stacked_frac_h * available_h else available_h;
-            const anim: f64 = if (pane_opt) |pane| pane.stacked_open_anim else 1.0;
+            const slot_y: f64 = panel.getStackedFracY() * available_h;
+            const slot_h: f64 = panel.getStackedFracH() * available_h;
+            const anim: f64 = panel.getStackedOpenAnim();
 
             // Deferred AdwTabView page disposal after a tabbed-mode
             // expel can unparent the widget from GtkFixed.  Re-attach
@@ -757,7 +837,7 @@ pub const Workspace = struct {
                 }
             }
 
-            const panel_x: f64 = if (pane_opt) |pane| ctx.screen_x + pane.stacked_offset_x else ctx.screen_x;
+            const panel_x: f64 = ctx.screen_x + panel.getStackedOffsetX();
 
             setCssClass(pw, "column-has-divider", ctx.col_idx > 0);
             setCssClass(pw, "row-has-divider", i > 0);
@@ -900,6 +980,21 @@ pub const Workspace = struct {
         return null;
     }
 
+    /// Find the first webkit panel in any column to the RIGHT of source_col_idx.
+    pub fn findBrowserPanelRightOf(self: *Workspace, source_col_idx: usize) ?*WebPanel {
+        var i = source_col_idx + 1;
+        while (i < self.columns.items.len) : (i += 1) {
+            const col = &self.columns.items[i];
+            if (col.closing) continue;
+            for (col.groups.items) |grp| {
+                for (grp.panels.items) |p| {
+                    if (p.asWebPanel()) |wp| return wp;
+                }
+            }
+        }
+        return null;
+    }
+
     /// Exponential decay rate: 99% of the animation completes in 200ms.
     /// Derived from: k = -ln(0.01) / 0.2 ≈ 23.026
     const anim_decay_rate = 23.026;
@@ -997,23 +1092,22 @@ pub const Workspace = struct {
                 // Compute total height weight for weight-based distribution
                 var total_weight: f64 = 0.0;
                 for (grp.panels.items) |p2| {
-                    if (p2.asTerminal()) |pp| total_weight += pp.height_weight;
+                    total_weight += p2.getHeightWeight();
                 }
                 if (total_weight <= 0.0) total_weight = 1.0;
                 var y_accum: f64 = 0.0;
 
                 for (grp.panels.items) |panel| {
-                    const pane = panel.asTerminal() orelse continue;
-                    if (pane.stacked_closing) {
-                        pane.stacked_open_anim *= (1.0 - anim_lerp_factor);
-                        if (pane.stacked_open_anim <= 1.0 - anim_snap_threshold) {
-                            pane.stacked_open_anim = 0.0;
+                    if (panel.stacked_closing()) {
+                        panel.setStackedOpenAnim(panel.getStackedOpenAnim() * (1.0 - anim_lerp_factor));
+                        if (panel.getStackedOpenAnim() <= 1.0 - anim_snap_threshold) {
+                            panel.setStackedOpenAnim(0.0);
                         }
                         needs_layout = true;
-                    } else if (pane.stacked_open_anim < 1.0) {
-                        pane.stacked_open_anim += (1.0 - pane.stacked_open_anim) * anim_lerp_factor;
-                        if (pane.stacked_open_anim >= anim_snap_threshold) {
-                            pane.stacked_open_anim = 1.0;
+                    } else if (panel.getStackedOpenAnim() < 1.0) {
+                        panel.setStackedOpenAnim(panel.getStackedOpenAnim() + (1.0 - panel.getStackedOpenAnim()) * anim_lerp_factor);
+                        if (panel.getStackedOpenAnim() >= anim_snap_threshold) {
+                            panel.setStackedOpenAnim(1.0);
                         }
                         needs_layout = true;
                     }
@@ -1021,31 +1115,31 @@ pub const Workspace = struct {
                     // Animate layout position/size fractions toward weight-based target
                     {
                         const target_frac_y = y_accum / total_weight;
-                        const target_frac_h = pane.height_weight / total_weight;
-                        const dy = target_frac_y - pane.stacked_frac_y;
-                        const dh = target_frac_h - pane.stacked_frac_h;
+                        const target_frac_h = panel.getHeightWeight() / total_weight;
+                        const dy = target_frac_y - panel.getStackedFracY();
+                        const dh = target_frac_h - panel.getStackedFracH();
                         if (@abs(dy) > 0.001) {
-                            pane.stacked_frac_y += dy * anim_lerp_factor;
-                            if (@abs(target_frac_y - pane.stacked_frac_y) < 0.002) {
-                                pane.stacked_frac_y = target_frac_y;
+                            panel.setStackedFracY(panel.getStackedFracY() + dy * anim_lerp_factor);
+                            if (@abs(target_frac_y - panel.getStackedFracY()) < 0.002) {
+                                panel.setStackedFracY(target_frac_y);
                             }
                             needs_layout = true;
                         }
                         if (@abs(dh) > 0.001) {
-                            pane.stacked_frac_h += dh * anim_lerp_factor;
-                            if (@abs(target_frac_h - pane.stacked_frac_h) < 0.002) {
-                                pane.stacked_frac_h = target_frac_h;
+                            panel.setStackedFracH(panel.getStackedFracH() + dh * anim_lerp_factor);
+                            if (@abs(target_frac_h - panel.getStackedFracH()) < 0.002) {
+                                panel.setStackedFracH(target_frac_h);
                             }
                             needs_layout = true;
                         }
                     }
-                    y_accum += pane.height_weight;
+                    y_accum += panel.getHeightWeight();
 
                     // Animate horizontal offset toward 0 (cross-column move)
-                    if (@abs(pane.stacked_offset_x) > 1.0) {
-                        pane.stacked_offset_x *= (1.0 - anim_lerp_factor);
-                        if (@abs(pane.stacked_offset_x) < 1.0) {
-                            pane.stacked_offset_x = 0.0;
+                    if (@abs(panel.getStackedOffsetX()) > 1.0) {
+                        panel.setStackedOffsetX(panel.getStackedOffsetX() * (1.0 - anim_lerp_factor));
+                        if (@abs(panel.getStackedOffsetX()) < 1.0) {
+                            panel.setStackedOffsetX(0.0);
                         }
                         needs_layout = true;
                     }
@@ -1254,8 +1348,12 @@ pub const Workspace = struct {
     pub fn resizeRowHeight(self: *Workspace, delta: f64) void {
         const grp = self.focusedGroup() orelse return;
         if (grp.active_panel >= grp.panels.items.len) return;
-        const pane = grp.panels.items[grp.active_panel].asTerminal() orelse return;
-        pane.height_weight = std.math.clamp(pane.height_weight + delta, 0.1, 10.0);
+        const panel = grp.panels.items[grp.active_panel];
+        const new_weight = std.math.clamp(panel.getHeightWeight() + delta, 0.1, 10.0);
+        switch (panel) {
+            .terminal => |p| p.height_weight = new_weight,
+            .webkit => |wp| wp.height_weight = new_weight,
+        }
     }
 
     // ── Resize handles ──────────────────────────────────────────────
@@ -1369,17 +1467,16 @@ pub const Workspace = struct {
 
                     for (grp.panels.items, 0..) |panel, i| {
                         if (i == 0) continue; // no divider above the first pane
-                        const pane = panel.asTerminal() orelse continue;
-                        if (pane.stacked_closing or pane.stacked_open_anim < 0.99) continue;
-                        // Also check the pane above
-                        const above = grp.panels.items[i - 1].asTerminal() orelse continue;
-                        if (above.stacked_closing or above.stacked_open_anim < 0.99) continue;
+                        if (panel.stacked_closing() or panel.getStackedOpenAnim() < 0.99) continue;
+                        // Also check the panel above
+                        const above = grp.panels.items[i - 1];
+                        if (above.stacked_closing() or above.getStackedOpenAnim() < 0.99) continue;
                         if (row_h >= max_row_handles) break;
 
                         const rh = &self.row_handles[row_h];
                         rh.col_idx = col_idx;
                         rh.pane_idx = i;
-                        const handle_y = tab_area_h + pane.stacked_frac_y * available_h - 5.0;
+                        const handle_y = tab_area_h + panel.getStackedFracY() * available_h - 5.0;
                         c.gtk_widget_set_size_request(rh.widget, @intFromFloat(@max(1.0, @round(pixel_w))), handle_thickness);
                         c.gtk_fixed_move(@ptrCast(self.fixed), rh.widget, screen_x, handle_y);
                         c.gtk_widget_set_visible(rh.widget, 1);
@@ -1719,14 +1816,10 @@ pub const Workspace = struct {
 
                 // Active panel starts fully visible, others animate in
                 for (grp.panels.items, 0..) |panel, i| {
-                    if (panel.asTerminal()) |pane| {
-                        if (i == col.active_at_switch) {
-                            pane.stacked_open_anim = 1.0;
-                            pane.stacked_closing = false;
-                        } else {
-                            pane.stacked_open_anim = 0.0;
-                            pane.stacked_closing = false;
-                        }
+                    if (i == col.active_at_switch) {
+                        panel.setStackedOpenAnim(1.0);
+                    } else {
+                        panel.setStackedOpenAnim(0.0);
                     }
                 }
             },
@@ -1737,15 +1830,11 @@ pub const Workspace = struct {
 
                 // Active panel stays visible, others animate out
                 for (grp.panels.items, 0..) |panel, i| {
-                    if (panel.asTerminal()) |pane| {
-                        if (i == grp.active_panel) {
-                            col.active_at_switch = i;
-                            pane.stacked_open_anim = 1.0;
-                            pane.stacked_closing = false;
-                        } else {
-                            pane.stacked_open_anim = 1.0;
-                            pane.stacked_closing = true;
-                        }
+                    if (i == grp.active_panel) {
+                        col.active_at_switch = i;
+                        panel.setStackedOpenAnim(1.0);
+                    } else {
+                        panel.setStackedOpenAnim(1.0);
                     }
                 }
                 // Note: exitStackedMode is called when stacked_anim reaches 0
@@ -2059,6 +2148,11 @@ pub const Workspace = struct {
                 if (tlen > 0 and title[tlen - 1] >= 0xC0) tlen -= 1;
                 @memcpy(buf[0..tlen], title[0..tlen]);
                 c.adw_tab_page_set_title(tab_page, &buf);
+                {
+                    const icon = c.g_themed_icon_new("utilities-terminal-symbolic");
+                    c.adw_tab_page_set_icon(tab_page, icon);
+                    c.g_object_unref(@ptrCast(icon));
+                }
                 c.adw_tab_view_set_selected_page(tgt_grp.tab_view, tab_page);
                 _ = c.g_object_unref(@ptrCast(pw));
                 // Widget is now in AdwTabView, not GtkFixed — release
@@ -2271,8 +2365,8 @@ pub const Workspace = struct {
         const full: YBounds = .{ .top = 0.0, .bot = 1.0 };
         const grp = self.focusedGroup() orelse return full;
         if (!grp.in_stacked_mode) return full;
-        const pane = grp.focusedTerminalPane() orelse return full;
-        return .{ .top = pane.stacked_frac_y, .bot = pane.stacked_frac_y + pane.stacked_frac_h };
+        const panel = grp.getActivePanel() orelse return full;
+        return .{ .top = panel.getStackedFracY(), .bot = panel.getStackedFracY() + panel.getStackedFracH() };
     }
 
     fn matchRowInFocusedColumn(self: *Workspace, src: YBounds) void {
@@ -2286,9 +2380,8 @@ pub const Workspace = struct {
         var best_overlap: f64 = 0.0;
         var prev_overlaps = false;
         for (grp.panels.items, 0..) |panel, idx| {
-            const pane = panel.asTerminal() orelse continue;
-            const top = pane.stacked_frac_y;
-            const bot = top + pane.stacked_frac_h;
+            const top = panel.getStackedFracY();
+            const bot = top + panel.getStackedFracH();
             if (top >= src.bot - eps or bot <= src.top + eps) continue;
             const overlap = @min(bot, src.bot) - @max(top, src.top);
             if (best == null or overlap > best_overlap) {

@@ -2177,7 +2177,7 @@ pub const SocketServer = struct {
             return writeJsonError(buf, id, "not_found", "Browser panel not found");
 
         const uri = c.webkit_web_view_get_uri(wp.webview);
-        const url_str = if (uri) |u| std.mem.span(u) else wp.url;
+        const url_str: []const u8 = if (uri) |u| std.mem.sliceTo(u, 0) else wp.url;
 
         var url_esc: [2048]u8 = undefined;
         const escaped = jsonEscapeString(url_str, &url_esc);
@@ -2206,7 +2206,7 @@ pub const SocketServer = struct {
                             first = false;
 
                             const uri = c.webkit_web_view_get_uri(wp.webview);
-                            const url_str = if (uri) |u| std.mem.span(u) else wp.url;
+                            const url_str: []const u8 = if (uri) |u| std.mem.sliceTo(u, 0) else wp.url;
                             var url_esc: [2048]u8 = undefined;
                             const escaped_url = jsonEscapeString(url_str, &url_esc);
 

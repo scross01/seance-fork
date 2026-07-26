@@ -13,7 +13,7 @@ fn nextId() u64 {
 }
 
 pub const CloseFn = *const fn (*anyopaque) callconv(.c) void;
-pub const FocusFn = *const fn (*anyopaque) callconv(.c) void;
+pub const FocusFn = *const fn (*anyopaque, *WebPanel) callconv(.c) void;
 
 pub const WebPanel = struct {
     id: u64,
@@ -34,6 +34,12 @@ pub const WebPanel = struct {
     close_data: ?*anyopaque = null,
     focus_cb: ?FocusFn = null,
     focus_data: ?*anyopaque = null,
+    stacked_open_anim: f64 = 1.0,
+    stacked_frac_y: f64 = 0.0,
+    stacked_frac_h: f64 = 1.0,
+    height_weight: f64 = 1.0,
+    stacked_offset_x: f64 = 0.0,
+    ignore_tls_errors: bool = false,
 
     pub fn create(alloc: std.mem.Allocator, url: []const u8) !*WebPanel {
         const id = nextId();
@@ -42,7 +48,7 @@ pub const WebPanel = struct {
 
         // Harden settings before any load
         const settings = c.webkit_web_view_get_settings(webview);
-        c.webkit_settings_set_enable_developer_extras(settings, 0);
+        c.webkit_settings_set_enable_developer_extras(settings, 1);
         c.webkit_settings_set_enable_page_cache(settings, 0);
         c.webkit_settings_set_enable_html5_local_storage(settings, 0);
         c.webkit_settings_set_enable_html5_database(settings, 0);
@@ -95,6 +101,26 @@ pub const WebPanel = struct {
 
         c.gtk_stack_set_visible_child_name(@ptrCast(url_stack), "display");
         c.gtk_box_append(@ptrCast(toolbar), url_stack);
+
+        // Hamburger menu: [☰] → Developer Tools
+        const menu_box = c.gtk_box_new(c.GTK_ORIENTATION_VERTICAL, 0);
+        const btn_devtools = c.gtk_button_new();
+        c.gtk_widget_set_halign(btn_devtools, c.GTK_ALIGN_START);
+        const devtools_box = c.gtk_box_new(c.GTK_ORIENTATION_HORIZONTAL, 8);
+        _ = c.gtk_box_append(@ptrCast(devtools_box), c.gtk_button_new_from_icon_name("system-run-symbolic"));
+        _ = c.gtk_box_append(@ptrCast(devtools_box), c.gtk_label_new("Developer Tools"));
+        c.gtk_button_set_child(@ptrCast(btn_devtools), devtools_box);
+        c.gtk_widget_set_tooltip_text(btn_devtools, "Open WebKit Inspector (Ctrl+Shift+I)");
+        _ = c.gtk_box_append(@ptrCast(menu_box), btn_devtools);
+
+        const popover = c.gtk_popover_new();
+        c.gtk_popover_set_child(@ptrCast(popover), menu_box);
+
+        const btn_menu = c.gtk_menu_button_new();
+        c.gtk_menu_button_set_icon_name(@ptrCast(btn_menu), "open-menu-symbolic");
+        c.gtk_widget_set_tooltip_text(btn_menu, "Browser menu");
+        c.gtk_menu_button_set_popover(@ptrCast(btn_menu), popover);
+        c.gtk_box_append(@ptrCast(toolbar), btn_menu);
 
         const btn_close = c.gtk_button_new_from_icon_name("window-close-symbolic");
         c.gtk_widget_set_tooltip_text(btn_close, "Close browser pane");
@@ -156,6 +182,16 @@ pub const WebPanel = struct {
             @as(c.gpointer, @ptrCast(webview)),
             "notify::estimated-load-progress",
             @as(c.GCallback, @ptrCast(&onProgressChanged)),
+            @ptrCast(panel),
+            null,
+            0,
+        );
+
+        // TLS certificate errors — show dialog to let user proceed
+        _ = c.g_signal_connect_data(
+            @as(c.gpointer, @ptrCast(webview)),
+            "load-failed-with-tls-errors",
+            @as(c.GCallback, @ptrCast(&onTlsError)),
             @ptrCast(panel),
             null,
             0,
@@ -243,6 +279,16 @@ pub const WebPanel = struct {
             0,
         );
 
+        // Developer Tools button
+        _ = c.g_signal_connect_data(
+            @as(c.gpointer, @ptrCast(btn_devtools)),
+            "clicked",
+            @as(c.GCallback, @ptrCast(&onDevToolsClicked)),
+            @ptrCast(panel),
+            null,
+            0,
+        );
+
         // Close button
         _ = c.g_signal_connect_data(
             @as(c.gpointer, @ptrCast(btn_close)),
@@ -292,8 +338,7 @@ pub const WebPanel = struct {
     pub fn focus(self: *WebPanel) void {
         const uri = c.webkit_web_view_get_uri(self.webview);
         if (uri) |u| {
-            const url_str = std.mem.span(u);
-            c.gtk_editable_set_text(@ptrCast(self.entry), url_str.ptr);
+            c.gtk_editable_set_text(@ptrCast(self.entry), u);
         }
         c.gtk_stack_set_visible_child_name(@ptrCast(self.url_stack), "edit");
         _ = c.gtk_widget_grab_focus(@ptrCast(self.entry));
@@ -319,6 +364,11 @@ pub const WebPanel = struct {
 
     pub fn queueResize(self: *WebPanel) void {
         c.gtk_widget_queue_resize(@ptrCast(self.webview));
+    }
+
+    pub fn showInspector(self: *WebPanel) void {
+        const inspector = c.webkit_web_view_get_inspector(self.webview);
+        c.webkit_web_inspector_show(inspector);
     }
 
     pub fn navigate(self: *WebPanel, url: []const u8) void {
@@ -353,7 +403,7 @@ pub const WebPanel = struct {
 
     pub fn getTitle(self: *WebPanel) []const u8 {
         if (c.webkit_web_view_get_title(self.webview)) |title_ptr| {
-            const new_title = std.mem.span(title_ptr);
+            const new_title = std.mem.sliceTo(title_ptr, 0);
             if (new_title.len > 0 and !std.mem.eql(u8, self.title, new_title)) {
                 if (self.title.len > 0) self.alloc.free(self.title);
                 self.title = self.alloc.dupe(u8, new_title) catch "";
@@ -377,9 +427,10 @@ pub const WebPanel = struct {
     }
 
     fn syncDisplay(self: *WebPanel) void {
-        const text = c.gtk_editable_get_text(@ptrCast(self.entry));
-        if (text == null) return;
-        const url = std.mem.span(text.?);
+        // Use self.url (heap-owned, always in sync) instead of reading from
+        // gtk_editable_get_text whose internal buffer can expose stale bytes
+        // past the null terminator, causing Pango UTF-8 parse errors.
+        const url: []const u8 = self.url;
         var markup_buf: [2048:0]u8 = .{0} ** 2048;
         const markup = buildUrlMarkup(url, &markup_buf);
         c.gtk_label_set_markup(self.url_label, markup.ptr);
@@ -482,14 +533,14 @@ fn onLoadChanged(_: ?*c.WebKitWebView, event: c_int, user_data: ?*anyopaque) cal
         WEBKIT_LOAD_COMMITTED => {
             const uri = c.webkit_web_view_get_uri(panel.webview);
             if (uri) |u| {
-                const new_url = std.mem.span(u);
+                const new_url = std.mem.sliceTo(u, 0);
                 if (!std.mem.eql(u8, panel.url, new_url)) {
                     const owned = panel.alloc.dupe(u8, new_url) catch return;
                     panel.alloc.free(panel.url);
                     panel.url = owned;
                 }
                 if (!panel.navigating_from_entry) {
-                    c.gtk_editable_set_text(@ptrCast(panel.entry), new_url.ptr);
+                    c.gtk_editable_set_text(@ptrCast(panel.entry), u);
                     panel.syncDisplay();
                 }
             }
@@ -497,6 +548,11 @@ fn onLoadChanged(_: ?*c.WebKitWebView, event: c_int, user_data: ?*anyopaque) cal
         WEBKIT_LOAD_FINISHED => {
             panel.setLoading(false);
             panel.navigating_from_entry = false;
+            if (panel.ignore_tls_errors) {
+                panel.ignore_tls_errors = false;
+                const session = c.webkit_web_view_get_network_session(panel.webview);
+                c.webkit_network_session_set_tls_errors_policy(session, c.WEBKIT_TLS_ERRORS_POLICY_FAIL);
+            }
         },
         else => {},
     }
@@ -508,11 +564,87 @@ fn onProgressChanged(_: ?*c.GObject, _: ?*c.GParamSpec, user_data: ?*anyopaque) 
     c.gtk_progress_bar_set_fraction(@ptrCast(panel.progress_bar), fraction);
 }
 
+fn onTlsError(
+    webview_: ?*c.WebKitWebView,
+    failing_uri: ?[*:0]const u8,
+    _: ?*c.GTlsCertificate,
+    errors: c_uint,
+    user_data: ?*anyopaque,
+) callconv(.c) c.gboolean {
+    _ = webview_;
+    const panel: *WebPanel = @ptrCast(@alignCast(user_data orelse return 0));
+    const uri = failing_uri orelse return 0;
+
+    const uri_str = std.mem.sliceTo(uri, 0);
+    const host = getHostFromUrl(uri_str);
+
+    var msg_buf: [512:0]u8 = [_:0]u8{0} ** 512;
+    _ = std.fmt.bufPrint(&msg_buf, "The certificate for <b>{s}</b> is not trusted.\n\n{s}", .{ host, formatTlsErrorFlags(errors) }) catch {};
+
+    const dialog = c.adw_alert_dialog_new("Insecure Connection", &msg_buf);
+    c.adw_alert_dialog_add_response(@as(*c.AdwAlertDialog, @ptrCast(dialog)), "cancel", "Cancel");
+    c.adw_alert_dialog_add_response(@as(*c.AdwAlertDialog, @ptrCast(dialog)), "proceed", "Proceed Anyway");
+    c.adw_alert_dialog_set_response_appearance(@as(*c.AdwAlertDialog, @ptrCast(dialog)), "proceed", c.ADW_RESPONSE_SUGGESTED);
+    c.adw_alert_dialog_set_default_response(@as(*c.AdwAlertDialog, @ptrCast(dialog)), "cancel");
+    c.adw_alert_dialog_set_close_response(@as(*c.AdwAlertDialog, @ptrCast(dialog)), "cancel");
+
+    const ctx = panel.alloc.create(TlsErrorCtx) catch return 0;
+    ctx.* = .{ .panel = panel, .failing_uri = panel.alloc.dupe(u8, uri_str) catch {
+        panel.alloc.destroy(ctx);
+        return 0;
+    } };
+
+    _ = c.g_signal_connect_data(@as(c.gpointer, @ptrCast(dialog)), "response", @as(c.GCallback, @ptrCast(&onTlsErrorResponse)), @ptrCast(ctx), null, 0);
+    c.adw_dialog_present(@as(*c.AdwDialog, @ptrCast(dialog)), panel.widget);
+
+    return 1; // handled
+}
+
+const TlsErrorCtx = struct {
+    panel: *WebPanel,
+    failing_uri: []u8,
+};
+
+fn onTlsErrorResponse(_: *c.AdwAlertDialog, response: [*:0]const u8, data: c.gpointer) callconv(.c) void {
+    const ctx: *TlsErrorCtx = @ptrCast(@alignCast(data));
+    defer {
+        ctx.panel.alloc.free(ctx.failing_uri);
+        ctx.panel.alloc.destroy(ctx);
+    }
+
+    if (!std.mem.eql(u8, std.mem.sliceTo(response, 0), "proceed")) return;
+
+    // Temporarily ignore TLS errors so the reload succeeds.
+    const session = c.webkit_web_view_get_network_session(ctx.panel.webview);
+    c.webkit_network_session_set_tls_errors_policy(session, c.WEBKIT_TLS_ERRORS_POLICY_IGNORE);
+
+    ctx.panel.ignore_tls_errors = true;
+
+    var url_buf: [4096:0]u8 = [_:0]u8{0} ** 4096;
+    const len = @min(ctx.failing_uri.len, 4095);
+    @memcpy(url_buf[0..len], ctx.failing_uri[0..len]);
+    url_buf[len] = 0;
+    c.webkit_web_view_load_uri(ctx.panel.webview, &url_buf);
+}
+
+fn formatTlsErrorFlags(errors: c_uint) []const u8 {
+    if (errors == 0) return "Unknown error";
+    var result: []const u8 = "";
+    if (errors & (1 << 0) != 0) result = "Unknown Certificate Authority";
+    if (errors & (1 << 1) != 0) result = "Hostname mismatch";
+    if (errors & (1 << 2) != 0) result = "Certificate not yet valid";
+    if (errors & (1 << 3) != 0) result = "Certificate has expired";
+    if (errors & (1 << 4) != 0) result = "Certificate has been revoked";
+    if (errors & (1 << 5) != 0) result = "Insecure algorithm or key";
+    if (errors & (1 << 6) != 0) result = "Generic validation error";
+    return result;
+}
+
 fn onPanelFocusIn(_: ?*c.GtkEventControllerFocus, user_data: ?*anyopaque) callconv(.c) void {
     const panel: *WebPanel = @ptrCast(@alignCast(user_data orelse return));
     if (panel.focus_cb) |cb| {
         if (panel.focus_data) |data| {
-            cb(data);
+            cb(data, panel);
         }
     }
 }
@@ -534,6 +666,11 @@ fn onReloadStopClicked(_: ?*c.GtkWidget, user_data: ?*anyopaque) callconv(.c) vo
     } else {
         panel.reload();
     }
+}
+
+fn onDevToolsClicked(_: ?*c.GtkWidget, user_data: ?*anyopaque) callconv(.c) void {
+    const panel: *WebPanel = @ptrCast(@alignCast(user_data orelse return));
+    panel.showInspector();
 }
 
 fn onCloseClicked(_: ?*c.GtkWidget, user_data: ?*anyopaque) callconv(.c) void {

@@ -575,24 +575,36 @@ fn handleAction(target: c.ghostty_target_s, action: c.ghostty_action_s) bool {
                             if (Window.window_manager) |wm| {
                                 if (wm.findByWorkspaceId(pane.workspace_id)) |state| {
                                     if (state.activeWorkspace()) |ws| {
-                                        // Find existing browser panel across all columns
-                                        var found_browser = false;
-                                        for (ws.columns.items) |col| {
-                                            if (col.closing) continue;
-                                            for (col.groups.items) |grp| {
-                                                for (grp.panels.items) |p| {
-                                                    if (p.asWebPanel()) |wp| {
-                                                        wp.navigate(url_slice);
-                                                        found_browser = true;
-                                                        break;
+                                        // Find the source terminal's column index
+                                        const src_col_idx: ?usize = blk: {
+                                            for (ws.columns.items, 0..) |*col, i| {
+                                                if (col.closing) continue;
+                                                for (col.groups.items) |grp| {
+                                                    for (grp.panels.items) |p| {
+                                                        if (p.asTerminal()) |term| {
+                                                            if (term.id == pane.id) break :blk i;
+                                                        }
                                                     }
                                                 }
-                                                if (found_browser) break;
                                             }
-                                            if (found_browser) break;
-                                        }
-                                        if (!found_browser) {
-                                            _ = ws.addBrowserColumn(url_slice) catch {};
+                                            break :blk null;
+                                        };
+
+                                        if (src_col_idx) |src_idx| {
+                                            // Look for a browser panel to the RIGHT of the source terminal
+                                            if (ws.findBrowserPanelRightOf(src_idx)) |wp| {
+                                                wp.navigate(url_slice);
+                                            } else {
+                                                // No browser to the right — create one next to the source terminal
+                                                _ = ws.addBrowserColumnRightOf(src_idx, url_slice) catch {};
+                                            }
+                                        } else {
+                                            // Fallback: terminal not found, use focused column
+                                            if (ws.findBrowserPanelRightOf(ws.focused_column)) |wp| {
+                                                wp.navigate(url_slice);
+                                            } else {
+                                                _ = ws.addBrowserColumn(url_slice) catch {};
+                                            }
                                         }
                                     }
                                 }
