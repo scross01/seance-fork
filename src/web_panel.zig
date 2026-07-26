@@ -46,14 +46,22 @@ pub const WebPanel = struct {
 
         const webview = @as(*c.WebKitWebView, @ptrCast(c.webkit_web_view_new() orelse return error.OutOfMemory));
 
-        // Harden settings before any load
+        // Dev-friendly settings — enable full web API surface for AI web app development
         const settings = c.webkit_web_view_get_settings(webview);
         c.webkit_settings_set_enable_developer_extras(settings, 1);
         c.webkit_settings_set_enable_page_cache(settings, 0);
-        c.webkit_settings_set_enable_html5_local_storage(settings, 0);
-        c.webkit_settings_set_enable_html5_database(settings, 0);
-        c.webkit_settings_set_javascript_can_open_windows_automatically(settings, 0);
-        c.webkit_settings_set_javascript_can_access_clipboard(settings, 0);
+        c.webkit_settings_set_enable_html5_local_storage(settings, 1);
+        c.webkit_settings_set_enable_html5_database(settings, 1);
+        c.webkit_settings_set_enable_webgl(settings, 1);
+        c.webkit_settings_set_enable_webaudio(settings, 1);
+        c.webkit_settings_set_enable_webrtc(settings, 1);
+        c.webkit_settings_set_enable_media_stream(settings, 1);
+        c.webkit_settings_set_enable_mock_capture_devices(settings, 1);
+        c.webkit_settings_set_enable_2d_canvas_acceleration(settings, 1);
+        c.webkit_settings_set_enable_fullscreen(settings, 1);
+        c.webkit_settings_set_allow_modal_dialogs(settings, 1);
+        c.webkit_settings_set_javascript_can_open_windows_automatically(settings, 1);
+        c.webkit_settings_set_javascript_can_access_clipboard(settings, 1);
 
         const webview_widget: *c.GtkWidget = @ptrCast(webview);
         c.gtk_widget_set_hexpand(webview_widget, 1);
