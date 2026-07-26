@@ -294,6 +294,13 @@ pub const SocketServer = struct {
         if (eql(method, "browser.forward")) return handleBrowserForward(params, id, buf);
         if (eql(method, "browser.get_url")) return handleBrowserGetUrl(params, id, buf);
         if (eql(method, "browser.list")) return handleBrowserList(id, buf);
+        if (eql(method, "browser.get_title")) return handleBrowserGetTitle(params, id, buf);
+        if (eql(method, "browser.get_zoom")) return handleBrowserGetZoom(params, id, buf);
+        if (eql(method, "browser.set_zoom")) return handleBrowserSetZoom(params, id, buf);
+        if (eql(method, "browser.is_loading")) return handleBrowserIsLoading(params, id, buf);
+        if (eql(method, "browser.get_progress")) return handleBrowserGetProgress(params, id, buf);
+        if (eql(method, "browser.eval")) return handleBrowserEval(params, id, buf);
+        if (eql(method, "browser.close")) return handleBrowserClose(params, id, buf);
 
         return writeJsonError(buf, id, "method_not_found", "Unknown method");
     }
@@ -473,6 +480,14 @@ pub const SocketServer = struct {
         const group = ws.focusedGroup() orelse return writeJsonError(buf, id, "not_ready", "No focused pane group");
         const pane = group.focusedTerminalPane();
 
+        // Check if focused panel is a browser
+        var browser_panel_id: ?u64 = null;
+        if (group.active_panel < group.panels.items.len) {
+            if (group.panels.items[group.active_panel].asWebPanel()) |wp| {
+                browser_panel_id = wp.id;
+            }
+        }
+
         var result_buf: [512]u8 = undefined;
 
         // Find window index
@@ -491,6 +506,14 @@ pub const SocketServer = struct {
                 state.active_workspace,
                 group.id,
                 p.id,
+            }) catch return writeJsonError(buf, id, "internal", "Buffer overflow")
+        else if (browser_panel_id) |bp_id|
+            std.fmt.bufPrint(&result_buf, "{{\"window_index\":{d},\"workspace_id\":{d},\"workspace_index\":{d},\"pane_group_id\":{d},\"surface_id\":null,\"browser_panel_id\":{d}}}", .{
+                win_idx,
+                ws.id,
+                state.active_workspace,
+                group.id,
+                bp_id,
             }) catch return writeJsonError(buf, id, "internal", "Buffer overflow")
         else
             std.fmt.bufPrint(&result_buf, "{{\"window_index\":{d},\"workspace_id\":{d},\"workspace_index\":{d},\"pane_group_id\":{d},\"surface_id\":null}}", .{
@@ -521,7 +544,9 @@ pub const SocketServer = struct {
             "\"notification.create\",\"notification.list\",\"notification.clear\"," ++
             "\"surface.report_cwd\",\"surface.report_git\",\"surface.clear_git\",\"surface.report_state\"," ++
             "\"browser.open\",\"browser.navigate\",\"browser.reload\",\"browser.back\",\"browser.forward\"," ++
-            "\"browser.get_url\",\"browser.list\"]";
+            "\"browser.get_url\",\"browser.list\"," ++
+            "\"browser.get_title\",\"browser.get_zoom\",\"browser.set_zoom\"," ++
+            "\"browser.is_loading\",\"browser.get_progress\",\"browser.eval\",\"browser.close\"]";
         var result_buf: [1024]u8 = undefined;
         const result = std.fmt.bufPrint(&result_buf, "{{\"methods\":{s}}}", .{methods}) catch
             return writeJsonError(buf, id, "internal", "Buffer overflow");
@@ -2223,6 +2248,176 @@ pub const SocketServer = struct {
 
         pos += copySlice(result_buf[pos..], "]}");
         return writeJsonOk(buf, id, result_buf[0..pos]);
+    }
+
+    fn handleBrowserGetTitle(params: ?std.json.Value, id: []const u8, buf: []u8) []const u8 {
+        const panel_id = getParamInt(params, "panel_id") orelse
+            return writeJsonError(buf, id, "invalid_params", "Missing 'panel_id' parameter");
+
+        const wp = findBrowserPanel(panel_id) orelse
+            return writeJsonError(buf, id, "not_found", "Browser panel not found");
+
+        const title_str: []const u8 = if (c.webkit_web_view_get_title(wp.webview)) |t|
+            std.mem.sliceTo(t, 0)
+        else
+            wp.title;
+
+        var title_esc: [2048]u8 = undefined;
+        const escaped = jsonEscapeString(title_str, &title_esc);
+        var result_buf: [2200]u8 = undefined;
+        const result = std.fmt.bufPrint(&result_buf, "{{\"title\":\"{s}\"}}", .{escaped}) catch
+            return writeJsonError(buf, id, "internal", "Buffer overflow");
+        return writeJsonOk(buf, id, result);
+    }
+
+    fn handleBrowserGetZoom(params: ?std.json.Value, id: []const u8, buf: []u8) []const u8 {
+        const panel_id = getParamInt(params, "panel_id") orelse
+            return writeJsonError(buf, id, "invalid_params", "Missing 'panel_id' parameter");
+
+        const wp = findBrowserPanel(panel_id) orelse
+            return writeJsonError(buf, id, "not_found", "Browser panel not found");
+
+        const level = c.webkit_web_view_get_zoom_level(wp.webview);
+        var result_buf: [128]u8 = undefined;
+        const result = std.fmt.bufPrint(&result_buf, "{{\"zoom_level\":{d}}}", .{level}) catch
+            return writeJsonError(buf, id, "internal", "Buffer overflow");
+        return writeJsonOk(buf, id, result);
+    }
+
+    fn handleBrowserSetZoom(params: ?std.json.Value, id: []const u8, buf: []u8) []const u8 {
+        const panel_id = getParamInt(params, "panel_id") orelse
+            return writeJsonError(buf, id, "invalid_params", "Missing 'panel_id' parameter");
+        const level_val = getParamFloat(params, "level") orelse
+            return writeJsonError(buf, id, "invalid_params", "Missing 'level' parameter");
+
+        const wp = findBrowserPanel(panel_id) orelse
+            return writeJsonError(buf, id, "not_found", "Browser panel not found");
+
+        c.webkit_web_view_set_zoom_level(wp.webview, level_val);
+        var result_buf: [128]u8 = undefined;
+        const result = std.fmt.bufPrint(&result_buf, "{{\"zoom_level\":{d}}}", .{level_val}) catch
+            return writeJsonError(buf, id, "internal", "Buffer overflow");
+        return writeJsonOk(buf, id, result);
+    }
+
+    fn handleBrowserIsLoading(params: ?std.json.Value, id: []const u8, buf: []u8) []const u8 {
+        const panel_id = getParamInt(params, "panel_id") orelse
+            return writeJsonError(buf, id, "invalid_params", "Missing 'panel_id' parameter");
+
+        const wp = findBrowserPanel(panel_id) orelse
+            return writeJsonError(buf, id, "not_found", "Browser panel not found");
+
+        const loading = c.webkit_web_view_is_loading(wp.webview) != 0;
+        var result_buf: [128]u8 = undefined;
+        const result = std.fmt.bufPrint(&result_buf, "{{\"loading\":{s}}}", .{if (loading) "true" else "false"}) catch
+            return writeJsonError(buf, id, "internal", "Buffer overflow");
+        return writeJsonOk(buf, id, result);
+    }
+
+    fn handleBrowserGetProgress(params: ?std.json.Value, id: []const u8, buf: []u8) []const u8 {
+        const panel_id = getParamInt(params, "panel_id") orelse
+            return writeJsonError(buf, id, "invalid_params", "Missing 'panel_id' parameter");
+
+        const wp = findBrowserPanel(panel_id) orelse
+            return writeJsonError(buf, id, "not_found", "Browser panel not found");
+
+        const progress = c.webkit_web_view_get_estimated_load_progress(wp.webview);
+        var result_buf: [128]u8 = undefined;
+        const result = std.fmt.bufPrint(&result_buf, "{{\"progress\":{d}}}", .{progress}) catch
+            return writeJsonError(buf, id, "internal", "Buffer overflow");
+        return writeJsonOk(buf, id, result);
+    }
+
+    fn handleBrowserEval(params: ?std.json.Value, id: []const u8, buf: []u8) []const u8 {
+        const panel_id = getParamInt(params, "panel_id") orelse
+            return writeJsonError(buf, id, "invalid_params", "Missing 'panel_id' parameter");
+        const script = getParamString(params, "script") orelse
+            return writeJsonError(buf, id, "invalid_params", "Missing 'script' parameter");
+
+        const wp = findBrowserPanel(panel_id) orelse
+            return writeJsonError(buf, id, "not_found", "Browser panel not found");
+
+        // Evaluate JS synchronously: call async API then pump glib main loop.
+        // Safe because we hold the GTK main thread and no re-entrancy.
+        const EvalState = struct {
+            var script_buf: [65536]u8 = undefined;
+            var script_len: usize = 0;
+            var result_json: ?[]const u8 = null;
+            var done: bool = false;
+            var errored: bool = false;
+
+            fn onEvalFinished(webview_ptr: ?*anyopaque, result_ptr: ?*c.GAsyncResult, _: c.gpointer) callconv(.c) void {
+                var err: ?*c.GError = null;
+                const jsc_val = c.webkit_web_view_evaluate_javascript_finish(@alignCast(@ptrCast(webview_ptr)), result_ptr, &err);
+                defer {
+                    if (jsc_val != null) c.g_object_unref(@ptrCast(jsc_val));
+                    if (err != null) c.g_error_free(err.?);
+                }
+                if (err != null or jsc_val == null) {
+                    errored = true;
+                } else {
+                    const str = c.jsc_value_to_json(jsc_val, 0);
+                    if (str != null) {
+                        const slice = std.mem.sliceTo(str, 0);
+                        result_json = std.fmt.allocPrint(std.heap.page_allocator, "\"{s}\"", .{slice}) catch null;
+                        c.g_free(@ptrCast(str));
+                    }
+                }
+                done = true;
+            }
+        };
+
+        const copy_len = @min(script.len, 65535);
+        @memcpy(EvalState.script_buf[0..copy_len], script[0..copy_len]);
+        EvalState.script_len = copy_len;
+        EvalState.result_json = null;
+        EvalState.done = false;
+        EvalState.errored = false;
+
+        c.webkit_web_view_evaluate_javascript(
+            wp.webview,
+            &EvalState.script_buf,
+            @intCast(copy_len),
+            null,
+            null,
+            null,
+            @ptrCast(&EvalState.onEvalFinished),
+            null,
+        );
+
+        // Pump glib main loop until callback fires (max 5 seconds)
+        const deadline = std.time.microTimestamp() + 5_000_000;
+        while (!EvalState.done and std.time.microTimestamp() < deadline) {
+            _ = c.g_main_context_iteration(c.g_main_context_default(), 0);
+            std.Thread.sleep(1_000_000); // 1ms
+        }
+
+        if (!EvalState.done) {
+            return writeJsonError(buf, id, "timeout", "JavaScript evaluation timed out");
+        }
+        if (EvalState.errored) {
+            return writeJsonError(buf, id, "eval_error", "JavaScript evaluation failed");
+        }
+
+        const val_str = EvalState.result_json orelse "\"undefined\"";
+        var result_buf: [8192]u8 = undefined;
+        const result_str = std.fmt.bufPrint(&result_buf, "{{\"result\":{s}}}", .{val_str}) catch
+            return writeJsonError(buf, id, "internal", "Buffer overflow");
+        return writeJsonOk(buf, id, result_str);
+    }
+
+    fn handleBrowserClose(params: ?std.json.Value, id: []const u8, buf: []u8) []const u8 {
+        const panel_id = getParamInt(params, "panel_id") orelse
+            return writeJsonError(buf, id, "invalid_params", "Missing 'panel_id' parameter");
+
+        const wp = findBrowserPanel(panel_id) orelse
+            return writeJsonError(buf, id, "not_found", "Browser panel not found");
+
+        // Trigger close via the panel's close callback
+        if (wp.close_cb) |cb| {
+            cb(wp.close_data orelse return writeJsonError(buf, id, "internal", "No close data"));
+        }
+        return writeJsonOk(buf, id, "{}");
     }
 
 };

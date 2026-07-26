@@ -153,6 +153,20 @@ fn dispatch(ctx: Ctx, command: []const u8) u8 {
     if (eql(command, "freebuff-hook")) return cmdFreebuffHook(ctx);
     if (eql(command, "subagent-update")) return cmdSubagentUpdate(ctx);
     if (eql(command, "set-idle")) return cmdSetIdle(ctx);
+    if (eql(command, "browser-open")) return cmdBrowserOpen(ctx);
+    if (eql(command, "browser-navigate")) return cmdBrowserNavigate(ctx);
+    if (eql(command, "browser-reload")) return cmdBrowserReload(ctx);
+    if (eql(command, "browser-back")) return cmdBrowserBack(ctx);
+    if (eql(command, "browser-forward")) return cmdBrowserForward(ctx);
+    if (eql(command, "browser-get-url")) return cmdBrowserGetUrl(ctx);
+    if (eql(command, "browser-list")) return cmdBrowserList(ctx);
+    if (eql(command, "browser-get-title")) return cmdBrowserGetTitle(ctx);
+    if (eql(command, "browser-get-zoom")) return cmdBrowserGetZoom(ctx);
+    if (eql(command, "browser-set-zoom")) return cmdBrowserSetZoom(ctx);
+    if (eql(command, "browser-is-loading")) return cmdBrowserIsLoading(ctx);
+    if (eql(command, "browser-get-progress")) return cmdBrowserGetProgress(ctx);
+    if (eql(command, "browser-eval")) return cmdBrowserEval(ctx);
+    if (eql(command, "browser-close")) return cmdBrowserClose(ctx);
     if (eql(command, "help") or eql(command, "--help") or eql(command, "-h")) {
         printUsage();
         return 0;
@@ -1460,6 +1474,339 @@ fn cmdSetIdle(ctx: Ctx) u8 {
     return 0;
 }
 
+// ── Browser commands ─────────────────────────────────────────────────
+
+fn cmdBrowserOpen(ctx: Ctx) u8 {
+    var url: ?[]const u8 = null;
+    var ri: usize = 0;
+    while (ri < ctx.rest.len) : (ri += 1) {
+        if (eql(ctx.rest[ri], "--url") and ri + 1 < ctx.rest.len) {
+            ri += 1;
+            url = ctx.rest[ri];
+        } else if (url == null) {
+            url = ctx.rest[ri];
+        }
+    }
+    const u = url orelse {
+        werr("usage: browser-open URL [--url URL]\n");
+        return 1;
+    };
+    const escaped = jsonEscapeAlloc(ctx.alloc, u);
+    const params = std.fmt.allocPrint(ctx.alloc, "{{\"url\":\"{s}\"}}", .{escaped}) catch return 1;
+    const resp = apiCall(ctx.alloc, ctx.socket_path, "browser.open", params) catch |e| {
+        printSocketError(e);
+        return 1;
+    };
+    if (ctx.json) {
+        printJson(ctx.alloc, resp.result);
+    } else if (getJsonInt(resp.result, "panel_id")) |pid| {
+        wfmt("Opened browser panel {d}\n", .{pid});
+    }
+    return 0;
+}
+
+fn cmdBrowserNavigate(ctx: Ctx) u8 {
+    var url: ?[]const u8 = null;
+    var panel_id: ?u64 = null;
+    var ri: usize = 0;
+    while (ri < ctx.rest.len) : (ri += 1) {
+        if (eql(ctx.rest[ri], "--panel") and ri + 1 < ctx.rest.len) {
+            ri += 1;
+            panel_id = parseU64(ctx.rest[ri]);
+        } else if (eql(ctx.rest[ri], "--url") and ri + 1 < ctx.rest.len) {
+            ri += 1;
+            url = ctx.rest[ri];
+        } else if (url == null) {
+            url = ctx.rest[ri];
+        }
+    }
+    const u = url orelse {
+        werr("usage: browser-navigate URL [--panel ID] [--url URL]\n");
+        return 1;
+    };
+    const escaped = jsonEscapeAlloc(ctx.alloc, u);
+    const params = if (panel_id) |pid|
+        std.fmt.allocPrint(ctx.alloc, "{{\"panel_id\":{d},\"url\":\"{s}\"}}", .{ pid, escaped }) catch return 1
+    else
+        std.fmt.allocPrint(ctx.alloc, "{{\"url\":\"{s}\"}}", .{escaped}) catch return 1;
+    _ = apiCall(ctx.alloc, ctx.socket_path, "browser.navigate", params) catch |e| {
+        printSocketError(e);
+        return 1;
+    };
+    return 0;
+}
+
+fn cmdBrowserReload(ctx: Ctx) u8 {
+    const panel_id = firstArgPanelId(ctx);
+    if (panel_id == null and ctx.rest.len == 0) {
+        werr("usage: browser-reload [--panel ID] [PANEL_ID]\n");
+        return 1;
+    }
+    const params = std.fmt.allocPrint(ctx.alloc, "{{\"panel_id\":{d}}}", .{panel_id orelse 0}) catch return 1;
+    _ = apiCall(ctx.alloc, ctx.socket_path, "browser.reload", params) catch |e| {
+        printSocketError(e);
+        return 1;
+    };
+    return 0;
+}
+
+fn cmdBrowserBack(ctx: Ctx) u8 {
+    const panel_id = firstArgPanelId(ctx);
+    if (panel_id == null and ctx.rest.len == 0) {
+        werr("usage: browser-back [--panel ID] [PANEL_ID]\n");
+        return 1;
+    }
+    const params = std.fmt.allocPrint(ctx.alloc, "{{\"panel_id\":{d}}}", .{panel_id orelse 0}) catch return 1;
+    _ = apiCall(ctx.alloc, ctx.socket_path, "browser.back", params) catch |e| {
+        printSocketError(e);
+        return 1;
+    };
+    return 0;
+}
+
+fn cmdBrowserForward(ctx: Ctx) u8 {
+    const panel_id = firstArgPanelId(ctx);
+    if (panel_id == null and ctx.rest.len == 0) {
+        werr("usage: browser-forward [--panel ID] [PANEL_ID]\n");
+        return 1;
+    }
+    const params = std.fmt.allocPrint(ctx.alloc, "{{\"panel_id\":{d}}}", .{panel_id orelse 0}) catch return 1;
+    _ = apiCall(ctx.alloc, ctx.socket_path, "browser.forward", params) catch |e| {
+        printSocketError(e);
+        return 1;
+    };
+    return 0;
+}
+
+fn cmdBrowserGetUrl(ctx: Ctx) u8 {
+    const panel_id = firstArgPanelId(ctx);
+    if (panel_id == null and ctx.rest.len == 0) {
+        werr("usage: browser-get-url [--panel ID] [PANEL_ID]\n");
+        return 1;
+    }
+    const params = std.fmt.allocPrint(ctx.alloc, "{{\"panel_id\":{d}}}", .{panel_id orelse 0}) catch return 1;
+    const resp = apiCall(ctx.alloc, ctx.socket_path, "browser.get_url", params) catch |e| {
+        printSocketError(e);
+        return 1;
+    };
+    if (ctx.json) {
+        printJson(ctx.alloc, resp.result);
+    } else {
+        const url = getJsonStr(resp.result, "url");
+        if (url.len > 0) wfmt("{s}\n", .{url});
+    }
+    return 0;
+}
+
+fn cmdBrowserList(ctx: Ctx) u8 {
+    const resp = apiCall(ctx.alloc, ctx.socket_path, "browser.list", null) catch |e| {
+        printSocketError(e);
+        return 1;
+    };
+    if (ctx.json) {
+        printJson(ctx.alloc, resp.result);
+    } else {
+        const panels = getArray(resp.result, "panels") orelse &.{};
+        for (panels) |panel| {
+            const pid = getJsonInt(panel, "panel_id") orelse 0;
+            const url = getJsonStr(panel, "url");
+            wfmt("panel {d}: {s}\n", .{ pid, url });
+        }
+    }
+    return 0;
+}
+
+fn cmdBrowserGetTitle(ctx: Ctx) u8 {
+    const panel_id = firstArgPanelId(ctx);
+    if (panel_id == null and ctx.rest.len == 0) {
+        werr("usage: browser-get-title [--panel ID] [PANEL_ID]\n");
+        return 1;
+    }
+    const params = std.fmt.allocPrint(ctx.alloc, "{{\"panel_id\":{d}}}", .{panel_id orelse 0}) catch return 1;
+    const resp = apiCall(ctx.alloc, ctx.socket_path, "browser.get_title", params) catch |e| {
+        printSocketError(e);
+        return 1;
+    };
+    if (ctx.json) {
+        printJson(ctx.alloc, resp.result);
+    } else {
+        const title = getJsonStr(resp.result, "title");
+        if (title.len > 0) wfmt("{s}\n", .{title});
+    }
+    return 0;
+}
+
+fn cmdBrowserGetZoom(ctx: Ctx) u8 {
+    const panel_id = firstArgPanelId(ctx);
+    if (panel_id == null and ctx.rest.len == 0) {
+        werr("usage: browser-get-zoom [--panel ID] [PANEL_ID]\n");
+        return 1;
+    }
+    const params = std.fmt.allocPrint(ctx.alloc, "{{\"panel_id\":{d}}}", .{panel_id orelse 0}) catch return 1;
+    const resp = apiCall(ctx.alloc, ctx.socket_path, "browser.get_zoom", params) catch |e| {
+        printSocketError(e);
+        return 1;
+    };
+    if (ctx.json) {
+        printJson(ctx.alloc, resp.result);
+    } else if (resp.result == .object) {
+        if (resp.result.object.get("zoom_level")) |zl| {
+            switch (zl) {
+                .float => |f| wfmt("{d:.2}\n", .{f}),
+                .integer => |n| wfmt("{d}\n", .{n}),
+                else => wout("?\n"),
+            }
+        }
+    }
+    return 0;
+}
+
+fn cmdBrowserSetZoom(ctx: Ctx) u8 {
+    var panel_id: ?u64 = null;
+    var level: ?f64 = null;
+    var ri: usize = 0;
+    while (ri < ctx.rest.len) : (ri += 1) {
+        if (eql(ctx.rest[ri], "--panel") and ri + 1 < ctx.rest.len) {
+            ri += 1;
+            panel_id = parseU64(ctx.rest[ri]);
+        } else if (eql(ctx.rest[ri], "--level") and ri + 1 < ctx.rest.len) {
+            ri += 1;
+            level = std.fmt.parseFloat(f64, ctx.rest[ri]) catch null;
+        } else if (panel_id == null) {
+            panel_id = parseU64(ctx.rest[ri]);
+        } else if (level == null) {
+            level = std.fmt.parseFloat(f64, ctx.rest[ri]) catch null;
+        }
+    }
+    const pid = panel_id orelse {
+        werr("usage: browser-set-zoom --level LEVEL [--panel ID] [PANEL_ID]\n");
+        return 1;
+    };
+    const lv = level orelse {
+        werr("usage: browser-set-zoom --level LEVEL [--panel ID] [PANEL_ID]\n");
+        return 1;
+    };
+    const params = std.fmt.allocPrint(ctx.alloc, "{{\"panel_id\":{d},\"level\":{d}}}", .{ pid, lv }) catch return 1;
+    _ = apiCall(ctx.alloc, ctx.socket_path, "browser.set_zoom", params) catch |e| {
+        printSocketError(e);
+        return 1;
+    };
+    return 0;
+}
+
+fn cmdBrowserIsLoading(ctx: Ctx) u8 {
+    const panel_id = firstArgPanelId(ctx);
+    if (panel_id == null and ctx.rest.len == 0) {
+        werr("usage: browser-is-loading [--panel ID] [PANEL_ID]\n");
+        return 1;
+    }
+    const params = std.fmt.allocPrint(ctx.alloc, "{{\"panel_id\":{d}}}", .{panel_id orelse 0}) catch return 1;
+    const resp = apiCall(ctx.alloc, ctx.socket_path, "browser.is_loading", params) catch |e| {
+        printSocketError(e);
+        return 1;
+    };
+    if (ctx.json) {
+        printJson(ctx.alloc, resp.result);
+    } else if (resp.result == .object) {
+        if (resp.result.object.get("loading")) |loading| {
+            if (loading == .bool) {
+                wout(if (loading.bool) "true\n" else "false\n");
+            }
+        }
+    }
+    return 0;
+}
+
+fn cmdBrowserGetProgress(ctx: Ctx) u8 {
+    const panel_id = firstArgPanelId(ctx);
+    if (panel_id == null and ctx.rest.len == 0) {
+        werr("usage: browser-get-progress [--panel ID] [PANEL_ID]\n");
+        return 1;
+    }
+    const params = std.fmt.allocPrint(ctx.alloc, "{{\"panel_id\":{d}}}", .{panel_id orelse 0}) catch return 1;
+    const resp = apiCall(ctx.alloc, ctx.socket_path, "browser.get_progress", params) catch |e| {
+        printSocketError(e);
+        return 1;
+    };
+    if (ctx.json) {
+        printJson(ctx.alloc, resp.result);
+    } else if (resp.result == .object) {
+        if (resp.result.object.get("progress")) |p| {
+            switch (p) {
+                .float => |f| wfmt("{d:.0}%\n", .{f * 100.0}),
+                .integer => |n| wfmt("{d}%\n", .{n}),
+                else => wout("?\n"),
+            }
+        }
+    }
+    return 0;
+}
+
+fn cmdBrowserEval(ctx: Ctx) u8 {
+    var panel_id: ?u64 = null;
+    var script: ?[]const u8 = null;
+    var ri: usize = 0;
+    while (ri < ctx.rest.len) : (ri += 1) {
+        if (eql(ctx.rest[ri], "--panel") and ri + 1 < ctx.rest.len) {
+            ri += 1;
+            panel_id = parseU64(ctx.rest[ri]);
+        } else if (eql(ctx.rest[ri], "--script") and ri + 1 < ctx.rest.len) {
+            ri += 1;
+            script = ctx.rest[ri];
+        } else if (panel_id == null) {
+            panel_id = parseU64(ctx.rest[ri]);
+        } else if (script == null) {
+            script = ctx.rest[ri];
+        }
+    }
+    const s = script orelse {
+        werr("usage: browser-eval SCRIPT [--panel ID]\n");
+        return 1;
+    };
+    const escaped = jsonEscapeAlloc(ctx.alloc, s);
+    const params = if (panel_id) |pid|
+        std.fmt.allocPrint(ctx.alloc, "{{\"panel_id\":{d},\"script\":\"{s}\"}}", .{ pid, escaped }) catch return 1
+    else
+        std.fmt.allocPrint(ctx.alloc, "{{\"script\":\"{s}\"}}", .{escaped}) catch return 1;
+    const resp = apiCall(ctx.alloc, ctx.socket_path, "browser.eval", params) catch |e| {
+        printSocketError(e);
+        return 1;
+    };
+    if (ctx.json) {
+        printJson(ctx.alloc, resp.result);
+    } else {
+        const r = getJsonStr(resp.result, "result");
+        if (r.len > 0) wfmt("{s}\n", .{r});
+    }
+    return 0;
+}
+
+fn cmdBrowserClose(ctx: Ctx) u8 {
+    const panel_id = firstArgPanelId(ctx);
+    if (panel_id == null and ctx.rest.len == 0) {
+        werr("usage: browser-close [--panel ID] [PANEL_ID]\n");
+        return 1;
+    }
+    const params = std.fmt.allocPrint(ctx.alloc, "{{\"panel_id\":{d}}}", .{panel_id orelse 0}) catch return 1;
+    _ = apiCall(ctx.alloc, ctx.socket_path, "browser.close", params) catch |e| {
+        printSocketError(e);
+        return 1;
+    };
+    return 0;
+}
+
+fn firstArgPanelId(ctx: Ctx) ?u64 {
+    var ri: usize = 0;
+    while (ri < ctx.rest.len) : (ri += 1) {
+        if (eql(ctx.rest[ri], "--panel") and ri + 1 < ctx.rest.len) {
+            ri += 1;
+            return parseU64(ctx.rest[ri]);
+        }
+    }
+    if (ctx.rest.len > 0) return parseU64(ctx.rest[0]);
+    return null;
+}
+
 const HookCtx = struct {
     alloc: Allocator,
     socket_path: []const u8,
@@ -2487,6 +2834,22 @@ fn printUsage() void {
         \\  notify                  Send notification [--title T] [--body B]
         \\  list-notifications      List notifications
         \\  clear-notifications     Clear all notifications
+        \\
+        \\Browser:
+        \\  browser-open URL        Open URL in new browser panel
+        \\  browser-navigate URL    Navigate panel to URL [--panel ID]
+        \\  browser-reload          Reload panel [--panel ID]
+        \\  browser-back            Go back [--panel ID]
+        \\  browser-forward         Go forward [--panel ID]
+        \\  browser-get-url         Get current URL [--panel ID]
+        \\  browser-list            List all browser panels
+        \\  browser-get-title       Get page title [--panel ID]
+        \\  browser-get-zoom        Get zoom level [--panel ID]
+        \\  browser-set-zoom LEVEL  Set zoom level [--panel ID]
+        \\  browser-is-loading      Check if loading [--panel ID]
+        \\  browser-get-progress    Get load progress [--panel ID]
+        \\  browser-eval SCRIPT     Evaluate JavaScript [--panel ID]
+        \\  browser-close           Close browser panel [--panel ID]
         \\
         \\Claude Code Hooks:
         \\  claude-hook <event>     Handle Claude Code lifecycle event

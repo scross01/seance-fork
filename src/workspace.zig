@@ -968,7 +968,7 @@ pub const Workspace = struct {
     pub fn focusColumnContainingPane(self: *Workspace, pane_id: u64) ?*PaneGroup {
         for (self.columns.items, 0..) |col, i| {
             for (col.groups.items) |grp| {
-                if (grp.findPaneById(pane_id) != null) {
+                if (grp.findPaneById(pane_id) != null or grp.findPanelById(pane_id) != null) {
                     self.savePaneFocusHistory();
                     if (self.focusedGroup()) |old| old.unfocus();
                     self.focused_column = i;
