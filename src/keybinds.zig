@@ -165,6 +165,14 @@ pub const Keybind = struct {
         // ISO_Left_Tab for Tab) which varies by keyboard layout. Compare against the
         // base (unshifted) keyval derived from the hardware keycode to handle all layouts.
         if (self.key == base_keyval) return true;
+        // GDK reports lowercase keyvals for letter keys when Shift is not held
+        // (e.g. ctrl+alt+b arrives as keyval 0x62 'b'), while bindings store the
+        // uppercase GDK constants (GDK_KEY_B = 0x42). Compare the unshifted forms
+        // so letter bindings match regardless of the stored case. The guard
+        // restricts this path to uppercase-letter bindings only; non-letter keys
+        // (punctuation, digits, Tab, F-keys) are identity under toUnshiftedKeyval.
+        const unshifted_key = toUnshiftedKeyval(self.key);
+        if (unshifted_key != self.key and unshifted_key == toUnshiftedKeyval(keyval)) return true;
         return false;
     }
 };
@@ -404,7 +412,7 @@ fn onKeyPressed(
 
     const is_ctrl = (gdk_state & c.GDK_CONTROL_MASK) != 0;
     const is_shift = (gdk_state & c.GDK_SHIFT_MASK) != 0;
-    const is_alt = (gdk_state & c.GDK_ALT_MASK) != 0;
+    const is_alt = isAltPressed(gdk_state);
 
     // Get the base (unmodified) keyval from the hardware keycode to handle
     // keyboard layouts where shifted punctuation differs (e.g. Shift+comma
@@ -847,6 +855,30 @@ fn switchTab(state: *Window.WindowState, index: usize) void {
     if (state.activeWorkspace()) |ws| ws.switchTabInFocusedGroup(index);
 }
 
+/// GDK4 removed GDK_MOD5_MASK from the public GdkModifierType enum, but X11
+/// events still carry Mod5 as raw bit 7 (X11's mod5 = 1 << 7). On Wayland GDK
+/// drops Mod5 entirely, so this is a no-op there — matching what GDK exposes.
+const GDK_MOD5_MASK: c.guint = 1 << 7;
+
+/// True if the event's modifier state includes Alt.
+/// Mod5 (ISO_Level3_Shift, i.e. the right Alt / AltGr on many keyboards) is
+/// treated as Alt too: some layouts report Alt as Mod5 instead of Mod1
+/// (GDK_ALT_MASK), which would otherwise make every alt-keybind silently
+/// fall through to the embedded ghostty surface.
+pub fn isAltPressed(gdk_state: c.GdkModifierType) bool {
+    return (gdk_state & (c.GDK_ALT_MASK | GDK_MOD5_MASK)) != 0;
+}
+
+/// Map an uppercase letter keyval to its lowercase form; identity for all
+/// other keys. GDK letter keyvals come in shifted/unshifted pairs
+/// (GDK_KEY_B = 0x42 vs GDK_KEY_b = 0x62).
+fn toUnshiftedKeyval(keyval: u32) u32 {
+    if (keyval >= c.GDK_KEY_A and keyval <= c.GDK_KEY_Z) {
+        return keyval - c.GDK_KEY_A + c.GDK_KEY_a;
+    }
+    return keyval;
+}
+
 fn getFocusedPane(state: *Window.WindowState) ?*Pane {
     const ws = state.activeWorkspace() orelse return null;
     const group = ws.focusedGroup() orelse return null;
@@ -1153,4 +1185,52 @@ test "Keybind.matches: base_keyval fallback" {
 test "Keybind.matches: disabled binding never matches" {
     const kb = Keybind{ .key = c.GDK_KEY_v, .ctrl = true, .enabled = false };
     try std.testing.expect(!kb.matches(c.GDK_KEY_v, c.GDK_KEY_v, true, false, false));
+}
+
+test "Keybind.matches: uppercase stored key matches lowercase keyval (ctrl+alt+b)" {
+    // The new_browser_panel default stores GDK_KEY_B (0x42), but GDK reports
+    // lowercase 'b' (0x62) when Shift is not held — must still match.
+    const kb = Keybind{ .key = c.GDK_KEY_B, .ctrl = true, .alt = true, .enabled = true };
+    try std.testing.expect(kb.matches(c.GDK_KEY_b, c.GDK_KEY_b, true, false, true));
+}
+
+test "Keybind.matches: uppercase stored key matches shifted uppercase keyval" {
+    // Ctrl+Shift+T: GDK reports 'T' (0x54), matching the stored GDK_KEY_T.
+    const kb = Keybind{ .key = c.GDK_KEY_T, .ctrl = true, .shift = true, .enabled = true };
+    try std.testing.expect(kb.matches(c.GDK_KEY_T, c.GDK_KEY_t, true, true, false));
+}
+
+test "Keybind.matches: lowercase stored key still matches lowercase keyval" {
+    const kb = Keybind{ .key = c.GDK_KEY_b, .ctrl = true, .alt = true, .enabled = true };
+    try std.testing.expect(kb.matches(c.GDK_KEY_b, c.GDK_KEY_b, true, false, true));
+}
+
+test "Keybind.matches: letter case fallback does not loosen modifier matching" {
+    const kb = Keybind{ .key = c.GDK_KEY_B, .ctrl = true, .alt = true, .enabled = true };
+    // Same letter, wrong modifiers — must NOT match.
+    try std.testing.expect(!kb.matches(c.GDK_KEY_b, c.GDK_KEY_b, true, false, false));
+    try std.testing.expect(!kb.matches(c.GDK_KEY_b, c.GDK_KEY_b, false, false, true));
+}
+
+test "Keybind.matches: fallback never fires for non-letter keys" {
+    // Punctuation/digit bindings are identity under toUnshiftedKeyval, so the
+    // case-fallback must not let a shifted letter keyval match a comma binding.
+    const kb = Keybind{ .key = c.GDK_KEY_comma, .ctrl = true, .enabled = true };
+    try std.testing.expect(!kb.matches(c.GDK_KEY_less, c.GDK_KEY_less, true, false, false));
+    try std.testing.expectEqual(@as(u32, c.GDK_KEY_comma), toUnshiftedKeyval(c.GDK_KEY_comma));
+    try std.testing.expectEqual(@as(u32, c.GDK_KEY_equal), toUnshiftedKeyval(c.GDK_KEY_equal));
+    try std.testing.expectEqual(@as(u32, c.GDK_KEY_Tab), toUnshiftedKeyval(c.GDK_KEY_Tab));
+    try std.testing.expectEqual(@as(u32, c.GDK_KEY_1), toUnshiftedKeyval(c.GDK_KEY_1));
+}
+
+test "isAltPressed: Mod5 (AltGr) counts as alt" {
+    // Mod1 = GDK_ALT_MASK, Mod5 = ISO_Level3_Shift (right Alt on many layouts)
+    try std.testing.expect(isAltPressed(c.GDK_ALT_MASK));
+    try std.testing.expect(isAltPressed(GDK_MOD5_MASK));
+    try std.testing.expect(isAltPressed(c.GDK_ALT_MASK | GDK_MOD5_MASK));
+    try std.testing.expect(isAltPressed(c.GDK_CONTROL_MASK | GDK_MOD5_MASK));
+    // No alt / no mod5 → false
+    try std.testing.expect(!isAltPressed(c.GDK_CONTROL_MASK));
+    try std.testing.expect(!isAltPressed(c.GDK_SHIFT_MASK));
+    try std.testing.expect(!isAltPressed(0));
 }

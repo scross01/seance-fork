@@ -988,7 +988,9 @@ fn onSettingsKeyPress(
 
     const is_ctrl = (gdk_state & c.GDK_CONTROL_MASK) != 0;
     const is_shift = (gdk_state & c.GDK_SHIFT_MASK) != 0;
-    const is_alt = (gdk_state & c.GDK_ALT_MASK) != 0;
+    // Mod5 (ISO_Level3_Shift / AltGr) counts as Alt — some keyboards report
+    // the right Alt as Mod5 instead of Mod1 (GDK_ALT_MASK).
+    const is_alt = keybinds.isAltPressed(gdk_state);
 
     // Allow function keys (F1-F12) without modifiers; require a modifier for everything else.
     const is_function_key = (keyval >= c.GDK_KEY_F1 and keyval <= c.GDK_KEY_F12);
