@@ -40,6 +40,8 @@ pub const WebPanel = struct {
     height_weight: f64 = 1.0,
     stacked_offset_x: f64 = 0.0,
     ignore_tls_errors: bool = false,
+    flash_step: u8 = 0,
+    flash_timeout: c.guint = 0,
 
     pub fn create(alloc: std.mem.Allocator, url: []const u8) !*WebPanel {
         const id = nextId();
@@ -396,7 +398,23 @@ pub const WebPanel = struct {
     }
 
     pub fn triggerFlash(self: *WebPanel) void {
-        _ = self;
+        if (self.flash_timeout != 0) {
+            _ = c.g_source_remove(self.flash_timeout);
+            self.flash_timeout = 0;
+        }
+        c.gtk_widget_remove_css_class(self.widget, "pane-flash");
+        self.flash_step = 0;
+        advanceFlash(self);
+    }
+
+    /// Apply the focused visual state (CSS class + opacity) without grabbing
+    /// focus or switching the URL stack. Used when the entry or webview gains
+    /// focus so the panel stops rendering as unfocused.
+    pub fn focusVisuals(self: *WebPanel) void {
+        c.gtk_widget_remove_css_class(self.widget, "pane-unfocused");
+        c.gtk_widget_add_css_class(self.widget, "pane-focused");
+        if (@import("config.zig").get().dim_unfocused_panes)
+            c.gtk_widget_set_opacity(@ptrCast(self.webview), 1.0);
     }
 
     pub fn queueResize(self: *WebPanel) void {
@@ -410,19 +428,23 @@ pub const WebPanel = struct {
 
     pub fn navigate(self: *WebPanel, url: []const u8) void {
         if (!isAllowedUrl(url)) return;
+        self.setTlsPolicy(c.WEBKIT_TLS_ERRORS_POLICY_FAIL);
+        self.ignore_tls_errors = false;
         const new_url = self.alloc.dupe(u8, url) catch return;
         self.alloc.free(self.url);
         self.url = new_url;
+        self.loadUrl(url);
         var url_buf: [4096:0]u8 = .{0} ** 4096;
         const len = @min(url.len, 4095);
         @memcpy(url_buf[0..len], url[0..len]);
         url_buf[len] = 0;
-        c.webkit_web_view_load_uri(self.webview, &url_buf);
         c.gtk_editable_set_text(@ptrCast(self.entry), &url_buf);
         self.syncDisplay();
     }
 
     pub fn reload(self: *WebPanel) void {
+        self.setTlsPolicy(c.WEBKIT_TLS_ERRORS_POLICY_FAIL);
+        self.ignore_tls_errors = false;
         c.webkit_web_view_reload(self.webview);
     }
 
@@ -431,11 +453,34 @@ pub const WebPanel = struct {
     }
 
     pub fn back(self: *WebPanel) void {
+        self.setTlsPolicy(c.WEBKIT_TLS_ERRORS_POLICY_FAIL);
+        self.ignore_tls_errors = false;
         c.webkit_web_view_go_back(self.webview);
     }
 
     pub fn forward(self: *WebPanel) void {
+        self.setTlsPolicy(c.WEBKIT_TLS_ERRORS_POLICY_FAIL);
+        self.ignore_tls_errors = false;
         c.webkit_web_view_go_forward(self.webview);
+    }
+
+    /// Copy `url` into a null-terminated stack buffer and start loading it.
+    /// Single home for the buffer/clamp logic that navigate, onDeferredLoad,
+    /// and onTlsErrorResponse all used to duplicate.
+    fn loadUrl(self: *WebPanel, url: []const u8) void {
+        var url_buf: [4096:0]u8 = .{0} ** 4096;
+        const len = @min(url.len, 4095);
+        @memcpy(url_buf[0..len], url[0..len]);
+        url_buf[len] = 0;
+        c.webkit_web_view_load_uri(self.webview, &url_buf);
+    }
+
+    /// Set the session-wide TLS errors policy. Both the "proceed anyway" flow
+    /// and the LOAD_FINISHED reset route through here so the policy value and
+    /// session-retrieval logic live in one place.
+    fn setTlsPolicy(self: *WebPanel, policy: c.WebKitTLSErrorsPolicy) void {
+        const session = c.webkit_web_view_get_network_session(self.webview);
+        c.webkit_network_session_set_tls_errors_policy(session, policy);
     }
 
     pub fn getTitle(self: *WebPanel) []const u8 {
@@ -527,11 +572,7 @@ fn onMap(widget_: ?*c.GtkWidget, user_data: ?*anyopaque) callconv(.c) void {
 fn onDeferredLoad(user_data: ?*anyopaque) callconv(.c) c.gboolean {
     const panel: *WebPanel = @ptrCast(@alignCast(user_data orelse return 0));
     if (!isAllowedUrl(panel.url)) return 0;
-    var url_buf: [4096:0]u8 = .{0} ** 4096;
-    const len = @min(panel.url.len, 4095);
-    @memcpy(url_buf[0..len], panel.url[0..len]);
-    url_buf[len] = 0;
-    c.webkit_web_view_load_uri(panel.webview, &url_buf);
+    panel.loadUrl(panel.url);
     return 0; // remove from idle source
 }
 
@@ -587,8 +628,7 @@ fn onLoadChanged(_: ?*c.WebKitWebView, event: c_int, user_data: ?*anyopaque) cal
             panel.navigating_from_entry = false;
             if (panel.ignore_tls_errors) {
                 panel.ignore_tls_errors = false;
-                const session = c.webkit_web_view_get_network_session(panel.webview);
-                c.webkit_network_session_set_tls_errors_policy(session, c.WEBKIT_TLS_ERRORS_POLICY_FAIL);
+                panel.setTlsPolicy(c.WEBKIT_TLS_ERRORS_POLICY_FAIL);
             }
         },
         else => {},
@@ -599,6 +639,28 @@ fn onProgressChanged(_: ?*c.GObject, _: ?*c.GParamSpec, user_data: ?*anyopaque) 
     const panel: *WebPanel = @ptrCast(@alignCast(user_data orelse return));
     const fraction = c.webkit_web_view_get_estimated_load_progress(panel.webview);
     c.gtk_progress_bar_set_fraction(@ptrCast(panel.progress_bar), fraction);
+}
+
+fn advanceFlash(panel: *WebPanel) void {
+    const flash_on = [_]bool{ false, true, false, true, false };
+    if (panel.flash_step >= flash_on.len) return;
+    if (flash_on[panel.flash_step]) {
+        c.gtk_widget_add_css_class(panel.widget, "pane-flash");
+    } else {
+        c.gtk_widget_remove_css_class(panel.widget, "pane-flash");
+    }
+    panel.flash_step += 1;
+    if (panel.flash_step < flash_on.len) {
+        panel.flash_timeout = c.g_timeout_add(225, @ptrCast(&onFlashStep), @ptrCast(panel));
+    } else {
+        panel.flash_timeout = 0;
+    }
+}
+
+fn onFlashStep(data: c.gpointer) callconv(.c) c.gboolean {
+    const panel: *WebPanel = @ptrCast(@alignCast(data));
+    advanceFlash(panel);
+    return 0;
 }
 
 fn onTlsError(
@@ -652,16 +714,11 @@ fn onTlsErrorResponse(_: *c.AdwAlertDialog, response: [*:0]const u8, data: c.gpo
     if (!std.mem.eql(u8, std.mem.sliceTo(response, 0), "proceed")) return;
 
     // Temporarily ignore TLS errors so the reload succeeds.
-    const session = c.webkit_web_view_get_network_session(ctx.panel.webview);
-    c.webkit_network_session_set_tls_errors_policy(session, c.WEBKIT_TLS_ERRORS_POLICY_IGNORE);
+    ctx.panel.setTlsPolicy(c.WEBKIT_TLS_ERRORS_POLICY_IGNORE);
 
     ctx.panel.ignore_tls_errors = true;
 
-    var url_buf: [4096:0]u8 = [_:0]u8{0} ** 4096;
-    const len = @min(ctx.failing_uri.len, 4095);
-    @memcpy(url_buf[0..len], ctx.failing_uri[0..len]);
-    url_buf[len] = 0;
-    c.webkit_web_view_load_uri(ctx.panel.webview, &url_buf);
+    ctx.panel.loadUrl(ctx.failing_uri);
 }
 
 fn formatTlsErrorFlags(errors: c_uint) []const u8 {
@@ -802,12 +859,30 @@ fn appendEscapedRange(buf: *[2048:0]u8, pos: usize, range: []const u8) usize {
     for (range) |ch| {
         if (p + 8 >= buf.len) break;
         switch (ch) {
-            '<' => { @memcpy(buf[p..][0..4], "&lt;"); p += 4; },
-            '>' => { @memcpy(buf[p..][0..4], "&gt;"); p += 4; },
-            '&' => { @memcpy(buf[p..][0..5], "&amp;"); p += 5; },
-            '"' => { @memcpy(buf[p..][0..6], "&quot;"); p += 6; },
-            '\'' => { @memcpy(buf[p..][0..6], "&apos;"); p += 6; },
-            else => { buf[p] = ch; p += 1; },
+            '<' => {
+                @memcpy(buf[p..][0..4], "&lt;");
+                p += 4;
+            },
+            '>' => {
+                @memcpy(buf[p..][0..4], "&gt;");
+                p += 4;
+            },
+            '&' => {
+                @memcpy(buf[p..][0..5], "&amp;");
+                p += 5;
+            },
+            '"' => {
+                @memcpy(buf[p..][0..6], "&quot;");
+                p += 6;
+            },
+            '\'' => {
+                @memcpy(buf[p..][0..6], "&apos;");
+                p += 6;
+            },
+            else => {
+                buf[p] = ch;
+                p += 1;
+            },
         }
     }
     return p;

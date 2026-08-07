@@ -282,8 +282,8 @@ fn initDefaults() void {
     // Browser
     set(.new_browser_panel, .{ .key = c.GDK_KEY_B, .ctrl = true, .alt = true });
     set(.new_browser_tab, .{ .key = c.GDK_KEY_E, .ctrl = true, .alt = true });
-    set(.browser_back, .{ .key = c.GDK_KEY_Left, .ctrl = true, .alt = true });
-    set(.browser_forward, .{ .key = c.GDK_KEY_Right, .ctrl = true, .alt = true });
+    set(.browser_back, .{ .key = c.GDK_KEY_Left, .ctrl = true, .shift = true, .alt = true });
+    set(.browser_forward, .{ .key = c.GDK_KEY_Right, .ctrl = true, .shift = true, .alt = true });
     set(.browser_reload, .{ .key = c.GDK_KEY_R, .ctrl = true });
     set(.browser_focus_bar, .{ .key = c.GDK_KEY_L, .ctrl = true });
     set(.toggle_browser_focus_mode, .{ .key = c.GDK_KEY_F, .ctrl = true, .alt = true });
@@ -587,8 +587,10 @@ pub fn executeAction(action: Action, state: *Window.WindowState) c.gboolean {
         .toggle_notifications => state.toggleNotificationPopover(),
         .jump_to_unread => state.jumpToUnread(),
         .flash_focused => {
-            const pane = getFocusedPane(state) orelse return 0;
-            pane.triggerFlash();
+            const ws = state.activeWorkspace() orelse return 0;
+            const group = ws.focusedGroup() orelse return 0;
+            const panel = group.getActivePanel() orelse return 0;
+            panel.triggerFlash();
         },
         .rename_workspace => state.renameWorkspace(),
         .toggle_pin => state.togglePinWorkspace(),

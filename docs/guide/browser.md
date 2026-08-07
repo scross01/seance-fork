@@ -16,14 +16,14 @@ A new browser panel opens in its own column to the right of the active pane. The
 
 Click the styled URL display to switch to edit mode. Type a URL and press Enter to navigate. Click elsewhere or press Escape to return to the styled display.
 
-The URL bar accepts any scheme that WebKit supports. Séance allows `http`, `https`, `file`, `data`, and `about` URLs, plus `localhost` and private network addresses for local development.
+The URL bar accepts any scheme that WebKit supports. Séance allows `http`, `https`, and `about` URLs (including `localhost` and private network addresses for local development); `file:`, `data:`, `javascript:`, and `blob:` URLs are rejected.
 
 ## Navigation
 
 | Action | Shortcut |
 |--------|----------|
-| Back | `Ctrl+Alt+Left` |
-| Forward | `Ctrl+Alt+Right` |
+| Back | `Ctrl+Shift+Alt+Left` |
+| Forward | `Ctrl+Shift+Alt+Right` |
 | Reload | `Ctrl+R` |
 | Focus URL bar | `Ctrl+L` |
 

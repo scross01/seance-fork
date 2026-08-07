@@ -48,15 +48,15 @@ Séance keybindings can be customized in `~/.config/seance/config.toml` under `[
 |--------|-----------------|
 | New browser panel | `Ctrl+Alt+B` |
 | New browser tab | `Ctrl+Alt+E` |
-| Browser back | `Ctrl+Alt+Left` |
-| Browser forward | `Ctrl+Alt+Right` |
+| Browser back | `Ctrl+Shift+Alt+Left` |
+| Browser forward | `Ctrl+Shift+Alt+Right` |
 | Browser reload | `Ctrl+R` |
 | Focus URL bar | `Ctrl+L` |
 | Toggle browser focus mode | `Ctrl+Alt+F` |
 | Open developer tools | `Ctrl+Shift+I` |
 
 ::: tip
-Browser back/forward (`Ctrl+Alt+Left/Right`) take priority over expel-pane when a browser panel is in the workspace. Use the command palette to expel if the keybinding is intercepted.
+Browser back/forward use `Ctrl+Shift+Alt+Left/Right` so they don't collide with expel-pane (`Ctrl+Alt+Left/Right`). Both work regardless of which panel type is focused.
 :::
 
 ## Resize

@@ -1009,9 +1009,7 @@ fn cmdResizeColumn(ctx: Ctx) u8 {
     var mode: ?[]const u8 = null;
     var ri: usize = 0;
     while (ri < ctx.rest.len) : (ri += 1) {
-        if (eql(ctx.rest[ri], "--wider")) mode = "wider"
-        else if (eql(ctx.rest[ri], "--narrower")) mode = "narrower"
-        else if (eql(ctx.rest[ri], "--maximize")) mode = "maximize";
+        if (eql(ctx.rest[ri], "--wider")) mode = "wider" else if (eql(ctx.rest[ri], "--narrower")) mode = "narrower" else if (eql(ctx.rest[ri], "--maximize")) mode = "maximize";
     }
     const m = mode orelse {
         werr("usage: resize-column --wider|--narrower|--maximize [--workspace N]\n");
@@ -1041,8 +1039,7 @@ fn cmdResizeRow(ctx: Ctx) u8 {
     var mode: ?[]const u8 = null;
     var ri: usize = 0;
     while (ri < ctx.rest.len) : (ri += 1) {
-        if (eql(ctx.rest[ri], "--taller")) mode = "taller"
-        else if (eql(ctx.rest[ri], "--shorter")) mode = "shorter";
+        if (eql(ctx.rest[ri], "--taller")) mode = "taller" else if (eql(ctx.rest[ri], "--shorter")) mode = "shorter";
     }
     const m = mode orelse {
         werr("usage: resize-row --taller|--shorter [--surface N] [--workspace N]\n");
@@ -1525,10 +1522,7 @@ fn cmdBrowserNavigate(ctx: Ctx) u8 {
         return 1;
     };
     const escaped = jsonEscapeAlloc(ctx.alloc, u);
-    const params = if (panel_id) |pid|
-        std.fmt.allocPrint(ctx.alloc, "{{\"panel_id\":{d},\"url\":\"{s}\"}}", .{ pid, escaped }) catch return 1
-    else
-        std.fmt.allocPrint(ctx.alloc, "{{\"url\":\"{s}\"}}", .{escaped}) catch return 1;
+    const params = std.fmt.allocPrint(ctx.alloc, "{{\"panel_id\":{d},\"url\":\"{s}\"}}", .{ panel_id orelse 0, escaped }) catch return 1;
     _ = apiCall(ctx.alloc, ctx.socket_path, "browser.navigate", params) catch |e| {
         printSocketError(e);
         return 1;

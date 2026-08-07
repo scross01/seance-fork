@@ -1250,11 +1250,7 @@ pub const SocketServer = struct {
             if (plus == 0) break;
             const name = rest[0..plus];
             const bit: c_uint =
-                if (eql(name, "ctrl") or eql(name, "control")) c.GHOSTTY_MODS_CTRL
-                else if (eql(name, "shift")) c.GHOSTTY_MODS_SHIFT
-                else if (eql(name, "alt") or eql(name, "option")) c.GHOSTTY_MODS_ALT
-                else if (eql(name, "super") or eql(name, "meta") or eql(name, "cmd") or eql(name, "command")) c.GHOSTTY_MODS_SUPER
-                else break;
+                if (eql(name, "ctrl") or eql(name, "control")) c.GHOSTTY_MODS_CTRL else if (eql(name, "shift")) c.GHOSTTY_MODS_SHIFT else if (eql(name, "alt") or eql(name, "option")) c.GHOSTTY_MODS_ALT else if (eql(name, "super") or eql(name, "meta") or eql(name, "cmd") or eql(name, "command")) c.GHOSTTY_MODS_SUPER else break;
             mods |= bit;
             rest = rest[plus + 1 ..];
         }
@@ -1326,21 +1322,48 @@ pub const SocketServer = struct {
 
     fn letterKeycode(ch: u8) ?u32 {
         return switch (ch) {
-            'a' => 0x26, 'b' => 0x38, 'c' => 0x36, 'd' => 0x28,
-            'e' => 0x1a, 'f' => 0x29, 'g' => 0x2a, 'h' => 0x2b,
-            'i' => 0x1f, 'j' => 0x2c, 'k' => 0x2d, 'l' => 0x2e,
-            'm' => 0x3a, 'n' => 0x39, 'o' => 0x20, 'p' => 0x21,
-            'q' => 0x18, 'r' => 0x1b, 's' => 0x27, 't' => 0x1c,
-            'u' => 0x1e, 'v' => 0x37, 'w' => 0x19, 'x' => 0x35,
-            'y' => 0x1d, 'z' => 0x34,
+            'a' => 0x26,
+            'b' => 0x38,
+            'c' => 0x36,
+            'd' => 0x28,
+            'e' => 0x1a,
+            'f' => 0x29,
+            'g' => 0x2a,
+            'h' => 0x2b,
+            'i' => 0x1f,
+            'j' => 0x2c,
+            'k' => 0x2d,
+            'l' => 0x2e,
+            'm' => 0x3a,
+            'n' => 0x39,
+            'o' => 0x20,
+            'p' => 0x21,
+            'q' => 0x18,
+            'r' => 0x1b,
+            's' => 0x27,
+            't' => 0x1c,
+            'u' => 0x1e,
+            'v' => 0x37,
+            'w' => 0x19,
+            'x' => 0x35,
+            'y' => 0x1d,
+            'z' => 0x34,
             else => null,
         };
     }
 
     fn digitKeycode(ch: u8) ?u32 {
         return switch (ch) {
-            '1' => 0x0a, '2' => 0x0b, '3' => 0x0c, '4' => 0x0d, '5' => 0x0e,
-            '6' => 0x0f, '7' => 0x10, '8' => 0x11, '9' => 0x12, '0' => 0x13,
+            '1' => 0x0a,
+            '2' => 0x0b,
+            '3' => 0x0c,
+            '4' => 0x0d,
+            '5' => 0x0e,
+            '6' => 0x0f,
+            '7' => 0x10,
+            '8' => 0x11,
+            '9' => 0x12,
+            '0' => 0x13,
             else => null,
         };
     }
@@ -1366,9 +1389,18 @@ pub const SocketServer = struct {
         if (name.len < 2 or name[0] != 'f') return null;
         const n = std.fmt.parseInt(u8, name[1..], 10) catch return null;
         return switch (n) {
-            1 => 0x43, 2 => 0x44, 3 => 0x45, 4 => 0x46, 5 => 0x47,
-            6 => 0x48, 7 => 0x49, 8 => 0x4a, 9 => 0x4b, 10 => 0x4c,
-            11 => 0x5f, 12 => 0x60,
+            1 => 0x43,
+            2 => 0x44,
+            3 => 0x45,
+            4 => 0x46,
+            5 => 0x47,
+            6 => 0x48,
+            7 => 0x49,
+            8 => 0x4a,
+            9 => 0x4b,
+            10 => 0x4c,
+            11 => 0x5f,
+            12 => 0x60,
             else => null,
         };
     }
@@ -2112,6 +2144,30 @@ pub const SocketServer = struct {
         return null;
     }
 
+    /// Resolve the browser panel for a command. An explicit panel_id is used
+    /// when nonzero; otherwise (missing or 0) fall back to the focused browser
+    /// panel in the active workspace so commands like `browser.navigate` and
+    /// `browser.reload` work without a --panel flag.
+    fn resolveBrowserPanel(panel_id: u64) ?*@import("web_panel.zig").WebPanel {
+        if (panel_id != 0) return findBrowserPanel(panel_id);
+
+        const state = getActiveState() orelse return null;
+        const ws = state.activeWorkspace() orelse return null;
+        if (ws.focusedGroup()) |grp| {
+            if (grp.getActivePanel()) |p| {
+                if (p.asWebPanel()) |wp| return wp;
+            }
+        }
+        for (ws.columns.items) |col| {
+            for (col.groups.items) |grp| {
+                for (grp.panels.items) |p| {
+                    if (p.asWebPanel()) |wp| return wp;
+                }
+            }
+        }
+        return null;
+    }
+
     fn handleBrowserOpen(params: ?std.json.Value, id: []const u8, buf: []u8) []const u8 {
         const url = getParamString(params, "url") orelse
             return writeJsonError(buf, id, "invalid_params", "Missing 'url' parameter");
@@ -2140,12 +2196,11 @@ pub const SocketServer = struct {
     }
 
     fn handleBrowserNavigate(params: ?std.json.Value, id: []const u8, buf: []u8) []const u8 {
-        const panel_id = getParamInt(params, "panel_id") orelse
-            return writeJsonError(buf, id, "invalid_params", "Missing 'panel_id' parameter");
+        const panel_id = getParamInt(params, "panel_id") orelse 0;
         const url = getParamString(params, "url") orelse
             return writeJsonError(buf, id, "invalid_params", "Missing 'url' parameter");
 
-        const wp = findBrowserPanel(panel_id) orelse
+        const wp = resolveBrowserPanel(panel_id) orelse
             return writeJsonError(buf, id, "not_found", "Browser panel not found");
 
         if (!@import("web_panel.zig").isAllowedUrl(url))
@@ -2162,10 +2217,9 @@ pub const SocketServer = struct {
     }
 
     fn handleBrowserReload(params: ?std.json.Value, id: []const u8, buf: []u8) []const u8 {
-        const panel_id = getParamInt(params, "panel_id") orelse
-            return writeJsonError(buf, id, "invalid_params", "Missing 'panel_id' parameter");
+        const panel_id = getParamInt(params, "panel_id") orelse 0;
 
-        const wp = findBrowserPanel(panel_id) orelse
+        const wp = resolveBrowserPanel(panel_id) orelse
             return writeJsonError(buf, id, "not_found", "Browser panel not found");
 
         wp.reload();
@@ -2173,10 +2227,9 @@ pub const SocketServer = struct {
     }
 
     fn handleBrowserBack(params: ?std.json.Value, id: []const u8, buf: []u8) []const u8 {
-        const panel_id = getParamInt(params, "panel_id") orelse
-            return writeJsonError(buf, id, "invalid_params", "Missing 'panel_id' parameter");
+        const panel_id = getParamInt(params, "panel_id") orelse 0;
 
-        const wp = findBrowserPanel(panel_id) orelse
+        const wp = resolveBrowserPanel(panel_id) orelse
             return writeJsonError(buf, id, "not_found", "Browser panel not found");
 
         wp.back();
@@ -2184,10 +2237,9 @@ pub const SocketServer = struct {
     }
 
     fn handleBrowserForward(params: ?std.json.Value, id: []const u8, buf: []u8) []const u8 {
-        const panel_id = getParamInt(params, "panel_id") orelse
-            return writeJsonError(buf, id, "invalid_params", "Missing 'panel_id' parameter");
+        const panel_id = getParamInt(params, "panel_id") orelse 0;
 
-        const wp = findBrowserPanel(panel_id) orelse
+        const wp = resolveBrowserPanel(panel_id) orelse
             return writeJsonError(buf, id, "not_found", "Browser panel not found");
 
         wp.forward();
@@ -2195,10 +2247,9 @@ pub const SocketServer = struct {
     }
 
     fn handleBrowserGetUrl(params: ?std.json.Value, id: []const u8, buf: []u8) []const u8 {
-        const panel_id = getParamInt(params, "panel_id") orelse
-            return writeJsonError(buf, id, "invalid_params", "Missing 'panel_id' parameter");
+        const panel_id = getParamInt(params, "panel_id") orelse 0;
 
-        const wp = findBrowserPanel(panel_id) orelse
+        const wp = resolveBrowserPanel(panel_id) orelse
             return writeJsonError(buf, id, "not_found", "Browser panel not found");
 
         const uri = c.webkit_web_view_get_uri(wp.webview);
@@ -2251,10 +2302,9 @@ pub const SocketServer = struct {
     }
 
     fn handleBrowserGetTitle(params: ?std.json.Value, id: []const u8, buf: []u8) []const u8 {
-        const panel_id = getParamInt(params, "panel_id") orelse
-            return writeJsonError(buf, id, "invalid_params", "Missing 'panel_id' parameter");
+        const panel_id = getParamInt(params, "panel_id") orelse 0;
 
-        const wp = findBrowserPanel(panel_id) orelse
+        const wp = resolveBrowserPanel(panel_id) orelse
             return writeJsonError(buf, id, "not_found", "Browser panel not found");
 
         const title_str: []const u8 = if (c.webkit_web_view_get_title(wp.webview)) |t|
@@ -2271,10 +2321,9 @@ pub const SocketServer = struct {
     }
 
     fn handleBrowserGetZoom(params: ?std.json.Value, id: []const u8, buf: []u8) []const u8 {
-        const panel_id = getParamInt(params, "panel_id") orelse
-            return writeJsonError(buf, id, "invalid_params", "Missing 'panel_id' parameter");
+        const panel_id = getParamInt(params, "panel_id") orelse 0;
 
-        const wp = findBrowserPanel(panel_id) orelse
+        const wp = resolveBrowserPanel(panel_id) orelse
             return writeJsonError(buf, id, "not_found", "Browser panel not found");
 
         const level = c.webkit_web_view_get_zoom_level(wp.webview);
@@ -2285,12 +2334,11 @@ pub const SocketServer = struct {
     }
 
     fn handleBrowserSetZoom(params: ?std.json.Value, id: []const u8, buf: []u8) []const u8 {
-        const panel_id = getParamInt(params, "panel_id") orelse
-            return writeJsonError(buf, id, "invalid_params", "Missing 'panel_id' parameter");
+        const panel_id = getParamInt(params, "panel_id") orelse 0;
         const level_val = getParamFloat(params, "level") orelse
             return writeJsonError(buf, id, "invalid_params", "Missing 'level' parameter");
 
-        const wp = findBrowserPanel(panel_id) orelse
+        const wp = resolveBrowserPanel(panel_id) orelse
             return writeJsonError(buf, id, "not_found", "Browser panel not found");
 
         c.webkit_web_view_set_zoom_level(wp.webview, level_val);
@@ -2301,10 +2349,9 @@ pub const SocketServer = struct {
     }
 
     fn handleBrowserIsLoading(params: ?std.json.Value, id: []const u8, buf: []u8) []const u8 {
-        const panel_id = getParamInt(params, "panel_id") orelse
-            return writeJsonError(buf, id, "invalid_params", "Missing 'panel_id' parameter");
+        const panel_id = getParamInt(params, "panel_id") orelse 0;
 
-        const wp = findBrowserPanel(panel_id) orelse
+        const wp = resolveBrowserPanel(panel_id) orelse
             return writeJsonError(buf, id, "not_found", "Browser panel not found");
 
         const loading = c.webkit_web_view_is_loading(wp.webview) != 0;
@@ -2315,10 +2362,9 @@ pub const SocketServer = struct {
     }
 
     fn handleBrowserGetProgress(params: ?std.json.Value, id: []const u8, buf: []u8) []const u8 {
-        const panel_id = getParamInt(params, "panel_id") orelse
-            return writeJsonError(buf, id, "invalid_params", "Missing 'panel_id' parameter");
+        const panel_id = getParamInt(params, "panel_id") orelse 0;
 
-        const wp = findBrowserPanel(panel_id) orelse
+        const wp = resolveBrowserPanel(panel_id) orelse
             return writeJsonError(buf, id, "not_found", "Browser panel not found");
 
         const progress = c.webkit_web_view_get_estimated_load_progress(wp.webview);
@@ -2329,12 +2375,11 @@ pub const SocketServer = struct {
     }
 
     fn handleBrowserEval(params: ?std.json.Value, id: []const u8, buf: []u8) []const u8 {
-        const panel_id = getParamInt(params, "panel_id") orelse
-            return writeJsonError(buf, id, "invalid_params", "Missing 'panel_id' parameter");
+        const panel_id = getParamInt(params, "panel_id") orelse 0;
         const script = getParamString(params, "script") orelse
             return writeJsonError(buf, id, "invalid_params", "Missing 'script' parameter");
 
-        const wp = findBrowserPanel(panel_id) orelse
+        const wp = resolveBrowserPanel(panel_id) orelse
             return writeJsonError(buf, id, "not_found", "Browser panel not found");
 
         // Evaluate JS synchronously: call async API then pump glib main loop.
@@ -2348,7 +2393,7 @@ pub const SocketServer = struct {
 
             fn onEvalFinished(webview_ptr: ?*anyopaque, result_ptr: ?*c.GAsyncResult, _: c.gpointer) callconv(.c) void {
                 var err: ?*c.GError = null;
-                const jsc_val = c.webkit_web_view_evaluate_javascript_finish(@alignCast(@ptrCast(webview_ptr)), result_ptr, &err);
+                const jsc_val = c.webkit_web_view_evaluate_javascript_finish(@ptrCast(@alignCast(webview_ptr)), result_ptr, &err);
                 defer {
                     if (jsc_val != null) c.g_object_unref(@ptrCast(jsc_val));
                     if (err != null) c.g_error_free(err.?);
@@ -2407,10 +2452,9 @@ pub const SocketServer = struct {
     }
 
     fn handleBrowserClose(params: ?std.json.Value, id: []const u8, buf: []u8) []const u8 {
-        const panel_id = getParamInt(params, "panel_id") orelse
-            return writeJsonError(buf, id, "invalid_params", "Missing 'panel_id' parameter");
+        const panel_id = getParamInt(params, "panel_id") orelse 0;
 
-        const wp = findBrowserPanel(panel_id) orelse
+        const wp = resolveBrowserPanel(panel_id) orelse
             return writeJsonError(buf, id, "not_found", "Browser panel not found");
 
         // Trigger close via the panel's close callback
@@ -2419,7 +2463,6 @@ pub const SocketServer = struct {
         }
         return writeJsonOk(buf, id, "{}");
     }
-
 };
 
 fn copySlice(dest: []u8, src: []const u8) usize {

@@ -446,6 +446,21 @@ pub const Workspace = struct {
 
     /// Create a new column with a browser panel to the right of the active column.
     pub fn addBrowserColumn(self: *Workspace, url: []const u8) !*PaneGroup {
+        const insert_idx = @min(self.focused_column + 1, self.columns.items.len);
+        return self.createBrowserColumnAt(insert_idx, url);
+    }
+
+    /// Like addBrowserColumn, but inserts the new column to the right of a
+    /// specific column index. Used when opening a URL from a terminal.
+    pub fn addBrowserColumnRightOf(self: *Workspace, col_idx: usize, url: []const u8) !*PaneGroup {
+        const insert_idx = @min(col_idx + 1, self.columns.items.len);
+        return self.createBrowserColumnAt(insert_idx, url);
+    }
+
+    /// Shared setup for opening a browser panel in a new column at `insert_idx`:
+    /// create the WebPanel, wire callbacks, insert the column, enter stacked
+    /// mode, and focus the panel.
+    fn createBrowserColumnAt(self: *Workspace, insert_idx: usize, url: []const u8) !*PaneGroup {
         const grp = try PaneGroup.createEmpty(self.alloc, self.id);
         errdefer grp.destroy();
 
@@ -476,7 +491,6 @@ pub const Workspace = struct {
         col.layout_mode = .stacked;
         col.stacked_anim = 1.0;
 
-        const insert_idx = @min(self.focused_column + 1, self.columns.items.len);
         try self.columns.insert(self.alloc, insert_idx, col);
         self.focused_column = insert_idx;
         self.panToFocusedColumn();
@@ -486,54 +500,6 @@ pub const Workspace = struct {
         grp.enterStackedMode(self.fixed);
 
         // Hide initially
-        c.gtk_widget_set_opacity(widget, 0);
-        for (grp.panels.items) |p| {
-            c.gtk_widget_set_opacity(p.getWidget(), 0);
-        }
-
-        self.applyLayout();
-        wp.focus();
-        return grp;
-    }
-
-    /// Like addBrowserColumn, but inserts the new column to the right of a
-    /// specific column index. Used when opening a URL from a terminal.
-    pub fn addBrowserColumnRightOf(self: *Workspace, col_idx: usize, url: []const u8) !*PaneGroup {
-        const grp = try PaneGroup.createEmpty(self.alloc, self.id);
-        errdefer grp.destroy();
-
-        const wp = try WebPanel.create(self.alloc, url);
-        const panel = Panel{ .webkit = wp };
-        try grp.addPanel(panel);
-
-        wp.setCloseCallback(&closeBrowserColumn, @ptrCast(self));
-        wp.setFocusCallback(&onBrowserEntryFocus, @ptrCast(self));
-
-        if (self.liveColumnCount() == 1) {
-            for (self.columns.items) |*existing| {
-                if (!existing.closing) {
-                    existing.width = Column.max_width;
-                    break;
-                }
-            }
-        }
-
-        var col = try Column.init(self.alloc, Column.default_width, grp);
-        errdefer col.deinit(self.alloc);
-
-        col.open_anim = 0.0;
-        col.layout_mode = .stacked;
-        col.stacked_anim = 1.0;
-
-        const insert_idx = @min(col_idx + 1, self.columns.items.len);
-        try self.columns.insert(self.alloc, insert_idx, col);
-        self.focused_column = insert_idx;
-        self.panToFocusedColumn();
-
-        const widget = grp.getWidget();
-        c.gtk_fixed_put(@ptrCast(self.fixed), widget, 0, 0);
-        grp.enterStackedMode(self.fixed);
-
         c.gtk_widget_set_opacity(widget, 0);
         for (grp.panels.items) |p| {
             c.gtk_widget_set_opacity(p.getWidget(), 0);
@@ -557,6 +523,10 @@ pub const Workspace = struct {
 
         wp.setCloseCallback(&closeBrowserPanel, @ptrCast(self));
         wp.setFocusCallback(&onBrowserEntryFocus, @ptrCast(self));
+
+        // Keep the column's active_at_switch in sync with the group's active
+        // panel so layoutStackedGroup treats the new tab as active.
+        col.active_at_switch = grp.active_panel;
 
         self.applyLayout();
         wp.focus();
@@ -616,6 +586,7 @@ pub const Workspace = struct {
                             self.focused_column = i;
                             self.panToFocusedColumn();
                             self.applyLayout();
+                            wp.focusVisuals();
                             return;
                         }
                     }
@@ -1864,7 +1835,8 @@ pub const Workspace = struct {
         var cwd_buf: [Pane.cwd_cap + 1]u8 = undefined;
         const cwd_z: ?[*:0]const u8 = if (self.focusedGroup()) |grp|
             if (grp.focusedTerminalPane()) |pane| pane.cwdZ(&cwd_buf) else null
-        else null;
+        else
+            null;
 
         if (self.focusedGroup()) |old_grp| old_grp.unfocus();
         const grp = try self.addColumn(cwd_z);
@@ -2404,7 +2376,8 @@ pub const Workspace = struct {
         var cwd_buf: [Pane.cwd_cap + 1]u8 = undefined;
         const cwd_z: ?[*:0]const u8 = if (group.focusedTerminalPane()) |pane|
             pane.cwdZ(&cwd_buf)
-        else null;
+        else
+            null;
 
         _ = try group.newPanel(cwd_z);
         // Trigger layout update for stacked mode
