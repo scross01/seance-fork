@@ -21,6 +21,11 @@ var key_ctrl_ref: ?*c.GtkEventController = null;
 var dialog_widget_ref: ?*c.GtkWidget = null;
 var shortcut_buttons: [keybinds.Action.count]?*c.GtkWidget = [_]?*c.GtkWidget{null} ** keybinds.Action.count;
 
+// Pending shortcut while the "already in use" conflict dialog is open
+var pending_action: ?keybinds.Action = null;
+var pending_keybind: ?keybinds.Keybind = null;
+var pending_conflict: ?keybinds.Action = null;
+
 // Widget references for change callbacks
 var w: Widgets = .{};
 
@@ -586,7 +591,7 @@ const shortcut_defs = [_]ShortcutDef{
 fn buildKeyboardSection(page: *c.GtkWidget, _: *const config_mod.Config) void {
     // Shortcuts list
     const g1 = newGroup("Keyboard Shortcuts");
-    c.adw_preferences_group_set_description(@as(*c.AdwPreferencesGroup, @ptrCast(g1)), "Click a shortcut value to record a new binding. Set to \xe2\x80\x98unset\xe2\x80\x99 in config to disable.");
+    c.adw_preferences_group_set_description(@as(*c.AdwPreferencesGroup, @ptrCast(g1)), "Click a shortcut value to record a new binding. Set to \xe2\x80\x98unset\xe2\x80\x99 in config to disable. Shortcuts already assigned to another action are flagged before applying.");
 
     for (shortcut_defs) |def| {
         const row = c.adw_action_row_new();
@@ -620,6 +625,18 @@ fn buildKeyboardSection(page: *c.GtkWidget, _: *const config_mod.Config) void {
 
         c.adw_action_row_add_suffix(@as(*c.AdwActionRow, @ptrCast(row)), hbox);
         c.adw_preferences_group_add(@as(*c.AdwPreferencesGroup, @ptrCast(g1)), @as(*c.GtkWidget, @ptrCast(row)));
+    }
+
+    // Reset to defaults button
+    {
+        const row = c.adw_action_row_new();
+        const btn = c.gtk_button_new_with_label("Reset to Defaults");
+        c.gtk_widget_add_css_class(@as(*c.GtkWidget, @ptrCast(btn)), "destructive-action");
+        c.gtk_widget_set_halign(@as(*c.GtkWidget, @ptrCast(btn)), c.GTK_ALIGN_CENTER);
+        c.gtk_widget_set_valign(@as(*c.GtkWidget, @ptrCast(btn)), c.GTK_ALIGN_CENTER);
+        c.adw_action_row_add_suffix(@as(*c.AdwActionRow, @ptrCast(row)), @as(*c.GtkWidget, @ptrCast(btn)));
+        c.adw_preferences_group_add(@as(*c.AdwPreferencesGroup, @ptrCast(g1)), @as(*c.GtkWidget, @ptrCast(row)));
+        _ = c.g_signal_connect_data(@as(c.gpointer, @ptrCast(btn)), "clicked", @as(c.GCallback, @ptrCast(&onResetKeybindsClicked)), null, null, 0);
     }
 
     addToPage(page, g1);
@@ -968,6 +985,9 @@ fn onShortcutButtonClicked(button: *c.GtkButton, _: c.gpointer) callconv(.c) voi
     for (shortcut_defs) |def| {
         if (shortcut_buttons[@intFromEnum(def.action)] == btn_widget) {
             // Start recording
+            pending_action = null;
+            pending_keybind = null;
+            pending_conflict = null;
             recording_action = def.action;
             recording_button = btn_widget;
             keybinds.recording_shortcut = true;
@@ -1040,6 +1060,13 @@ fn onSettingsKeyPress(
         .alt = is_alt,
         .enabled = true,
     };
+
+    // Refuse to silently steal a shortcut from another action — ask first.
+    if (keybinds.findConflict(action, kb)) |conflict| {
+        showConflictDialog(action, conflict, kb);
+        return 1;
+    }
+
     keybinds.setBinding(action, kb);
     updateShortcutButtonLabel(action);
 
@@ -1057,6 +1084,110 @@ fn cancelRecording() void {
     recording_action = null;
     recording_button = null;
     keybinds.recording_shortcut = false;
+}
+
+fn shortcutLabel(action: keybinds.Action) []const u8 {
+    for (shortcut_defs) |def| {
+        if (def.action == action) return std.mem.span(def.label);
+    }
+    return "";
+}
+
+/// Show a warning when the recorded shortcut is already assigned to another
+/// action, offering to reassign it (unbinding the other action) or cancel.
+fn showConflictDialog(action: keybinds.Action, conflict: keybinds.Action, kb: keybinds.Keybind) void {
+    // Bail out before touching any state if we can't present the dialog.
+    const window = win orelse {
+        cancelRecording();
+        return;
+    };
+
+    var combo_buf: [64]u8 = undefined;
+    const combo_len = keybinds.displayKeybind(kb, &combo_buf);
+    const combo: []const u8 = if (combo_len > 0) combo_buf[0..combo_len] else "This shortcut";
+    const conflict_label = shortcutLabel(conflict);
+    const action_label = shortcutLabel(action);
+
+    var msg_buf: [256:0]u8 = [_:0]u8{0} ** 256;
+    _ = std.fmt.bufPrint(&msg_buf, "\"{s}\" is already assigned to {s}. Reassign it to {s}?", .{ combo, conflict_label, action_label }) catch {
+        cancelRecording();
+        return;
+    };
+
+    pending_action = action;
+    pending_keybind = kb;
+    pending_conflict = conflict;
+    // Stop recording while the dialog is open so keypresses don't cancel it.
+    recording_action = null;
+    recording_button = null;
+    keybinds.recording_shortcut = false;
+
+    const dialog = c.adw_alert_dialog_new("Shortcut Already in Use", &msg_buf);
+    c.adw_alert_dialog_add_response(@as(*c.AdwAlertDialog, @ptrCast(dialog)), "cancel", "Cancel");
+    c.adw_alert_dialog_add_response(@as(*c.AdwAlertDialog, @ptrCast(dialog)), "reassign", "Reassign");
+    c.adw_alert_dialog_set_response_appearance(@as(*c.AdwAlertDialog, @ptrCast(dialog)), "reassign", c.ADW_RESPONSE_SUGGESTED);
+    c.adw_alert_dialog_set_default_response(@as(*c.AdwAlertDialog, @ptrCast(dialog)), "cancel");
+    c.adw_alert_dialog_set_close_response(@as(*c.AdwAlertDialog, @ptrCast(dialog)), "cancel");
+
+    _ = c.g_signal_connect_data(@as(c.gpointer, @ptrCast(dialog)), "response", @as(c.GCallback, @ptrCast(&onConflictResponse)), null, null, 0);
+
+    c.adw_dialog_present(@as(*c.AdwDialog, @ptrCast(dialog)), window);
+}
+
+fn onConflictResponse(_: *c.AdwAlertDialog, response: [*:0]const u8, _: c.gpointer) callconv(.c) void {
+    const action = pending_action orelse return;
+    const conflict = pending_conflict orelse return;
+    const kb = pending_keybind orelse return;
+
+    if (std.mem.eql(u8, std.mem.sliceTo(response, 0), "reassign")) {
+        keybinds.setBinding(conflict, .{ .enabled = false });
+        keybinds.setBinding(action, kb);
+        updateShortcutButtonLabel(conflict);
+        updateShortcutButtonLabel(action);
+        saveAndReload();
+    } else {
+        // Cancelled — restore the original label on the shortcut button.
+        updateShortcutButtonLabel(action);
+    }
+
+    pending_action = null;
+    pending_keybind = null;
+    pending_conflict = null;
+}
+
+fn onResetKeybindsClicked(_: *c.GtkButton, _: c.gpointer) callconv(.c) void {
+    // Abandon any in-progress recording so the next keypress can't overwrite
+    // a freshly reset binding.
+    cancelRecording();
+
+    const dialog = c.adw_alert_dialog_new("Reset keyboard shortcuts to defaults?", "All custom keybindings will be replaced with the defaults and your saved keybind overrides will be cleared.");
+    c.adw_alert_dialog_add_response(@as(*c.AdwAlertDialog, @ptrCast(dialog)), "cancel", "Cancel");
+    c.adw_alert_dialog_add_response(@as(*c.AdwAlertDialog, @ptrCast(dialog)), "reset", "Reset");
+    c.adw_alert_dialog_set_response_appearance(@as(*c.AdwAlertDialog, @ptrCast(dialog)), "reset", c.ADW_RESPONSE_DESTRUCTIVE);
+    c.adw_alert_dialog_set_default_response(@as(*c.AdwAlertDialog, @ptrCast(dialog)), "cancel");
+    c.adw_alert_dialog_set_close_response(@as(*c.AdwAlertDialog, @ptrCast(dialog)), "cancel");
+
+    _ = c.g_signal_connect_data(@as(c.gpointer, @ptrCast(dialog)), "response", @as(c.GCallback, @ptrCast(&onResetKeybindsResponse)), null, null, 0);
+
+    if (win) |window| {
+        c.adw_dialog_present(@as(*c.AdwDialog, @ptrCast(dialog)), window);
+    }
+}
+
+fn onResetKeybindsResponse(_: *c.AdwAlertDialog, response: [*:0]const u8, _: c.gpointer) callconv(.c) void {
+    if (!std.mem.eql(u8, std.mem.sliceTo(response, 0), "reset")) return;
+
+    // Restore the compiled-in defaults (default_config.toml's [keybinds]
+    // section only holds commented examples — the real defaults live here).
+    keybinds.resetToDefaults();
+
+    // Refresh every shortcut button label.
+    for (shortcut_defs) |def| {
+        updateShortcutButtonLabel(def.action);
+    }
+
+    // Rewrite the saved config with the default bindings and reload.
+    saveAndReload();
 }
 
 fn updateShortcutButtonLabel(action: keybinds.Action) void {
@@ -1241,6 +1372,9 @@ fn onDialogClosed(_: *c.AdwDialog, _: c.gpointer) callconv(.c) void {
     recording_action = null;
     recording_button = null;
     keybinds.recording_shortcut = false;
+    pending_action = null;
+    pending_keybind = null;
+    pending_conflict = null;
     w = .{};
     shortcut_buttons = [_]?*c.GtkWidget{null} ** keybinds.Action.count;
 }

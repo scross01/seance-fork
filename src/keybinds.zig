@@ -338,6 +338,32 @@ fn set(action: Action, kb: Keybind) void {
     bindings[@intFromEnum(action)] = kb;
 }
 
+/// True if two keybinds occupy the same key + modifier combination.
+/// Letter case of the stored key is ignored: GDK reports lowercase keyvals
+/// when Shift is not held (ctrl+alt+b arrives as 0x62 'b'), while bindings
+/// may store the uppercase constant (GDK_KEY_B = 0x42), so both match the
+/// same physical key and must be treated as conflicting.
+pub fn conflictsWith(a: Keybind, b: Keybind) bool {
+    if (!a.enabled or !b.enabled) return false;
+    if (a.ctrl != b.ctrl or a.shift != b.shift or a.alt != b.alt) return false;
+    return toUnshiftedKeyval(a.key) == toUnshiftedKeyval(b.key);
+}
+
+/// Return the action currently bound to the same combo as `kb`, ignoring
+/// `exclude` itself (so re-recording the current binding is not a conflict).
+pub fn findConflict(exclude: Action, kb: Keybind) ?Action {
+    if (!initialized) initDefaults();
+    return findConflictIn(&bindings, exclude, kb);
+}
+
+fn findConflictIn(list: []const Keybind, exclude: Action, kb: Keybind) ?Action {
+    for (list, 0..) |other, i| {
+        if (i == @intFromEnum(exclude)) continue;
+        if (conflictsWith(other, kb)) return @enumFromInt(i);
+    }
+    return null;
+}
+
 /// Apply a keybind override from the config file.
 /// action_name: e.g. "new_column" or "new-column"
 /// raw_value: e.g. "ctrl+shift+v" or "unset"
@@ -359,10 +385,9 @@ pub fn applyConfigOverride(action_name: []const u8, raw_value: []const u8) bool 
     return false;
 }
 
-/// Get the display string for a keybind action (e.g., "Ctrl+Shift+V").
-/// Returns the number of bytes written, or 0 if not bound.
-pub fn displayString(action: Action, buf: []u8) usize {
-    const kb = bindings[@intFromEnum(action)];
+/// Format a keybind as a display string (e.g., "Ctrl+Shift+V").
+/// Returns the number of bytes written, or 0 if the keybind is disabled.
+pub fn displayKeybind(kb: Keybind, buf: []u8) usize {
     if (!kb.enabled) return 0;
 
     var pos: usize = 0;
@@ -394,6 +419,12 @@ pub fn displayString(action: Action, buf: []u8) usize {
     }
 
     return pos;
+}
+
+/// Get the display string for a keybind action (e.g., "Ctrl+Shift+V").
+/// Returns the number of bytes written, or 0 if not bound.
+pub fn displayString(action: Action, buf: []u8) usize {
+    return displayKeybind(bindings[@intFromEnum(action)], buf);
 }
 
 // --- Key event handler ---
@@ -1233,4 +1264,53 @@ test "isAltPressed: Mod5 (AltGr) counts as alt" {
     try std.testing.expect(!isAltPressed(c.GDK_CONTROL_MASK));
     try std.testing.expect(!isAltPressed(c.GDK_SHIFT_MASK));
     try std.testing.expect(!isAltPressed(0));
+}
+
+test "conflictsWith: same key+modifiers conflicts regardless of stored letter case" {
+    // Ctrl+Alt+B may be stored as uppercase GDK_KEY_B (0x42) by the defaults
+    // or lowercase GDK_KEY_b (0x62) when recorded — both match the same key.
+    const upper = Keybind{ .key = c.GDK_KEY_B, .ctrl = true, .alt = true, .enabled = true };
+    const lower = Keybind{ .key = c.GDK_KEY_b, .ctrl = true, .alt = true, .enabled = true };
+    try std.testing.expect(conflictsWith(upper, lower));
+    try std.testing.expect(conflictsWith(lower, upper));
+}
+
+test "conflictsWith: different keys or modifiers do not conflict" {
+    const kb = Keybind{ .key = c.GDK_KEY_b, .ctrl = true, .alt = true, .enabled = true };
+    // Different key
+    try std.testing.expect(!conflictsWith(kb, Keybind{ .key = c.GDK_KEY_a, .ctrl = true, .alt = true, .enabled = true }));
+    // Missing / extra modifiers
+    try std.testing.expect(!conflictsWith(kb, Keybind{ .key = c.GDK_KEY_b, .ctrl = true, .enabled = true }));
+    try std.testing.expect(!conflictsWith(kb, Keybind{ .key = c.GDK_KEY_b, .alt = true, .enabled = true }));
+    try std.testing.expect(!conflictsWith(kb, Keybind{ .key = c.GDK_KEY_b, .ctrl = true, .shift = true, .alt = true, .enabled = true }));
+}
+
+test "conflictsWith: disabled bindings never conflict" {
+    const kb = Keybind{ .key = c.GDK_KEY_b, .ctrl = true, .alt = true, .enabled = true };
+    try std.testing.expect(!conflictsWith(kb, Keybind{ .key = c.GDK_KEY_b, .ctrl = true, .alt = true, .enabled = false }));
+}
+
+test "findConflict: reports the conflicting action and excludes itself" {
+    const list = [_]Keybind{
+        .{ .key = c.GDK_KEY_a, .ctrl = true, .enabled = true },
+        .{ .key = c.GDK_KEY_b, .ctrl = true, .alt = true, .enabled = true },
+        .{ .key = c.GDK_KEY_b, .ctrl = true, .alt = true, .enabled = true }, // conflicts with index 1
+    };
+    const target = Keybind{ .key = c.GDK_KEY_b, .ctrl = true, .alt = true, .enabled = true };
+    // Excluding index 1 still finds index 2
+    try std.testing.expectEqual(@as(?Action, @enumFromInt(2)), findConflictIn(&list, @enumFromInt(1), target));
+    // Excluding index 2 finds index 1
+    try std.testing.expectEqual(@as(?Action, @enumFromInt(1)), findConflictIn(&list, @enumFromInt(2), target));
+    // Excluding both conflicted slots → free combo
+    const excl = Keybind{ .key = c.GDK_KEY_z, .ctrl = true, .alt = true, .enabled = true };
+    try std.testing.expect(findConflictIn(&list, @enumFromInt(0), excl) == null);
+}
+
+test "findConflict: case-insensitive letter match is detected" {
+    // A lowercase-recorded binding conflicts with an uppercase-stored default.
+    const list = [_]Keybind{
+        .{ .key = c.GDK_KEY_B, .ctrl = true, .alt = true, .enabled = true },
+    };
+    const recorded = Keybind{ .key = c.GDK_KEY_b, .ctrl = true, .alt = true, .enabled = true };
+    try std.testing.expectEqual(@as(?Action, @enumFromInt(0)), findConflictIn(&list, @enumFromInt(1), recorded));
 }
