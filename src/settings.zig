@@ -20,6 +20,7 @@ var recording_button: ?*c.GtkWidget = null;
 var key_ctrl_ref: ?*c.GtkEventController = null;
 var dialog_widget_ref: ?*c.GtkWidget = null;
 var shortcut_buttons: [keybinds.Action.count]?*c.GtkWidget = [_]?*c.GtkWidget{null} ** keybinds.Action.count;
+var shortcut_reset_buttons: [keybinds.Action.count]?*c.GtkWidget = [_]?*c.GtkWidget{null} ** keybinds.Action.count;
 
 // Pending shortcut while the "already in use" conflict dialog is open
 var pending_action: ?keybinds.Action = null;
@@ -614,6 +615,14 @@ fn buildKeyboardSection(page: *c.GtkWidget, _: *const config_mod.Config) void {
         _ = c.g_signal_connect_data(@as(c.gpointer, @ptrCast(btn)), "clicked", @as(c.GCallback, @ptrCast(&onShortcutButtonClicked)), null, null, 0);
         shortcut_buttons[@intFromEnum(def.action)] = @as(*c.GtkWidget, @ptrCast(btn));
 
+        // Reset to default button
+        const reset_btn = c.gtk_button_new_from_icon_name("edit-undo-symbolic");
+        c.gtk_widget_add_css_class(@as(*c.GtkWidget, @ptrCast(reset_btn)), "flat");
+        c.gtk_widget_set_tooltip_text(@as(*c.GtkWidget, @ptrCast(reset_btn)), "Reset to default");
+        c.gtk_widget_set_sensitive(reset_btn, if (keybinds.isDefaultBinding(def.action)) 0 else 1);
+        _ = c.g_signal_connect_data(@as(c.gpointer, @ptrCast(reset_btn)), "clicked", @as(c.GCallback, @ptrCast(&onResetShortcutClicked)), null, null, 0);
+        shortcut_reset_buttons[@intFromEnum(def.action)] = @as(*c.GtkWidget, @ptrCast(reset_btn));
+
         // Clear button
         const clear_btn = c.gtk_button_new_from_icon_name("edit-clear-symbolic");
         c.gtk_widget_add_css_class(@as(*c.GtkWidget, @ptrCast(clear_btn)), "flat");
@@ -621,6 +630,7 @@ fn buildKeyboardSection(page: *c.GtkWidget, _: *const config_mod.Config) void {
         _ = c.g_signal_connect_data(@as(c.gpointer, @ptrCast(clear_btn)), "clicked", @as(c.GCallback, @ptrCast(&onClearShortcutClicked)), null, null, 0);
 
         c.gtk_box_append(@as(*c.GtkBox, @ptrCast(hbox)), @as(*c.GtkWidget, @ptrCast(btn)));
+        c.gtk_box_append(@as(*c.GtkBox, @ptrCast(hbox)), @as(*c.GtkWidget, @ptrCast(reset_btn)));
         c.gtk_box_append(@as(*c.GtkBox, @ptrCast(hbox)), @as(*c.GtkWidget, @ptrCast(clear_btn)));
 
         c.adw_action_row_add_suffix(@as(*c.AdwActionRow, @ptrCast(row)), hbox);
@@ -1014,6 +1024,25 @@ fn onClearShortcutClicked(button: *c.GtkButton, _: c.gpointer) callconv(.c) void
     }
 }
 
+fn onResetShortcutClicked(button: *c.GtkButton, _: c.gpointer) callconv(.c) void {
+    // Abandon any in-progress recording so the next keypress can't overwrite
+    // the binding we're about to restore.
+    cancelRecording();
+
+    const reset_widget: *c.GtkWidget = @ptrCast(button);
+    const parent = c.gtk_widget_get_parent(reset_widget) orelse return;
+    const first_child = c.gtk_widget_get_first_child(parent) orelse return;
+
+    for (shortcut_defs) |def| {
+        if (shortcut_buttons[@intFromEnum(def.action)] == first_child) {
+            keybinds.resetBinding(def.action);
+            updateShortcutButtonLabel(def.action);
+            saveAndReload();
+            return;
+        }
+    }
+}
+
 fn onSettingsKeyPress(
     _: *c.GtkEventControllerKey,
     keyval: c.guint,
@@ -1199,6 +1228,11 @@ fn updateShortcutButtonLabel(action: keybinds.Action) void {
         c.gtk_button_set_label(@as(*c.GtkButton, @ptrCast(btn)), @ptrCast(&display_buf));
     } else {
         c.gtk_button_set_label(@as(*c.GtkButton, @ptrCast(btn)), "unset");
+    }
+
+    // Gray out the reset button while the action is already at its default.
+    if (shortcut_reset_buttons[@intFromEnum(action)]) |rbtn| {
+        c.gtk_widget_set_sensitive(rbtn, if (keybinds.isDefaultBinding(action)) 0 else 1);
     }
 }
 

@@ -178,6 +178,9 @@ pub const Keybind = struct {
 };
 
 var bindings: [Action.count]Keybind = undefined;
+/// Snapshot of the compiled-in defaults (captured at the end of initDefaults)
+/// so individual actions can be restored without a full reset.
+var default_bindings: [Action.count]Keybind = undefined;
 var initialized: bool = false;
 
 /// When true, the main key handler yields so the settings dialog can capture the keypress.
@@ -325,6 +328,7 @@ fn initDefaults() void {
     // Help
     set(.show_shortcuts, .{ .key = c.GDK_KEY_F1 });
 
+    default_bindings = bindings;
     initialized = true;
 }
 
@@ -336,6 +340,29 @@ pub fn resetToDefaults() void {
 
 fn set(action: Action, kb: Keybind) void {
     bindings[@intFromEnum(action)] = kb;
+}
+
+/// The default (compiled-in) binding for an action.
+pub fn defaultBinding(action: Action) Keybind {
+    if (!initialized) initDefaults();
+    return default_bindings[@intFromEnum(action)];
+}
+
+/// Restore a single action to its default binding.
+pub fn resetBinding(action: Action) void {
+    if (!initialized) initDefaults();
+    bindings[@intFromEnum(action)] = default_bindings[@intFromEnum(action)];
+}
+
+/// True if the action's current binding is its default (used to gray out
+/// the per-shortcut reset button).
+pub fn isDefaultBinding(action: Action) bool {
+    if (!initialized) initDefaults();
+    return keybindEqual(bindings[@intFromEnum(action)], default_bindings[@intFromEnum(action)]);
+}
+
+fn keybindEqual(a: Keybind, b: Keybind) bool {
+    return a.key == b.key and a.ctrl == b.ctrl and a.shift == b.shift and a.alt == b.alt and a.enabled == b.enabled;
 }
 
 /// True if two keybinds occupy the same key + modifier combination.
@@ -968,13 +995,9 @@ fn parseKeybindString(s: []const u8) ?Keybind {
 
     if (!has_key) return null;
 
-    // When shift is held, GTK reports uppercase keyval for letters.
-    // Convert stored key to uppercase to match runtime behavior.
-    if (kb.shift and kb.key >= c.GDK_KEY_a and kb.key <= c.GDK_KEY_z) {
-        kb.key = kb.key - @as(u32, c.GDK_KEY_a) + @as(u32, c.GDK_KEY_A);
-    }
-
-    return kb;
+    // Store letter keys in uppercase GDK form regardless of the shift state in
+    // the string, so bindings display consistently and match the defaults.
+    return canonicalize(kb);
 }
 
 fn resolveKeyName(name: []const u8) ?u32 {
@@ -1049,9 +1072,22 @@ fn asciiEqlIgnoreCase(a: []const u8, b: []const u8) bool {
     return std.ascii.eqlIgnoreCase(a, b);
 }
 
+/// Store letter keys in their uppercase GDK form (GDK_KEY_B = 0x42) so
+/// bindings display consistently and compare equal to the uppercase defaults.
+/// GDK reports lowercase keyvals when Shift is not held (recording ctrl+alt+b
+/// yields 0x62 'b'); Keybind.matches's case-insensitive fallback makes the
+/// uppercase stored form match lowercase keypresses anyway.
+fn canonicalize(kb: Keybind) Keybind {
+    var out = kb;
+    if (out.key >= c.GDK_KEY_a and out.key <= c.GDK_KEY_z) {
+        out.key = out.key - @as(u32, c.GDK_KEY_a) + @as(u32, c.GDK_KEY_A);
+    }
+    return out;
+}
+
 pub fn setBinding(action: Action, kb: Keybind) void {
     if (!initialized) initDefaults();
-    bindings[@intFromEnum(action)] = kb;
+    bindings[@intFromEnum(action)] = canonicalize(kb);
 }
 
 pub fn writeKeybinds(writer: anytype) !void {
@@ -1106,7 +1142,9 @@ test "parseKeybindString: simple modifier + key" {
     try std.testing.expect(!kb.shift);
     try std.testing.expect(!kb.alt);
     try std.testing.expect(kb.enabled);
-    try std.testing.expectEqual(@as(u32, c.GDK_KEY_v), kb.key);
+    // Letters are canonicalized to uppercase so recorded/config bindings
+    // display and compare like the defaults (GDK_KEY_V = 0x56).
+    try std.testing.expectEqual(@as(u32, c.GDK_KEY_V), kb.key);
 }
 
 test "parseKeybindString: multiple modifiers" {
@@ -1131,7 +1169,7 @@ test "parseKeybindString: case insensitive modifiers" {
 test "parseKeybindString: control alias" {
     const kb = parseKeybindString("control+c") orelse unreachable;
     try std.testing.expect(kb.ctrl);
-    try std.testing.expectEqual(@as(u32, c.GDK_KEY_c), kb.key);
+    try std.testing.expectEqual(@as(u32, c.GDK_KEY_C), kb.key);
 }
 
 test "parseKeybindString: super modifier is ignored" {
@@ -1139,7 +1177,7 @@ test "parseKeybindString: super modifier is ignored" {
     try std.testing.expect(kb.ctrl);
     try std.testing.expect(!kb.shift);
     try std.testing.expect(!kb.alt);
-    try std.testing.expectEqual(@as(u32, c.GDK_KEY_a), kb.key);
+    try std.testing.expectEqual(@as(u32, c.GDK_KEY_A), kb.key);
 }
 
 test "parseKeybindString: no key returns null" {
@@ -1313,4 +1351,47 @@ test "findConflict: case-insensitive letter match is detected" {
     };
     const recorded = Keybind{ .key = c.GDK_KEY_b, .ctrl = true, .alt = true, .enabled = true };
     try std.testing.expectEqual(@as(?Action, @enumFromInt(0)), findConflictIn(&list, @enumFromInt(1), recorded));
+}
+
+test "resetBinding: restores a single action to its default" {
+    resetToDefaults();
+    const action = Action.new_browser_panel;
+    const dflt = defaultBinding(action);
+
+    // Fresh defaults → already at default, reset is a no-op
+    try std.testing.expect(isDefaultBinding(action));
+    resetBinding(action);
+    try std.testing.expect(isDefaultBinding(action));
+
+    // Override, then reset restores the original default
+    setBinding(action, .{ .key = c.GDK_KEY_z, .ctrl = true, .enabled = true });
+    try std.testing.expect(!isDefaultBinding(action));
+    resetBinding(action);
+    try std.testing.expect(isDefaultBinding(action));
+    try std.testing.expect(keybindEqual(bindings[@intFromEnum(action)], dflt));
+
+    // A palette-only action (never default-bound) resets to disabled
+    const palette = Action.move_workspace_up;
+    setBinding(palette, .{ .key = c.GDK_KEY_z, .ctrl = true, .enabled = true });
+    resetBinding(palette);
+    try std.testing.expect(!bindings[@intFromEnum(palette)].enabled);
+}
+
+test "setBinding: recording a lowercase letter normalizes to the uppercase default" {
+    resetToDefaults();
+    const action = Action.new_browser_panel;
+    // Recording ctrl+alt+B yields GDK_KEY_b (0x62); storing it must normalize
+    // to GDK_KEY_B (0x42) so the row shows uppercase and needs no reset.
+    setBinding(action, .{ .key = c.GDK_KEY_b, .ctrl = true, .alt = true, .enabled = true });
+    // Normalized to the exact default → no reset needed.
+    try std.testing.expect(isDefaultBinding(action));
+}
+
+test "canonicalize: only letter keys are uppercased" {
+    try std.testing.expectEqual(@as(u32, c.GDK_KEY_B), canonicalize(.{ .key = c.GDK_KEY_b }).key);
+    try std.testing.expectEqual(@as(u32, c.GDK_KEY_A), canonicalize(.{ .key = c.GDK_KEY_a }).key);
+    try std.testing.expectEqual(@as(u32, c.GDK_KEY_comma), canonicalize(.{ .key = c.GDK_KEY_comma }).key);
+    try std.testing.expectEqual(@as(u32, c.GDK_KEY_1), canonicalize(.{ .key = c.GDK_KEY_1 }).key);
+    try std.testing.expectEqual(@as(u32, c.GDK_KEY_F3), canonicalize(.{ .key = c.GDK_KEY_F3 }).key);
+    try std.testing.expectEqual(@as(u32, c.GDK_KEY_Left), canonicalize(.{ .key = c.GDK_KEY_Left }).key);
 }
