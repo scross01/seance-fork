@@ -1,4 +1,5 @@
 const std = @import("std");
+const io = @import("io.zig");
 const c = @import("c.zig").c;
 const app = @import("app.zig");
 const config_mod = @import("config.zig");
@@ -37,6 +38,7 @@ const Widgets = struct {
     confirm_close_window: ?*c.GtkWidget = null,
     open_url_in_browser: ?*c.GtkWidget = null,
     focus_follows_mouse: ?*c.GtkWidget = null,
+    show_button_bar: ?*c.GtkWidget = null,
     show_notification_text: ?*c.GtkWidget = null,
     show_status: ?*c.GtkWidget = null,
     show_logs: ?*c.GtkWidget = null,
@@ -49,6 +51,7 @@ const Widgets = struct {
     codex_hooks: ?*c.GtkWidget = null,
     pi_hooks: ?*c.GtkWidget = null,
     opencode_hooks: ?*c.GtkWidget = null,
+    antigravity_hooks: ?*c.GtkWidget = null,
     kilo_hooks: ?*c.GtkWidget = null,
     mimocode_hooks: ?*c.GtkWidget = null,
     vibe_hooks: ?*c.GtkWidget = null,
@@ -81,7 +84,6 @@ const Widgets = struct {
     // Scale
     background_opacity: ?*c.GtkWidget = null,
     background_opacity_label: ?*c.GtkWidget = null,
-
 };
 
 // ---------------------------------------------------------------------------
@@ -257,6 +259,7 @@ fn buildWindowSection(page: *c.GtkWidget, cfg: *const config_mod.Config) void {
 
     w.confirm_close_window = addSwitchRow(g1, "Confirm Closing Window", "Ask before closing a window with multiple workspaces.", cfg.confirm_close_window);
     w.sidebar_position = addComboRow(g1, "Sidebar Position", &.{ "Left", "Right" }, if (cfg.sidebar_position == .right) @as(u32, 1) else @as(u32, 0));
+    w.show_button_bar = addSwitchRow(g1, "Show Button Bar", "Show the bottom sidebar buttons when using server-side window decorations.", cfg.sidebar_show_button_bar);
     addToPage(page, g1);
 
     // Sidebar detail visibility
@@ -332,7 +335,7 @@ fn populateThemeModel(cfg: *const config_mod.Config) ThemeModelResult {
     }
 
     // 3. User themes (~/.config/ghostty/themes/)
-    if (std.posix.getenv("HOME")) |home| {
+    if (io.getenv("HOME")) |home| {
         var buf: [std.fs.max_path_bytes]u8 = undefined;
         if (std.fmt.bufPrint(&buf, "{s}/.config/ghostty/themes", .{home})) |path| {
             collectThemesFromDir(path, &names, &seen);
@@ -369,10 +372,10 @@ fn collectThemesFromDir(
     seen: *std.StringHashMap(void),
 ) void {
     const path = dir_path orelse return;
-    var dir = std.fs.openDirAbsolute(path, .{ .iterate = true }) catch return;
-    defer dir.close();
+    var dir = std.Io.Dir.openDirAbsolute(io.get(), path, .{ .iterate = true }) catch return;
+    defer dir.close(io.get());
     var it = dir.iterate();
-    while (it.next() catch null) |entry| {
+    while (it.next(io.get()) catch null) |entry| {
         if (entry.kind == .directory) continue;
         if (entry.name.len == 0 or entry.name[0] == '.') continue;
         if (seen.contains(entry.name)) continue;
@@ -462,13 +465,14 @@ fn buildIntegrationsSection(page: *c.GtkWidget, cfg: *const config_mod.Config) v
     w.socket_path = addEntryRow(g1, "Socket Path", "~/.seance/seance.sock", cfg.socket_path[0..cfg.socket_path_len]);
     addToPage(page, g1);
 
-    // Card 2: Claude Code Integration
+    // Card 2: Agent integrations
     const g2 = newGroup(null);
-    c.adw_preferences_group_set_description(@as(*c.AdwPreferencesGroup, @ptrCast(g2)), "When enabled, seance wraps the claude command to inject session tracking and notification hooks.");
+    c.adw_preferences_group_set_description(@as(*c.AdwPreferencesGroup, @ptrCast(g2)), "Track agent activity and requests for input. Changes apply to new panes.");
     w.claude_code_hooks = addSwitchRow(g2, "Claude Code Integration", if (cfg.claude_code_hooks) "Sidebar shows Claude session status and notifications." else "Claude Code runs without seance integration.", cfg.claude_code_hooks);
     w.codex_hooks = addSwitchRow(g2, "Codex Integration", if (cfg.codex_hooks) "Sidebar shows Codex session status and notifications." else "Codex runs without seance integration.", cfg.codex_hooks);
     w.pi_hooks = addSwitchRow(g2, "Pi Agent Integration", if (cfg.pi_hooks) "Sidebar shows Pi session status and notifications." else "Pi runs without seance integration.", cfg.pi_hooks);
     w.opencode_hooks = addSwitchRow(g2, "OpenCode Integration", if (cfg.opencode_hooks) "Sidebar shows OpenCode session status and notifications." else "OpenCode runs without seance integration.", cfg.opencode_hooks);
+    w.antigravity_hooks = addSwitchRow(g2, "Antigravity CLI Integration", if (cfg.antigravity_hooks) "Sidebar shows Antigravity session status and notifications." else "Antigravity runs without seance integration.", cfg.antigravity_hooks);
     w.kilo_hooks = addSwitchRow(g2, "Kilo Code Integration", if (cfg.kilo_hooks) "Sidebar shows Kilo Code session status and notifications." else "Kilo Code runs without seance integration.", cfg.kilo_hooks);
     w.mimocode_hooks = addSwitchRow(g2, "MiMo Code Integration", if (cfg.mimocode_hooks) "Sidebar shows MiMo Code session status and notifications." else "MiMo Code runs without seance integration.", cfg.mimocode_hooks);
     w.vibe_hooks = addSwitchRow(g2, "Mistral Vibe Integration", if (cfg.vibe_hooks) "Sidebar shows Vibe session status." else "Vibe runs without seance integration.", cfg.vibe_hooks);
@@ -758,6 +762,8 @@ fn onSwitchChanged(obj: *c.GObject, _: *c.GParamSpec, _: c.gpointer) callconv(.c
         cfg.open_url_in_browser = active;
     } else if (widget == w.focus_follows_mouse) {
         cfg.focus_follows_mouse = active;
+    } else if (widget == w.show_button_bar) {
+        cfg.sidebar_show_button_bar = active;
     } else if (widget == w.show_notification_text) {
         cfg.sidebar_show_notification_text = active;
     } else if (widget == w.show_status) {
@@ -783,6 +789,8 @@ fn onSwitchChanged(obj: *c.GObject, _: *c.GParamSpec, _: c.gpointer) callconv(.c
     } else if (widget == w.opencode_hooks) {
         cfg.opencode_hooks = active;
         app.syncPlugin(.opencode, active);
+    } else if (widget == w.antigravity_hooks) {
+        cfg.antigravity_hooks = active;
     } else if (widget == w.kilo_hooks) {
         cfg.kilo_hooks = active;
         app.syncPlugin(.kilo, active);

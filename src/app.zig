@@ -1,4 +1,5 @@
 const std = @import("std");
+const io = @import("io.zig");
 const builtin = @import("builtin");
 const c = @import("c.zig").c;
 const Window = @import("window.zig");
@@ -22,11 +23,11 @@ pub const SEANCE_POOL_VERSION: u32 = 1;
 
 /// Auto-install OpenCode plugin if OpenCode config dir exists but plugin is missing.
 pub fn installOpenCodePlugin() void {
-    const home = std.posix.getenv("HOME") orelse return;
+    const home = io.getenv("HOME") orelse return;
     const alloc = std.heap.page_allocator;
     const config_dir_path = std.fmt.allocPrint(alloc, "{s}/.config/opencode", .{home}) catch return;
     defer alloc.free(config_dir_path);
-    _ = std.fs.openDirAbsolute(config_dir_path, .{}) catch return; // no opencode config dir → not installed
+    _ = std.Io.Dir.openDirAbsolute(io.get(), config_dir_path, .{}) catch return; // no opencode config dir → not installed
 
     // Fast path: if version marker matches, skip all further IO
     if (readVersionMarker(config_dir_path)) |marker_version| {
@@ -36,19 +37,19 @@ pub fn installOpenCodePlugin() void {
     // Read bundled plugin
     const bundled_path = blk: {
         var exe_buf: [std.fs.max_path_bytes]u8 = undefined;
-        const exe_path = std.fs.selfExePath(&exe_buf) catch return;
+        const exe_path = io.executablePath(&exe_buf) catch return;
         const exe_dir = std.fs.path.dirname(exe_path) orelse return;
         const prefix = std.fs.path.dirname(exe_dir) orelse return;
         break :blk std.fmt.allocPrint(alloc, "{s}/share/seance/opencode-plugin.ts", .{prefix}) catch return;
     };
     defer alloc.free(bundled_path);
 
-    const bundled_file = std.fs.openFileAbsolute(bundled_path, .{}) catch {
+    const bundled_file = std.Io.Dir.openFileAbsolute(io.get(), bundled_path, .{}) catch {
         std.log.info("opencode: plugin source not found, skipping", .{});
         return;
     };
-    defer bundled_file.close();
-    const bundled_content = bundled_file.readToEndAlloc(alloc, 64 * 1024) catch return;
+    defer bundled_file.close(io.get());
+    const bundled_content = io.readToEndAlloc(bundled_file, alloc, 64 * 1024) catch return;
     defer alloc.free(bundled_content);
 
     const bundled_version = extractVersion(bundled_content);
@@ -57,9 +58,9 @@ pub fn installOpenCodePlugin() void {
     const plugin_path = std.fmt.allocPrint(alloc, "{s}/.config/opencode/plugins/seance-opencode.ts", .{home}) catch return;
     defer alloc.free(plugin_path);
 
-    const installed_file = std.fs.openFileAbsolute(plugin_path, .{}) catch null;
-    const installed_content = if (installed_file) |f| f.readToEndAlloc(alloc, 64 * 1024) catch null else null;
-    defer if (installed_file) |f| f.close();
+    const installed_file = std.Io.Dir.openFileAbsolute(io.get(), plugin_path, .{}) catch null;
+    const installed_content = if (installed_file) |f| io.readToEndAlloc(f, alloc, 64 * 1024) catch null else null;
+    defer if (installed_file) |f| f.close(io.get());
     defer if (installed_content) |ic| alloc.free(ic);
 
     if (installed_content) |content| {
@@ -75,29 +76,29 @@ pub fn installOpenCodePlugin() void {
     const tmp_path = std.fmt.allocPrint(alloc, "{s}.tmp", .{plugin_path}) catch return;
     defer alloc.free(tmp_path);
     // Use exclusive creation to prevent following an existing symlink at the tmp path
-    const dst = std.fs.createFileAbsolute(tmp_path, .{ .exclusive = true }) catch return;
-    errdefer std.fs.deleteFileAbsolute(tmp_path) catch {};
-    _ = dst.writeAll(bundled_content) catch return;
+    const dst = std.Io.Dir.createFileAbsolute(io.get(), tmp_path, .{ .exclusive = true }) catch return;
+    errdefer std.Io.Dir.deleteFileAbsolute(io.get(), tmp_path) catch {};
+    _ = dst.writeStreamingAll(io.get(), bundled_content) catch return;
     // Verify destination is not a symlink before renaming
-    if (std.fs.cwd().statFile(plugin_path)) |stat| {
+    if (std.Io.Dir.cwd().statFile(io.get(), plugin_path, .{})) |stat| {
         if (stat.kind == .sym_link) return;
     } else |_| {}
-    std.fs.renameAbsolute(tmp_path, plugin_path) catch return;
+    std.Io.Dir.renameAbsolute(tmp_path, plugin_path, io.get()) catch return;
     writeVersionMarker(config_dir_path, SEANCE_OPENCODE_VERSION);
 }
 
 /// Remove OpenCode plugin if installed.
 pub fn removeOpenCodePlugin() void {
-    const home = std.posix.getenv("HOME") orelse return;
+    const home = io.getenv("HOME") orelse return;
     const alloc = std.heap.page_allocator;
     const plugin_path = std.fmt.allocPrint(alloc, "{s}/.config/opencode/plugins/seance-opencode.ts", .{home}) catch return;
     defer alloc.free(plugin_path);
-    std.fs.deleteFileAbsolute(plugin_path) catch |err| {
+    std.Io.Dir.deleteFileAbsolute(io.get(), plugin_path) catch |err| {
         if (err != error.FileNotFound) std.log.warn("opencode: failed to remove plugin: {s}", .{@errorName(err)});
     };
     const marker_path = std.fmt.allocPrint(alloc, "{s}/.config/opencode/.seance-version", .{home}) catch return;
     defer alloc.free(marker_path);
-    std.fs.deleteFileAbsolute(marker_path) catch {};
+    std.Io.Dir.deleteFileAbsolute(io.get(), marker_path) catch {};
 }
 
 fn extractVersion(content: []const u8) u32 {
@@ -116,10 +117,10 @@ fn readVersionMarker(dir_path: []const u8) ?u32 {
     const alloc = std.heap.page_allocator;
     const marker_path = std.fmt.allocPrint(alloc, "{s}/.seance-version", .{dir_path}) catch return null;
     defer alloc.free(marker_path);
-    const file = std.fs.openFileAbsolute(marker_path, .{}) catch return null;
-    defer file.close();
+    const file = std.Io.Dir.openFileAbsolute(io.get(), marker_path, .{}) catch return null;
+    defer file.close(io.get());
     var buf: [16]u8 = undefined;
-    const n = file.read(&buf) catch return null;
+    const n = io.readAll(file, &buf) catch return null;
     if (n == 0) return null;
     return std.fmt.parseInt(u32, buf[0..n], 10) catch null;
 }
@@ -128,29 +129,29 @@ fn writeVersionMarker(dir_path: []const u8, version: u32) void {
     const alloc = std.heap.page_allocator;
     const marker_path = std.fmt.allocPrint(alloc, "{s}/.seance-version", .{dir_path}) catch return;
     defer alloc.free(marker_path);
-    const file = std.fs.createFileAbsolute(marker_path, .{}) catch return;
-    defer file.close();
+    const file = std.Io.Dir.createFileAbsolute(io.get(), marker_path, .{}) catch return;
+    defer file.close(io.get());
     const buf = std.fmt.allocPrint(alloc, "{d}", .{version}) catch return;
     defer alloc.free(buf);
-    _ = file.writeAll(buf) catch return;
+    _ = file.writeStreamingAll(io.get(), buf) catch return;
 }
 
 fn ensurePluginDir(home: []const u8) !void {
     const alloc = std.heap.page_allocator;
     const plugins_dir = try std.fmt.allocPrint(alloc, "{s}/.config/opencode/plugins", .{home});
     defer alloc.free(plugins_dir);
-    std.fs.makeDirAbsolute(plugins_dir) catch |err| {
+    std.Io.Dir.createDirAbsolute(io.get(), plugins_dir, .default_dir) catch |err| {
         if (err != error.PathAlreadyExists) return;
     };
 }
 
 /// Auto-install Kilo Code plugin if Kilo config dir exists but plugin is missing.
 pub fn installKiloPlugin() void {
-    const home = std.posix.getenv("HOME") orelse return;
+    const home = io.getenv("HOME") orelse return;
     const alloc = std.heap.page_allocator;
     const config_dir_path = std.fmt.allocPrint(alloc, "{s}/.config/kilo", .{home}) catch return;
     defer alloc.free(config_dir_path);
-    _ = std.fs.openDirAbsolute(config_dir_path, .{}) catch return; // no kilo config dir → not installed
+    _ = std.Io.Dir.openDirAbsolute(io.get(), config_dir_path, .{}) catch return; // no kilo config dir → not installed
 
     // Fast path: if version marker matches, skip all further IO
     if (readVersionMarker(config_dir_path)) |marker_version| {
@@ -160,19 +161,19 @@ pub fn installKiloPlugin() void {
     // Read bundled plugin
     const bundled_path = blk: {
         var exe_buf: [std.fs.max_path_bytes]u8 = undefined;
-        const exe_path = std.fs.selfExePath(&exe_buf) catch return;
+        const exe_path = io.executablePath(&exe_buf) catch return;
         const exe_dir = std.fs.path.dirname(exe_path) orelse return;
         const prefix = std.fs.path.dirname(exe_dir) orelse return;
         break :blk std.fmt.allocPrint(alloc, "{s}/share/seance/kilo-plugin.ts", .{prefix}) catch return;
     };
     defer alloc.free(bundled_path);
 
-    const bundled_file = std.fs.openFileAbsolute(bundled_path, .{}) catch {
+    const bundled_file = std.Io.Dir.openFileAbsolute(io.get(), bundled_path, .{}) catch {
         std.log.info("kilo: plugin source not found, skipping", .{});
         return;
     };
-    defer bundled_file.close();
-    const bundled_content = bundled_file.readToEndAlloc(alloc, 64 * 1024) catch return;
+    defer bundled_file.close(io.get());
+    const bundled_content = io.readToEndAlloc(bundled_file, alloc, 64 * 1024) catch return;
     defer alloc.free(bundled_content);
 
     const bundled_version = extractVersion(bundled_content);
@@ -181,9 +182,9 @@ pub fn installKiloPlugin() void {
     const plugin_path = std.fmt.allocPrint(alloc, "{s}/.config/kilo/plugins/seance-kilo.ts", .{home}) catch return;
     defer alloc.free(plugin_path);
 
-    const installed_file = std.fs.openFileAbsolute(plugin_path, .{}) catch null;
-    const installed_content = if (installed_file) |f| f.readToEndAlloc(alloc, 64 * 1024) catch null else null;
-    defer if (installed_file) |f| f.close();
+    const installed_file = std.Io.Dir.openFileAbsolute(io.get(), plugin_path, .{}) catch null;
+    const installed_content = if (installed_file) |f| io.readToEndAlloc(f, alloc, 64 * 1024) catch null else null;
+    defer if (installed_file) |f| f.close(io.get());
     defer if (installed_content) |ic| alloc.free(ic);
 
     if (installed_content) |content| {
@@ -199,47 +200,47 @@ pub fn installKiloPlugin() void {
     const tmp_path = std.fmt.allocPrint(alloc, "{s}.tmp", .{plugin_path}) catch return;
     defer alloc.free(tmp_path);
     // Use exclusive creation to prevent following an existing symlink at the tmp path
-    const dst = std.fs.createFileAbsolute(tmp_path, .{ .exclusive = true }) catch return;
-    errdefer std.fs.deleteFileAbsolute(tmp_path) catch {};
-    _ = dst.writeAll(bundled_content) catch return;
+    const dst = std.Io.Dir.createFileAbsolute(io.get(), tmp_path, .{ .exclusive = true }) catch return;
+    errdefer std.Io.Dir.deleteFileAbsolute(io.get(), tmp_path) catch {};
+    _ = dst.writeStreamingAll(io.get(), bundled_content) catch return;
     // Verify destination is not a symlink before renaming
-    if (std.fs.cwd().statFile(plugin_path)) |stat| {
+    if (std.Io.Dir.cwd().statFile(io.get(), plugin_path, .{})) |stat| {
         if (stat.kind == .sym_link) return;
     } else |_| {}
-    std.fs.renameAbsolute(tmp_path, plugin_path) catch return;
+    std.Io.Dir.renameAbsolute(tmp_path, plugin_path, io.get()) catch return;
     writeVersionMarker(config_dir_path, SEANCE_KILO_VERSION);
 }
 
 /// Remove Kilo Code plugin if installed.
 pub fn removeKiloPlugin() void {
-    const home = std.posix.getenv("HOME") orelse return;
+    const home = io.getenv("HOME") orelse return;
     const alloc = std.heap.page_allocator;
     const plugin_path = std.fmt.allocPrint(alloc, "{s}/.config/kilo/plugins/seance-kilo.ts", .{home}) catch return;
     defer alloc.free(plugin_path);
-    std.fs.deleteFileAbsolute(plugin_path) catch |err| {
+    std.Io.Dir.deleteFileAbsolute(io.get(), plugin_path) catch |err| {
         if (err != error.FileNotFound) std.log.warn("kilo: failed to remove plugin: {s}", .{@errorName(err)});
     };
     const marker_path = std.fmt.allocPrint(alloc, "{s}/.config/kilo/.seance-version", .{home}) catch return;
     defer alloc.free(marker_path);
-    std.fs.deleteFileAbsolute(marker_path) catch {};
+    std.Io.Dir.deleteFileAbsolute(io.get(), marker_path) catch {};
 }
 
 fn ensureKiloPluginDir(home: []const u8) !void {
     const alloc = std.heap.page_allocator;
     const plugins_dir = try std.fmt.allocPrint(alloc, "{s}/.config/kilo/plugins", .{home});
     defer alloc.free(plugins_dir);
-    std.fs.makeDirAbsolute(plugins_dir) catch |err| {
+    std.Io.Dir.createDirAbsolute(io.get(), plugins_dir, .default_dir) catch |err| {
         if (err != error.PathAlreadyExists) return;
     };
 }
 
 /// Auto-install MiMo Code plugin if MiMo Code config dir exists but plugin is missing.
 pub fn installMimocodePlugin() void {
-    const home = std.posix.getenv("HOME") orelse return;
+    const home = io.getenv("HOME") orelse return;
     const alloc = std.heap.page_allocator;
     const config_dir_path = std.fmt.allocPrint(alloc, "{s}/.config/mimocode", .{home}) catch return;
     defer alloc.free(config_dir_path);
-    _ = std.fs.openDirAbsolute(config_dir_path, .{}) catch return; // no mimocode config dir → not installed
+    _ = std.Io.Dir.openDirAbsolute(io.get(), config_dir_path, .{}) catch return; // no mimocode config dir → not installed
 
     // Fast path: if version marker matches, skip all further IO
     if (readVersionMarker(config_dir_path)) |marker_version| {
@@ -249,19 +250,19 @@ pub fn installMimocodePlugin() void {
     // Read bundled plugin
     const bundled_path = blk: {
         var exe_buf: [std.fs.max_path_bytes]u8 = undefined;
-        const exe_path = std.fs.selfExePath(&exe_buf) catch return;
+        const exe_path = io.executablePath(&exe_buf) catch return;
         const exe_dir = std.fs.path.dirname(exe_path) orelse return;
         const prefix = std.fs.path.dirname(exe_dir) orelse return;
         break :blk std.fmt.allocPrint(alloc, "{s}/share/seance/mimocode-plugin.ts", .{prefix}) catch return;
     };
     defer alloc.free(bundled_path);
 
-    const bundled_file = std.fs.openFileAbsolute(bundled_path, .{}) catch {
+    const bundled_file = std.Io.Dir.openFileAbsolute(io.get(), bundled_path, .{}) catch {
         std.log.info("mimocode: plugin source not found, skipping", .{});
         return;
     };
-    defer bundled_file.close();
-    const bundled_content = bundled_file.readToEndAlloc(alloc, 64 * 1024) catch return;
+    defer bundled_file.close(io.get());
+    const bundled_content = io.readToEndAlloc(bundled_file, alloc, 64 * 1024) catch return;
     defer alloc.free(bundled_content);
 
     const bundled_version = extractVersion(bundled_content);
@@ -270,9 +271,9 @@ pub fn installMimocodePlugin() void {
     const plugin_path = std.fmt.allocPrint(alloc, "{s}/.config/mimocode/plugins/seance-mimocode.ts", .{home}) catch return;
     defer alloc.free(plugin_path);
 
-    const installed_file = std.fs.openFileAbsolute(plugin_path, .{}) catch null;
-    const installed_content = if (installed_file) |f| f.readToEndAlloc(alloc, 64 * 1024) catch null else null;
-    defer if (installed_file) |f| f.close();
+    const installed_file = std.Io.Dir.openFileAbsolute(io.get(), plugin_path, .{}) catch null;
+    const installed_content = if (installed_file) |f| io.readToEndAlloc(f, alloc, 64 * 1024) catch null else null;
+    defer if (installed_file) |f| f.close(io.get());
     defer if (installed_content) |ic| alloc.free(ic);
 
     if (installed_content) |content| {
@@ -288,49 +289,49 @@ pub fn installMimocodePlugin() void {
     const tmp_path = std.fmt.allocPrint(alloc, "{s}.tmp", .{plugin_path}) catch return;
     defer alloc.free(tmp_path);
     // Use exclusive creation to prevent following an existing symlink at the tmp path
-    const dst = std.fs.createFileAbsolute(tmp_path, .{ .exclusive = true }) catch return;
-    errdefer std.fs.deleteFileAbsolute(tmp_path) catch {};
-    _ = dst.writeAll(bundled_content) catch return;
+    const dst = std.Io.Dir.createFileAbsolute(io.get(), tmp_path, .{ .exclusive = true }) catch return;
+    errdefer std.Io.Dir.deleteFileAbsolute(io.get(), tmp_path) catch {};
+    _ = dst.writeStreamingAll(io.get(), bundled_content) catch return;
     // Verify destination is not a symlink before renaming
-    if (std.fs.cwd().statFile(plugin_path)) |stat| {
+    if (std.Io.Dir.cwd().statFile(io.get(), plugin_path, .{})) |stat| {
         if (stat.kind == .sym_link) return;
     } else |_| {}
-    std.fs.renameAbsolute(tmp_path, plugin_path) catch return;
+    std.Io.Dir.renameAbsolute(tmp_path, plugin_path, io.get()) catch return;
     writeVersionMarker(config_dir_path, SEANCE_MIMOCODE_VERSION);
 }
 
 /// Remove MiMo Code plugin if installed.
 pub fn removeMimocodePlugin() void {
-    const home = std.posix.getenv("HOME") orelse return;
+    const home = io.getenv("HOME") orelse return;
     const alloc = std.heap.page_allocator;
     const plugin_path = std.fmt.allocPrint(alloc, "{s}/.config/mimocode/plugins/seance-mimocode.ts", .{home}) catch return;
     defer alloc.free(plugin_path);
-    std.fs.deleteFileAbsolute(plugin_path) catch |err| {
+    std.Io.Dir.deleteFileAbsolute(io.get(), plugin_path) catch |err| {
         if (err != error.FileNotFound) std.log.warn("mimocode: failed to remove plugin: {s}", .{@errorName(err)});
     };
     const marker_path = std.fmt.allocPrint(alloc, "{s}/.config/mimocode/.seance-version", .{home}) catch return;
     defer alloc.free(marker_path);
-    std.fs.deleteFileAbsolute(marker_path) catch {};
+    std.Io.Dir.deleteFileAbsolute(io.get(), marker_path) catch {};
 }
 
 fn ensureMimocodePluginDir(home: []const u8) !void {
     const alloc = std.heap.page_allocator;
     const plugins_dir = try std.fmt.allocPrint(alloc, "{s}/.config/mimocode/plugins", .{home});
     defer alloc.free(plugins_dir);
-    std.fs.makeDirAbsolute(plugins_dir) catch |err| {
+    std.Io.Dir.createDirAbsolute(io.get(), plugins_dir, .default_dir) catch |err| {
         if (err != error.PathAlreadyExists) return;
     };
 }
 
 /// Auto-install Vibe hooks.toml if ~/.vibe exists.
 pub fn installVibeHooks() void {
-    const home = std.posix.getenv("HOME") orelse return;
+    const home = io.getenv("HOME") orelse return;
     const alloc = std.heap.page_allocator;
 
     // Check if Vibe config directory exists
     const config_dir_path = std.fmt.allocPrint(alloc, "{s}/.vibe", .{home}) catch return;
     defer alloc.free(config_dir_path);
-    _ = std.fs.openDirAbsolute(config_dir_path, .{}) catch return; // no vibe config dir → not installed
+    _ = std.Io.Dir.openDirAbsolute(io.get(), config_dir_path, .{}) catch return; // no vibe config dir → not installed
 
     // Fast path: if version marker matches, skip all further IO
     if (readVersionMarker(config_dir_path)) |marker_version| {
@@ -340,19 +341,19 @@ pub fn installVibeHooks() void {
     // Read bundled hooks template
     const bundled_path = blk: {
         var exe_buf: [std.fs.max_path_bytes]u8 = undefined;
-        const exe_path = std.fs.selfExePath(&exe_buf) catch return;
+        const exe_path = io.executablePath(&exe_buf) catch return;
         const exe_dir = std.fs.path.dirname(exe_path) orelse return;
         const prefix = std.fs.path.dirname(exe_dir) orelse return;
         break :blk std.fmt.allocPrint(alloc, "{s}/share/seance/vibe-hooks.toml", .{prefix}) catch return;
     };
     defer alloc.free(bundled_path);
 
-    const bundled_file = std.fs.openFileAbsolute(bundled_path, .{}) catch {
+    const bundled_file = std.Io.Dir.openFileAbsolute(io.get(), bundled_path, .{}) catch {
         std.log.info("vibe: hooks template not found, skipping", .{});
         return;
     };
-    defer bundled_file.close();
-    const bundled_content = bundled_file.readToEndAlloc(alloc, 64 * 1024) catch return;
+    defer bundled_file.close(io.get());
+    const bundled_content = io.readToEndAlloc(bundled_file, alloc, 64 * 1024) catch return;
     defer alloc.free(bundled_content);
 
     // Check if hooks.toml already exists
@@ -363,24 +364,24 @@ pub fn installVibeHooks() void {
     removeVibeHooks();
 
     // Write fresh hooks.toml (always create, since remove may have deleted it)
-    const dst = std.fs.createFileAbsolute(hooks_path, .{}) catch return;
-    errdefer std.fs.deleteFileAbsolute(hooks_path) catch {};
-    _ = dst.writeAll(bundled_content) catch return;
-    dst.close();
+    const dst = std.Io.Dir.createFileAbsolute(io.get(), hooks_path, .{}) catch return;
+    errdefer std.Io.Dir.deleteFileAbsolute(io.get(), hooks_path) catch {};
+    _ = dst.writeStreamingAll(io.get(), bundled_content) catch return;
+    dst.close(io.get());
     std.log.info("vibe: installed hooks.toml", .{});
     writeVersionMarker(config_dir_path, SEANCE_VIBE_VERSION);
 }
 
 /// Remove Vibe hooks from ~/.vibe/hooks.toml.
 pub fn removeVibeHooks() void {
-    const home = std.posix.getenv("HOME") orelse return;
+    const home = io.getenv("HOME") orelse return;
     const alloc = std.heap.page_allocator;
     const hooks_path = std.fmt.allocPrint(alloc, "{s}/.vibe/hooks.toml", .{home}) catch return;
     defer alloc.free(hooks_path);
 
-    const file = std.fs.openFileAbsolute(hooks_path, .{}) catch return;
-    defer file.close();
-    const content = file.readToEndAlloc(alloc, 64 * 1024) catch return;
+    const file = std.Io.Dir.openFileAbsolute(io.get(), hooks_path, .{}) catch return;
+    defer file.close(io.get());
+    const content = io.readToEndAlloc(file, alloc, 64 * 1024) catch return;
     defer alloc.free(content);
 
     // Find the seance section by marker
@@ -397,11 +398,11 @@ pub fn removeVibeHooks() void {
         var pos = line_start;
         while (pos < content.len) {
             const eol = std.mem.indexOfScalar(u8, content[pos..], '\n') orelse content.len;
-            const line = std.mem.trimRight(u8, content[pos..pos + eol], " \t\r");
+            const line = std.mem.trimEnd(u8, content[pos .. pos + eol], " \t\r");
             // If we hit a [[hooks]] block (non-seance), stop here
             if (std.mem.startsWith(u8, line, "[[hooks]]")) {
                 // Check if this line references seance
-                if (std.mem.indexOf(u8, content[pos..pos + eol], "seance") != null) {
+                if (std.mem.indexOf(u8, content[pos .. pos + eol], "seance") != null) {
                     pos += eol + 1;
                     continue;
                 }
@@ -414,45 +415,45 @@ pub fn removeVibeHooks() void {
 
     const before = content[0..line_start];
     const after = if (end < content.len) content[end..] else "";
-    const before_trimmed = std.mem.trimRight(u8, before, " \t\r\n");
-    const after_trimmed = std.mem.trimLeft(u8, after, " \t\r\n");
+    const before_trimmed = std.mem.trimEnd(u8, before, " \t\r\n");
+    const after_trimmed = std.mem.trimStart(u8, after, " \t\r\n");
 
     if (before_trimmed.len == 0 and after_trimmed.len == 0) {
-        std.fs.deleteFileAbsolute(hooks_path) catch {};
+        std.Io.Dir.deleteFileAbsolute(io.get(), hooks_path) catch {};
         return;
     }
 
     const tmp_path = std.fmt.allocPrint(alloc, "{s}.tmp", .{hooks_path}) catch return;
     defer alloc.free(tmp_path);
     // Use exclusive creation to prevent following an existing symlink at the tmp path
-    const dst = std.fs.createFileAbsolute(tmp_path, .{ .exclusive = true }) catch return;
-    errdefer std.fs.deleteFileAbsolute(tmp_path) catch {};
+    const dst = std.Io.Dir.createFileAbsolute(io.get(), tmp_path, .{ .exclusive = true }) catch return;
+    errdefer std.Io.Dir.deleteFileAbsolute(io.get(), tmp_path) catch {};
     if (before_trimmed.len > 0) {
-        _ = dst.writeAll(before_trimmed) catch return;
-        _ = dst.writeAll("\n") catch return;
+        _ = dst.writeStreamingAll(io.get(), before_trimmed) catch return;
+        _ = dst.writeStreamingAll(io.get(), "\n") catch return;
     }
     if (after_trimmed.len > 0) {
-        _ = dst.writeAll(after_trimmed) catch return;
+        _ = dst.writeStreamingAll(io.get(), after_trimmed) catch return;
     }
-    dst.close();
+    dst.close(io.get());
     // Verify destination is not a symlink before renaming
-    if (std.fs.cwd().statFile(hooks_path)) |stat| {
+    if (std.Io.Dir.cwd().statFile(io.get(), hooks_path, .{})) |stat| {
         if (stat.kind == .sym_link) return;
     } else |_| {}
-    std.fs.renameAbsolute(tmp_path, hooks_path) catch {};
+    std.Io.Dir.renameAbsolute(tmp_path, hooks_path, io.get()) catch {};
 }
 
 pub const PluginAgent = enum { opencode, kilo, mimocode, vibe, hermes };
 
 /// Auto-install Hermes plugin if ~/.hermes exists.
 pub fn installHermesPlugin() void {
-    const home = std.posix.getenv("HOME") orelse return;
+    const home = io.getenv("HOME") orelse return;
     const alloc = std.heap.page_allocator;
 
     // Check if Hermes config directory exists
     const hermes_dir = std.fmt.allocPrint(alloc, "{s}/.hermes", .{home}) catch return;
     defer alloc.free(hermes_dir);
-    _ = std.fs.openDirAbsolute(hermes_dir, .{}) catch return; // no hermes dir → not installed
+    _ = std.Io.Dir.openDirAbsolute(io.get(), hermes_dir, .{}) catch return; // no hermes dir → not installed
 
     // Fast path: if version marker matches, plugin files are already installed.
     // Still ensure enabled state in config.yaml (user may have edited it).
@@ -466,7 +467,7 @@ pub fn installHermesPlugin() void {
     // Read bundled plugin files
     const bundled_dir = blk: {
         var exe_buf: [std.fs.max_path_bytes]u8 = undefined;
-        const exe_path = std.fs.selfExePath(&exe_buf) catch return;
+        const exe_path = io.executablePath(&exe_buf) catch return;
         const exe_dir = std.fs.path.dirname(exe_path) orelse return;
         const prefix = std.fs.path.dirname(exe_dir) orelse return;
         break :blk std.fmt.allocPrint(alloc, "{s}/share/seance/hermes-plugin", .{prefix}) catch return;
@@ -476,7 +477,7 @@ pub fn installHermesPlugin() void {
     // Create staging directory for atomic installation
     const plugins_parent = std.fmt.allocPrint(alloc, "{s}/.hermes/plugins", .{home}) catch return;
     defer alloc.free(plugins_parent);
-    std.fs.makeDirAbsolute(plugins_parent) catch |err| {
+    std.Io.Dir.createDirAbsolute(io.get(), plugins_parent, .default_dir) catch |err| {
         if (err != error.PathAlreadyExists) {
             std.log.warn("hermes: failed to create plugins dir: {s}", .{@errorName(err)});
             return;
@@ -486,33 +487,33 @@ pub fn installHermesPlugin() void {
     const staging_dir = std.fmt.allocPrint(alloc, "{s}/.hermes/plugins/seance-staging", .{home}) catch return;
     defer alloc.free(staging_dir);
     // Clean up any leftover staging directory from a previous failed install
-    std.fs.deleteTreeAbsolute(staging_dir) catch {};
-    std.fs.makeDirAbsolute(staging_dir) catch |err| {
+    std.Io.Dir.cwd().deleteTree(io.get(), staging_dir) catch {};
+    std.Io.Dir.createDirAbsolute(io.get(), staging_dir, .default_dir) catch |err| {
         std.log.warn("hermes: failed to create staging dir: {s}", .{@errorName(err)});
         return;
     };
 
     // Copy plugin files to staging directory
     copyPluginFile(alloc, bundled_dir, staging_dir, "plugin.yaml") catch {
-        std.fs.deleteTreeAbsolute(staging_dir) catch {};
+        std.Io.Dir.cwd().deleteTree(io.get(), staging_dir) catch {};
         return;
     };
     copyPluginFile(alloc, bundled_dir, staging_dir, "__init__.py") catch {
-        std.fs.deleteTreeAbsolute(staging_dir) catch {};
+        std.Io.Dir.cwd().deleteTree(io.get(), staging_dir) catch {};
         return;
     };
 
     // Atomically move staging directory to final location
     const plugin_dir = std.fmt.allocPrint(alloc, "{s}/.hermes/plugins/seance", .{home}) catch {
-        std.fs.deleteTreeAbsolute(staging_dir) catch {};
+        std.Io.Dir.cwd().deleteTree(io.get(), staging_dir) catch {};
         return;
     };
     defer alloc.free(plugin_dir);
     // Remove old plugin directory if it exists
-    std.fs.deleteTreeAbsolute(plugin_dir) catch {};
-    std.fs.renameAbsolute(staging_dir, plugin_dir) catch |err| {
+    std.Io.Dir.cwd().deleteTree(io.get(), plugin_dir) catch {};
+    std.Io.Dir.renameAbsolute(staging_dir, plugin_dir, io.get()) catch |err| {
         std.log.warn("hermes: failed to move staging dir to final location: {s}", .{@errorName(err)});
-        std.fs.deleteTreeAbsolute(staging_dir) catch {};
+        std.Io.Dir.cwd().deleteTree(io.get(), staging_dir) catch {};
         return;
     };
 
@@ -529,26 +530,26 @@ fn copyPluginFile(alloc: std.mem.Allocator, src_dir: []const u8, dst_dir: []cons
     const dst_path = try std.fmt.allocPrint(alloc, "{s}/{s}", .{ dst_dir, filename });
     defer alloc.free(dst_path);
 
-    const src_file = std.fs.openFileAbsolute(src_path, .{}) catch {
+    const src_file = std.Io.Dir.openFileAbsolute(io.get(), src_path, .{}) catch {
         std.log.warn("hermes: plugin source {s} not found", .{filename});
         return error.FileNotFound;
     };
-    defer src_file.close();
-    const content = src_file.readToEndAlloc(alloc, 64 * 1024) catch return;
+    defer src_file.close(io.get());
+    const content = io.readToEndAlloc(src_file, alloc, 64 * 1024) catch return;
     defer alloc.free(content);
 
     const tmp_path = try std.fmt.allocPrint(alloc, "{s}.tmp", .{dst_path});
     defer alloc.free(tmp_path);
     // Use exclusive creation to prevent following an existing symlink at the tmp path
-    const dst = std.fs.createFileAbsolute(tmp_path, .{ .exclusive = true }) catch return;
-    errdefer std.fs.deleteFileAbsolute(tmp_path) catch {};
-    _ = dst.writeAll(content) catch return;
-    dst.close();
+    const dst = std.Io.Dir.createFileAbsolute(io.get(), tmp_path, .{ .exclusive = true }) catch return;
+    errdefer std.Io.Dir.deleteFileAbsolute(io.get(), tmp_path) catch {};
+    _ = dst.writeStreamingAll(io.get(), content) catch return;
+    dst.close(io.get());
     // Verify destination is not a symlink before renaming
-    if (std.fs.cwd().statFile(dst_path)) |stat| {
+    if (std.Io.Dir.cwd().statFile(io.get(), dst_path, .{})) |stat| {
         if (stat.kind == .sym_link) return error.IsSymlink;
     } else |_| {}
-    std.fs.renameAbsolute(tmp_path, dst_path) catch return;
+    std.Io.Dir.renameAbsolute(tmp_path, dst_path, io.get()) catch return;
 }
 
 /// Find the `plugins.enabled:` line in config.yaml content.
@@ -597,9 +598,9 @@ fn ensureHermesPluginEnabled(home: []const u8) bool {
     const config_path = std.fmt.allocPrint(alloc, "{s}/.hermes/config.yaml", .{home}) catch return false;
     defer alloc.free(config_path);
 
-    const file = std.fs.openFileAbsolute(config_path, .{}) catch return false;
-    defer file.close();
-    const content = file.readToEndAlloc(alloc, 1024 * 1024) catch return false;
+    const file = std.Io.Dir.openFileAbsolute(io.get(), config_path, .{}) catch return false;
+    defer file.close(io.get());
+    const content = io.readToEndAlloc(file, alloc, 1024 * 1024) catch return false;
     defer alloc.free(content);
 
     // Already enabled? Match actual list-item tokens, not bare substring.
@@ -642,7 +643,7 @@ fn ensureHermesPluginEnabled(home: []const u8) bool {
     const line_end = findLineEnd(content, enabled_idx + "enabled:".len);
 
     // Check if this is an inline list (e.g., "enabled: [a, b]") or a block list
-    const after_colon = std.mem.trimLeft(u8, content[enabled_idx + "enabled:".len .. line_end], " ");
+    const after_colon = std.mem.trimStart(u8, content[enabled_idx + "enabled:".len .. line_end], " ");
     if (after_colon.len > 0 and after_colon[0] != '#' and after_colon[0] != '\n' and after_colon[0] == '[') {
         // Inline list — append to it
         const bracket_pos = std.mem.lastIndexOfScalar(u8, after_colon, ']') orelse {
@@ -719,47 +720,46 @@ fn ensureHermesPluginEnabled(home: []const u8) bool {
 fn backupHermesConfig(alloc: std.mem.Allocator, config_path: []const u8) void {
     const bak_path = std.fmt.allocPrint(alloc, "{s}.bak", .{config_path}) catch return;
     defer alloc.free(bak_path);
-    // Use fstatat with SYMLINK_NOFOLLOW so a symlink at the backup path is
-    // actually detected (Dir.statFile / copyFileAbsolute both follow links,
-    // making the original check unreachable).
-    const bak_stat = std.posix.fstatat(std.fs.cwd().fd, bak_path, std.posix.AT.SYMLINK_NOFOLLOW) catch |err| switch (err) {
+    // Use follow_symlinks = false so a symlink at the backup path is
+    // actually detected.
+    const bak_stat = std.Io.Dir.cwd().statFile(io.get(), bak_path, .{ .follow_symlinks = false }) catch |err| switch (err) {
         error.FileNotFound => return, // doesn't exist yet, safe to proceed
         else => |e| {
             std.log.warn("hermes: failed to stat backup path: {s}", .{@errorName(e)});
             return;
         },
     };
-    if ((bak_stat.mode & std.posix.S.IFMT) == std.posix.S.IFLNK) {
+    if (bak_stat.kind == .sym_link) {
         std.log.warn("hermes: backup path is a symlink, refusing to write", .{});
         return;
     }
 
-    const src_file = std.fs.openFileAbsolute(config_path, .{}) catch |err| {
+    const src_file = std.Io.Dir.openFileAbsolute(io.get(), config_path, .{}) catch |err| {
         std.log.warn("hermes: failed to open config for backup: {s}", .{@errorName(err)});
         return;
     };
-    defer src_file.close();
-    const content = src_file.readToEndAlloc(alloc, 4 * 1024 * 1024) catch return;
+    defer src_file.close(io.get());
+    const content = io.readToEndAlloc(src_file, alloc, 4 * 1024 * 1024) catch return;
     defer alloc.free(content);
 
-    const orig_stat = std.fs.cwd().statFile(config_path) catch null;
-    const mode: std.fs.File.Mode = if (orig_stat) |st| (st.mode & 0o777) else 0o644;
+    const orig_stat = std.Io.Dir.cwd().statFile(io.get(), config_path, .{}) catch null;
+    const permissions: std.Io.File.Permissions = if (orig_stat) |st| @enumFromInt(st.permissions.toMode() & 0o777) else @enumFromInt(0o644);
     const tmp_path = std.fmt.allocPrint(alloc, "{s}.tmp", .{bak_path}) catch return;
     defer alloc.free(tmp_path);
-    const tmp = std.fs.createFileAbsolute(tmp_path, .{ .mode = mode, .exclusive = true }) catch return;
-    errdefer std.fs.deleteFileAbsolute(tmp_path) catch {};
-    _ = tmp.writeAll(content) catch return;
-    tmp.close();
+    const tmp = std.Io.Dir.createFileAbsolute(io.get(), tmp_path, .{ .permissions = permissions, .exclusive = true }) catch return;
+    errdefer std.Io.Dir.deleteFileAbsolute(io.get(), tmp_path) catch {};
+    _ = tmp.writeStreamingAll(io.get(), content) catch return;
+    tmp.close(io.get());
 
-    std.fs.renameAbsolute(tmp_path, bak_path) catch |err| {
+    std.Io.Dir.renameAbsolute(tmp_path, bak_path, io.get()) catch |err| {
         std.log.warn("hermes: failed to move backup into place: {s}", .{@errorName(err)});
-        std.fs.deleteFileAbsolute(tmp_path) catch {};
+        std.Io.Dir.deleteFileAbsolute(io.get(), tmp_path) catch {};
     };
 
-    const final_stat = std.fs.cwd().statFile(bak_path) catch return;
-    const bak_file = std.fs.openFileAbsolute(bak_path, .{}) catch return;
-    defer bak_file.close();
-    std.posix.fchmod(bak_file.handle, final_stat.mode & 0o777) catch {};
+    const final_stat = std.Io.Dir.cwd().statFile(io.get(), bak_path, .{}) catch return;
+    const bak_file = std.Io.Dir.openFileAbsolute(io.get(), bak_path, .{}) catch return;
+    defer bak_file.close(io.get());
+    bak_file.setPermissions(io.get(), @enumFromInt(final_stat.permissions.toMode() & 0o777)) catch {};
 }
 
 /// Write content to a file atomically using tmp+rename, preserving original permissions.
@@ -767,18 +767,18 @@ fn writeAtomicConfig(alloc: std.mem.Allocator, path: []const u8, data: []const u
     const tmp_path = try std.fmt.allocPrint(alloc, "{s}.tmp", .{path});
     defer alloc.free(tmp_path);
     // Stat original to preserve permission bits (e.g. 0600 for secrets)
-    const orig_stat = std.fs.cwd().statFile(path) catch null;
-    const mode: std.fs.File.Mode = if (orig_stat) |st| (st.mode & 0o777) else 0o666;
+    const orig_stat = std.Io.Dir.cwd().statFile(io.get(), path, .{}) catch null;
+    const permissions: std.Io.File.Permissions = if (orig_stat) |st| @enumFromInt(st.permissions.toMode() & 0o777) else .default_file;
     // Use exclusive creation to prevent following an existing symlink at the tmp path
-    const tmp = std.fs.createFileAbsolute(tmp_path, .{ .mode = mode, .exclusive = true }) catch return;
-    errdefer std.fs.deleteFileAbsolute(tmp_path) catch {};
-    _ = tmp.writeAll(data) catch return;
-    tmp.close();
+    const tmp = std.Io.Dir.createFileAbsolute(io.get(), tmp_path, .{ .permissions = permissions, .exclusive = true }) catch return;
+    errdefer std.Io.Dir.deleteFileAbsolute(io.get(), tmp_path) catch {};
+    _ = tmp.writeStreamingAll(io.get(), data) catch return;
+    tmp.close(io.get());
     // Verify destination is not a symlink before renaming
-    if (std.fs.cwd().statFile(path)) |stat| {
+    if (std.Io.Dir.cwd().statFile(io.get(), path, .{})) |stat| {
         if (stat.kind == .sym_link) return error.IsSymlink;
     } else |_| {}
-    std.fs.renameAbsolute(tmp_path, path) catch return;
+    std.Io.Dir.renameAbsolute(tmp_path, path, io.get()) catch return;
 }
 
 /// Check if "seance" appears as an actual YAML list item in the plugins.enabled section.
@@ -824,7 +824,7 @@ fn isHermesPluginEnabled(content: []const u8) bool {
 
 /// Remove Hermes plugin and disable it in config.yaml.
 pub fn removeHermesPlugin() void {
-    const home = std.posix.getenv("HOME") orelse return;
+    const home = io.getenv("HOME") orelse return;
     const alloc = std.heap.page_allocator;
 
     const config_path = std.fmt.allocPrint(alloc, "{s}/.hermes/config.yaml", .{home}) catch {
@@ -834,13 +834,13 @@ pub fn removeHermesPlugin() void {
     };
     defer alloc.free(config_path);
 
-    const file = std.fs.openFileAbsolute(config_path, .{}) catch {
+    const file = std.Io.Dir.openFileAbsolute(io.get(), config_path, .{}) catch {
         // Config.yaml missing — clean up plugin files anyway
         deletePluginFiles(alloc, home);
         return;
     };
-    defer file.close();
-    const content = file.readToEndAlloc(alloc, 1024 * 1024) catch {
+    defer file.close(io.get());
+    const content = io.readToEndAlloc(file, alloc, 1024 * 1024) catch {
         deletePluginFiles(alloc, home);
         return;
     };
@@ -887,7 +887,7 @@ pub fn removeHermesPlugin() void {
 
     // Extract the plugins.enabled section content
     const section = content[enabled_idx..section_end];
-    const after_colon = std.mem.trimLeft(u8, section["enabled:".len..], " ");
+    const after_colon = std.mem.trimStart(u8, section["enabled:".len..], " ");
 
     if (after_colon.len > 0 and after_colon[0] == '[') {
         // Inline list: remove seance from the list
@@ -942,7 +942,7 @@ pub fn removeHermesPlugin() void {
         var remaining = section;
         while (remaining.len > 0) {
             // Check if current line is exactly "- seance" (after trimming leading whitespace)
-            const trimmed = std.mem.trimLeft(u8, remaining, " \t");
+            const trimmed = std.mem.trimStart(u8, remaining, " \t");
             if (trimmed.len >= 8 and std.mem.eql(u8, trimmed[0..8], "- seance")) {
                 // Verify word boundary: next char must be whitespace, newline, or end
                 const after_seance = trimmed[8..];
@@ -986,13 +986,13 @@ fn deletePluginFiles(alloc: std.mem.Allocator, home: []const u8) void {
     const plugin_dir = std.fmt.allocPrint(alloc, "{s}/.hermes/plugins/seance", .{home}) catch return;
     defer alloc.free(plugin_dir);
     // Verify directory is not a symlink before recursive deletion
-    if (std.fs.cwd().statFile(plugin_dir)) |stat| {
+    if (std.Io.Dir.cwd().statFile(io.get(), plugin_dir, .{})) |stat| {
         if (stat.kind == .sym_link) {
             std.log.warn("hermes: plugin dir is a symlink, refusing to delete", .{});
             return;
         }
     } else |_| {}
-    std.fs.deleteTreeAbsolute(plugin_dir) catch |err| {
+    std.Io.Dir.cwd().deleteTree(io.get(), plugin_dir) catch |err| {
         if (err != error.FileNotFound) std.log.warn("hermes: failed to remove plugin dir: {s}", .{@errorName(err)});
     };
 
@@ -1001,7 +1001,7 @@ fn deletePluginFiles(alloc: std.mem.Allocator, home: []const u8) void {
     defer alloc.free(hermes_dir);
     const marker_path = std.fmt.allocPrint(alloc, "{s}/.seance-version", .{hermes_dir}) catch return;
     defer alloc.free(marker_path);
-    std.fs.deleteFileAbsolute(marker_path) catch {};
+    std.Io.Dir.deleteFileAbsolute(io.get(), marker_path) catch {};
 }
 
 /// Find the first occurrence of `needle` at the start of a line in `content`.
@@ -1129,9 +1129,9 @@ fn onActivate(app: *c.AdwApplication) callconv(.c) void {
             _ = manager.newWindow();
         }
         // Register UNIX signal handlers for graceful shutdown
-        _ = c.g_unix_signal_add(std.posix.SIG.TERM, &onUnixSignal, @ptrCast(@alignCast(app)));
-        _ = c.g_unix_signal_add(std.posix.SIG.INT, &onUnixSignal, @ptrCast(@alignCast(app)));
-        _ = c.g_unix_signal_add(std.posix.SIG.HUP, &onUnixSignal, @ptrCast(@alignCast(app)));
+        _ = c.g_unix_signal_add(@intFromEnum(std.posix.SIG.TERM), &onUnixSignal, @ptrCast(@alignCast(app)));
+        _ = c.g_unix_signal_add(@intFromEnum(std.posix.SIG.INT), &onUnixSignal, @ptrCast(@alignCast(app)));
+        _ = c.g_unix_signal_add(@intFromEnum(std.posix.SIG.HUP), &onUnixSignal, @ptrCast(@alignCast(app)));
     } else {
         // Subsequent activation (e.g., second instance): new window
         _ = wm.?.newWindow();
@@ -1165,7 +1165,7 @@ fn onShutdown(_: *c.AdwApplication) callconv(.c) void {
 
     // Force-exit — ghostty's thread joins deadlock on Linux because the
     // renderer thread requires the main thread (must_draw_from_app_thread).
-    std.posix.exit(0);
+    std.process.exit(0);
 }
 
 fn onUnixSignal(data: c.gpointer) callconv(.c) c.gboolean {
@@ -1176,7 +1176,7 @@ fn onUnixSignal(data: c.gpointer) callconv(.c) c.gboolean {
 fn registerBundledIcons() void {
     // Resolve exe path via /proc/self/exe, then derive <prefix>/share/icons.
     var buf: [std.fs.max_path_bytes]u8 = undefined;
-    const exe_path = std.fs.selfExePath(&buf) catch return;
+    const exe_path = io.executablePath(&buf) catch return;
     // exe_path is e.g. "/path/to/zig-out/bin/seance"
     // We need "/path/to/zig-out/share/icons"
     const bin_dir = std.fs.path.dirname(exe_path) orelse return;

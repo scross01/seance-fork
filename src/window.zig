@@ -1,4 +1,5 @@
 const std = @import("std");
+const io = @import("io.zig");
 const builtin = @import("builtin");
 const c = @import("c.zig").c;
 const config_mod = @import("config.zig");
@@ -393,17 +394,13 @@ pub const WindowState = struct {
         // Purge notifications for the closing pane
         _ = self.notif_center.store.removeForPane(pane_id);
 
-        // Clean up agent session dirs (deterministic path based on surface id).
+        // Clean up Pi session dirs (deterministic path based on surface id).
         // This handles SIGKILL/OOM where the SessionEnd hook never fires.
-        if (std.posix.getenv("HOME")) |home| {
+        if (io.getenv("HOME")) |home| {
             var path_buf: [std.fs.max_path_bytes]u8 = undefined;
-            const codex_path = std.fmt.bufPrint(&path_buf, "{s}/.cache/seance-codex/{d}", .{ home, pane_id }) catch "";
-            if (codex_path.len > 0) {
-                std.fs.deleteTreeAbsolute(codex_path) catch {};
-            }
             const pi_path = std.fmt.bufPrint(&path_buf, "{s}/.cache/seance-pi/{d}", .{ home, pane_id }) catch "";
             if (pi_path.len > 0) {
-                std.fs.deleteTreeAbsolute(pi_path) catch {};
+                std.Io.Dir.cwd().deleteTree(io.get(), pi_path) catch {};
             }
         }
 
@@ -548,7 +545,6 @@ pub const WindowState = struct {
             if (!r.shell_has_git) {
                 r.git_dirty = git_info.isDirty(alloc, cwd);
             }
-
         }
 
         // Post results back to GTK main thread
@@ -810,6 +806,15 @@ pub const WindowState = struct {
         self.closeWorkspace(self.active_workspace);
     }
 
+    pub fn toggleFullscreen(self: *WindowState) void {
+        const win: *c.GtkWindow = @ptrCast(self.gtk_window);
+        if (c.gtk_window_is_fullscreen(win) != 0) {
+            c.gtk_window_unfullscreen(win);
+        } else {
+            c.gtk_window_fullscreen(win);
+        }
+    }
+
     /// Quit the entire application. Routes through g_application_quit so
     /// onShutdown saves all currently-open windows (with scrollback). If
     /// `confirm_close_window` is enabled and there's interesting state to
@@ -875,13 +880,24 @@ pub const WindowState = struct {
         if (c.gtk_widget_get_visible(popover) != 0) {
             c.gtk_popover_popdown(@ptrCast(popover));
         } else {
-            // In SSD mode the bell anchor lives in the sidebar footer, so we
+            // In SSD mode the anchor lives in the sidebar, so we
             // need the sidebar revealed for the popover to have a parent on
             // screen. In CSD mode the anchor is in the header bar, so leave
             // the sidebar alone.
             if (self.effective_decoration == .ssd and !self.sidebar_visible) {
                 self.sidebar_visible = true;
                 c.gtk_revealer_set_reveal_child(self.sidebar_revealer, 1);
+            }
+            if (self.sidebar.notif_overlay == null) {
+                // Keep keyboard access to notifications when the button bar
+                // is disabled, anchoring at the bottom of the sidebar.
+                const rect = c.GdkRectangle{
+                    .x = @divTrunc(c.gtk_widget_get_width(self.sidebar.widget), 2),
+                    .y = c.gtk_widget_get_height(self.sidebar.widget),
+                    .width = 1,
+                    .height = 1,
+                };
+                c.gtk_popover_set_pointing_to(@ptrCast(popover), &rect);
             }
             self.notif_panel.refresh();
             c.gtk_popover_popup(@ptrCast(popover));
@@ -1004,6 +1020,7 @@ pub const WindowState = struct {
         // in place if the effective mode differs from what's currently
         // displayed).  No-op on windows where the mode hasn't changed.
         self.applyDecorationMode();
+        self.applySidebarButtonBar();
 
         // Refresh sidebar to pick up any sidebar-related config changes
         self.sidebar.refresh();
@@ -1190,18 +1207,25 @@ pub const WindowState = struct {
         c.adw_application_window_set_content(@ptrCast(window), toolbar_view);
 
         self.toolbar_view = @ptrCast(toolbar_view);
+        self.syncFullscreenChrome();
 
         // Push any existing unread count into the fresh badge.
         self.sidebar.refresh();
     }
 
+    fn syncFullscreenChrome(self: *WindowState) void {
+        const tv = self.toolbar_view orelse return;
+        const is_fullscreen = c.gtk_window_is_fullscreen(@ptrCast(self.gtk_window));
+        c.adw_toolbar_view_set_reveal_top_bars(@ptrCast(tv), if (is_fullscreen != 0) 0 else 1);
+    }
+
     /// Build the SSD chrome: the banner_box becomes the window's direct
-    /// content, the sidebar grows a footer with the action buttons, and we
+    /// content, the sidebar optionally grows a footer with action buttons, and we
     /// ask the windowing system to draw decorations.
     fn buildSsdChrome(self: *WindowState) void {
         const window = self.gtk_window;
 
-        self.sidebar.buildFooter();
+        if (self.config.sidebar_show_button_bar) self.sidebar.buildFooter();
 
         c.adw_application_window_set_content(@ptrCast(window), self.banner_box);
         self.toolbar_view = null;
@@ -1209,6 +1233,33 @@ pub const WindowState = struct {
         // Ask the WM to draw SSD.  No-op if SSD isn't available; caller
         // guarantees we only pick ssd when isSsdAvailable() returns true.
         kde_decoration.attachToWindow(@ptrCast(window));
+    }
+
+    fn applySidebarButtonBar(self: *WindowState) void {
+        if (self.effective_decoration != .ssd) return;
+        if (self.config.sidebar_show_button_bar == (self.sidebar.footer != null)) return;
+
+        // Preserve the notification panel before destroying its bell anchor.
+        if (self.notif_popover) |pop| {
+            _ = c.g_object_ref(@ptrCast(pop));
+            c.gtk_popover_popdown(@ptrCast(pop));
+            c.gtk_widget_unparent(pop);
+        }
+        if (self.config.sidebar_show_button_bar) {
+            self.sidebar.buildFooter();
+        } else {
+            self.sidebar.destroyFooter();
+        }
+        if (self.notif_popover) |pop| {
+            self.parentNotificationPopover(pop);
+            c.g_object_unref(@ptrCast(pop));
+        }
+    }
+
+    fn parentNotificationPopover(self: *WindowState, pop: *c.GtkWidget) void {
+        c.gtk_widget_set_parent(pop, self.sidebar.notif_overlay orelse self.sidebar.widget);
+        c.gtk_popover_set_has_arrow(@ptrCast(pop), if (self.sidebar.notif_overlay != null) 1 else 0);
+        c.gtk_popover_set_pointing_to(@ptrCast(pop), null);
     }
 
     /// Toast exactly once per explicit-ssd request when the compositor can't
@@ -1245,6 +1296,7 @@ pub const WindowState = struct {
         var popover_ref: ?*c.GtkWidget = null;
         if (self.notif_popover) |pop| {
             _ = c.g_object_ref(@ptrCast(pop));
+            c.gtk_popover_popdown(@ptrCast(pop));
             c.gtk_widget_unparent(pop);
             popover_ref = pop;
         }
@@ -1285,11 +1337,9 @@ pub const WindowState = struct {
             },
         }
 
-        // Reanchor the notification popover to the new bell overlay.
+        // Reanchor to the bell, or the sidebar when the button bar is disabled.
         if (popover_ref) |pop| {
-            if (self.sidebar.notif_overlay) |anchor| {
-                c.gtk_widget_set_parent(pop, anchor);
-            }
+            self.parentNotificationPopover(pop);
             c.g_object_unref(@ptrCast(pop));
         }
 
@@ -1373,7 +1423,7 @@ pub fn create(wm: *WindowManager) !*WindowState {
 
     // Detect GNOME once and cache on state; the env var is stable for the
     // process lifetime and applyDecorationMode reads it on every reload.
-    const desktop = std.posix.getenv("XDG_CURRENT_DESKTOP") orelse "";
+    const desktop = io.getenv("XDG_CURRENT_DESKTOP") orelse "";
     state.is_gnome = std.mem.indexOf(u8, desktop, "GNOME") != null;
     state.effective_decoration = resolveEffectiveDecoration(config.decoration_mode, state.is_gnome);
 
@@ -1484,13 +1534,11 @@ pub fn create(wm: *WindowManager) !*WindowState {
     // presented.
     state.warnIfSsdUnhonorable();
 
-    // Create notification popover attached to the bell overlay.  The
-    // overlay lives in the CSD header bar or the SSD sidebar footer; the
-    // chrome build above has already set sidebar.notif_overlay accordingly.
+    // Use the bell overlay when present, otherwise anchor to the sidebar
+    // so keyboard access still works with the button bar disabled.
     const notif_popover: *c.GtkWidget = @ptrCast(c.gtk_popover_new());
-    c.gtk_widget_set_parent(notif_popover, state.sidebar.notif_overlay.?);
+    state.parentNotificationPopover(notif_popover);
     c.gtk_widget_add_css_class(notif_popover, "notification-popover");
-    c.gtk_popover_set_has_arrow(@ptrCast(notif_popover), 1);
     c.gtk_popover_set_child(@ptrCast(notif_popover), state.notif_panel.container);
     state.notif_popover = notif_popover;
     state.notif_panel.popover = notif_popover;
@@ -1549,6 +1597,16 @@ pub fn create(wm: *WindowManager) !*WindowState {
         @as(c.gpointer, @ptrCast(window)),
         "notify::is-active",
         @as(c.GCallback, @ptrCast(&onWindowFocusChanged)),
+        @ptrCast(state),
+        null,
+        0,
+    );
+
+    // Hide CSD title bar when entering fullscreen
+    _ = c.g_signal_connect_data(
+        @as(c.gpointer, @ptrCast(window)),
+        "notify::fullscreened",
+        @as(c.GCallback, @ptrCast(&onFullscreenChanged)),
         @ptrCast(state),
         null,
         0,
@@ -1695,6 +1753,11 @@ fn onWindowFocusChanged(_: *c.GObject, _: ?*anyopaque, data: c.gpointer) callcon
             fp.triggerFlash();
         }
     }
+}
+
+fn onFullscreenChanged(_: *c.GObject, _: ?*anyopaque, data: c.gpointer) callconv(.c) void {
+    const state: *WindowState = @ptrCast(@alignCast(data));
+    state.syncFullscreenChrome();
 }
 
 fn onWorkspaceSelect(index: usize) void {
@@ -2121,8 +2184,8 @@ fn loadThemeCss() void {
     const accent_fg: []const u8 = &colors.accent_fg;
     const notify: []const u8 = &colors.notify_border;
     var css_buf: [10240]u8 = undefined;
-    var stream = std.io.fixedBufferStream(&css_buf);
-    const w = stream.writer();
+    var stream = std.Io.Writer.fixed(&css_buf);
+    const w = &stream;
 
     // Override libadwaita's named colors with the terminal theme colors
     // so that all UI chrome (@window_bg_color, @window_fg_color refs) matches the terminal.
@@ -2310,7 +2373,7 @@ fn loadThemeCss() void {
         \\
     , .{}) catch return;
 
-    const pos = stream.pos;
+    const pos = stream.end;
     if (pos >= css_buf.len) return;
     css_buf[pos] = 0;
 

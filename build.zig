@@ -1,4 +1,5 @@
 const std = @import("std");
+const translate_c = @import("translate_c");
 
 // Force pkg-config for every system library so a missing module fails
 // loudly with the module name instead of falling back to a literal
@@ -12,8 +13,7 @@ const sys_lib: std.Build.Module.LinkSystemLibraryOptions = .{ .use_pkg_config = 
 /// linker search paths or a Zig build-runner panic stack trace.
 /// All missing modules are reported in a single message.
 fn requirePkgConfig(b: *std.Build, modules: []const []const u8) void {
-    _ = std.process.Child.run(.{
-        .allocator = b.allocator,
+    _ = std.process.run(b.allocator, b.graph.io, .{
         .argv = &.{ "pkg-config", "--version" },
     }) catch {
         std.log.err("pkg-config not found on PATH. Install pkg-config and the GTK4 development libraries.", .{});
@@ -22,15 +22,14 @@ fn requirePkgConfig(b: *std.Build, modules: []const []const u8) void {
 
     var missing: std.ArrayList([]const u8) = .empty;
     for (modules) |m| {
-        const result = std.process.Child.run(.{
-            .allocator = b.allocator,
+        const result = std.process.run(b.allocator, b.graph.io, .{
             .argv = &.{ "pkg-config", "--exists", m },
         }) catch {
             missing.append(b.allocator, m) catch @panic("OOM");
             continue;
         };
         switch (result.term) {
-            .Exited => |code| if (code != 0) missing.append(b.allocator, m) catch @panic("OOM"),
+            .exited => |code| if (code != 0) missing.append(b.allocator, m) catch @panic("OOM"),
             else => missing.append(b.allocator, m) catch @panic("OOM"),
         }
     }
@@ -55,7 +54,9 @@ fn addSeanceDeps(
     is_linux: bool,
     is_darwin: bool,
     ghostty_dep: *std.Build.Dependency,
+    c_module: *std.Build.Module,
 ) void {
+    mod.addImport("seance-c", c_module);
     mod.linkSystemLibrary("gtk4", sys_lib);
     mod.linkSystemLibrary("libadwaita-1", sys_lib);
 
@@ -88,9 +89,11 @@ fn addSeanceDeps(
     }
 
     mod.link_libc = true;
+    // The combined Ghostty archive contains C++ dependencies (shaders, ImGui).
+    mod.link_libcpp = true;
 
     // Ghostty (libghostty) — terminal emulation, rendering, fonts.
-    mod.linkLibrary(ghostty_dep.artifact("ghostty_static"));
+    mod.addObjectFile(ghostty_dep.namedLazyPath("ghostty_static"));
     mod.addIncludePath(ghostty_dep.path("include"));
 
     // System libraries used internally by libghostty. When ghostty is
@@ -160,8 +163,28 @@ pub fn build(b: *std.Build) void {
     // Ghostty (libghostty) — terminal emulation, rendering, fonts
     const ghostty_dep = b.dependency("ghostty", .{
         .@"app-runtime" = .none,
+        .@"emit-lib-vt" = false,
+        .@"skip-macos-artifacts" = true,
         .optimize = optimize,
     });
+
+    // Zig 0.16's bundled @cImport cannot translate current GTK headers.
+    // Share the patched external translator used by Ghostty.
+    var c_libs: std.ArrayList(translate_c.Translator.LinkSystemLib) = .empty;
+    for ([_][]const u8{ "gtk4", "libadwaita-1" }) |name|
+        c_libs.append(b.allocator, .{ .name = name, .options = sys_lib }) catch @panic("OOM");
+    if (is_linux) {
+        for ([_][]const u8{ "libnotify", "libcanberra", "webkitgtk-6.0", "x11", "wayland-client" }) |name|
+            c_libs.append(b.allocator, .{ .name = name, .options = sys_lib }) catch @panic("OOM");
+    }
+    const translated: translate_c.Translator = .init(b.dependency("translate_c", .{}), .{
+        .c_source_file = b.path("src/c.h"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+        .link_system_libs = c_libs.items,
+    });
+    translated.addIncludePath(ghostty_dep.path("include"));
 
     const exe_mod = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
@@ -170,7 +193,7 @@ pub fn build(b: *std.Build) void {
         .strip = strip,
         .pic = true,
     });
-    addSeanceDeps(exe_mod, b, is_linux, is_darwin, ghostty_dep);
+    addSeanceDeps(exe_mod, b, is_linux, is_darwin, ghostty_dep, translated.mod);
 
     const exe = b.addExecutable(.{
         .name = "seance",
@@ -184,15 +207,17 @@ pub fn build(b: *std.Build) void {
     b.installDirectory(.{
         .source_dir = b.path("resources/shell-integration"),
         .install_dir = .prefix,
-        .install_subdir = "share/shell-integration",
+        .install_subdir = "share/seance/shell-integration",
     });
 
     // Install wrapper scripts (claude wrapper, etc.)
     b.installDirectory(.{
         .source_dir = b.path("resources/bin"),
         .install_dir = .prefix,
-        .install_subdir = "share/bin",
+        .install_subdir = "share/seance/bin",
     });
+
+    b.installFile("resources/opencode/seance.mjs", "share/seance/opencode/seance.mjs");
 
     // Install bundled icons (from GNOME Icon Library) into hicolor theme
     b.installDirectory(.{
@@ -254,7 +279,7 @@ pub fn build(b: *std.Build) void {
         tic.addArgs(&.{ "tic", "-x", "-o" });
         const terminfo_db = tic.addOutputDirectoryArg("terminfo");
         tic.addFileArg(b.path("resources/terminfo/ghostty.terminfo"));
-        _ = tic.captureStdErr();
+        _ = tic.captureStdErr(.{});
 
         b.installDirectory(.{
             .source_dir = terminfo_db,
@@ -311,11 +336,12 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run unit tests");
 
     // Standalone tests (no external dependencies)
-    for ([_][]const u8{ "src/osc_parser.zig", "src/port_scan.zig", "src/ctl.zig" }) |src| {
+    for ([_][]const u8{ "src/ime_state.zig", "src/osc_parser.zig", "src/port_scan.zig", "src/io.zig", "src/posix.zig", "src/opencode.zig", "src/ctl.zig" }) |src| {
         const mod = b.createModule(.{
             .root_source_file = b.path(src),
             .target = target,
             .optimize = optimize,
+            .link_libc = true,
         });
         const t = b.addTest(.{ .root_module = mod });
         test_step.dependOn(&b.addRunArtifact(t).step);
@@ -348,13 +374,14 @@ pub fn build(b: *std.Build) void {
     }
 
     // Tests for files that need GTK/ghostty
-    for ([_][]const u8{ "src/config.zig", "src/keybinds.zig", "src/notification.zig", "src/workspace.zig", "src/session.zig", "src/socket_server.zig", "src/web_panel.zig" }) |src| {
+    for ([_][]const u8{ "src/config.zig", "src/keybinds.zig", "src/notification.zig", "src/pane.zig", "src/workspace.zig", "src/session.zig", "src/socket_server.zig", "src/web_panel.zig" }) |src| {
         const test_mod = b.createModule(.{
             .root_source_file = b.path(src),
             .target = target,
             .optimize = optimize,
+            .link_libc = true,
         });
-        addSeanceDeps(test_mod, b, is_linux, is_darwin, ghostty_dep);
+        addSeanceDeps(test_mod, b, is_linux, is_darwin, ghostty_dep, translated.mod);
 
         const t = b.addTest(.{
             .root_module = test_mod,

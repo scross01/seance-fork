@@ -4,7 +4,8 @@
 //    or: seance <command> [args...]  (when symlinked)
 
 const std = @import("std");
-const posix = std.posix;
+const io = @import("io.zig");
+const posix = @import("posix.zig");
 const Allocator = std.mem.Allocator;
 const JsonValue = std.json.Value;
 const Stringify = std.json.Stringify;
@@ -12,11 +13,11 @@ const Stringify = std.json.Stringify;
 // ── Entry point ─────────────────────────────────────────────────────────
 
 /// Run the CLI. `skip` is how many argv entries to skip (1 for "seance", 2 for "seance ctl").
-pub fn run(skip: usize) u8 {
+pub fn run(process_args: std.process.Args, skip: usize) u8 {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     const alloc = arena.allocator();
 
-    const all_args = std.process.argsAlloc(alloc) catch {
+    const all_args = process_args.toSlice(alloc) catch {
         werr("seance: failed to read arguments\n");
         return 1;
     };
@@ -144,6 +145,9 @@ fn dispatch(ctx: Ctx, command: []const u8) u8 {
     if (eql(command, "codex-hook")) return cmdCodexHook(ctx);
     if (eql(command, "pi-hook")) return cmdPiHook(ctx);
     if (eql(command, "opencode-hook")) return cmdOpencodeHook(ctx);
+    if (eql(command, "opencode-config")) return cmdOpencodeConfig(ctx);
+    if (eql(command, "antigravity-config")) return cmdAntigravityConfig(ctx);
+    if (eql(command, "antigravity-hook")) return cmdAntigravityHook(ctx);
     if (eql(command, "kilo-hook")) return cmdKiloHook(ctx);
     if (eql(command, "mimocode-hook")) return cmdMimocodeHook(ctx);
     if (eql(command, "vibe-hook")) return cmdVibeHook(ctx);
@@ -198,7 +202,7 @@ fn apiCall(alloc: Allocator, socket_path: []const u8, method: []const u8, params
     else
         std.fmt.allocPrint(alloc, "{{\"id\":\"1\",\"method\":\"{s}\"}}\n", .{method}) catch return SocketErr.WriteFailed;
 
-    std.fs.accessAbsolute(socket_path, .{}) catch return SocketErr.NotRunning;
+    std.Io.Dir.accessAbsolute(io.get(), socket_path, .{}) catch return SocketErr.NotRunning;
 
     const sock = posix.socket(posix.AF.UNIX, posix.SOCK.STREAM, 0) catch return SocketErr.ConnectFailed;
     defer posix.close(sock);
@@ -253,7 +257,7 @@ fn apiCall(alloc: Allocator, socket_path: []const u8, method: []const u8, params
         return SocketErr.ReadFailed;
     }
 
-    const result = parsed.value.object.get("result") orelse JsonValue{ .object = std.json.ObjectMap.init(alloc) };
+    const result = parsed.value.object.get("result") orelse JsonValue{ .object = .empty };
 
     return ApiResponse{
         .ok = true,
@@ -1224,7 +1228,7 @@ const codex_agent = AgentConfig{
     .display_name = "Codex CLI",
     .usage = "usage: codex-hook <session-start|session-end|prompt-submit|pre-tool-use|post-tool-use|stop>\n",
     .pid_env = "SEANCE_CODEX_PID",
-    .response = "{\"continue\":true}\n",
+    .response = "{}\n",
     .status_key_prefix = "codex",
     .status_key_mode = .surface,
     .has_ask_user_handling = false,
@@ -1263,6 +1267,80 @@ const opencode_agent = AgentConfig{
     .clear_status_on_end = true,
     .session_dir_env = "SEANCE_OPENCODE_SESSION_DIR",
 };
+
+const antigravity_agent = AgentConfig{
+    .name = "Antigravity",
+    .display_name = "Antigravity CLI",
+    .usage = "usage: antigravity-hook <state|session-end>\n",
+    .pid_env = "SEANCE_AGY_PID",
+    .response = "",
+    .status_key_prefix = "antigravity",
+    .status_key_mode = .surface,
+    .has_ask_user_handling = false,
+    .has_notification_hook = false,
+    .has_post_tool_hook = false,
+    .clear_status_on_end = true,
+    .session_dir_env = null,
+};
+
+fn cmdAntigravityConfig(ctx: Ctx) u8 {
+    if (ctx.rest.len != 1) return 1;
+    @import("antigravity.zig").install(ctx.alloc, ctx.rest[0]) catch |err| {
+        werr(std.fmt.allocPrint(ctx.alloc, "seance: could not enable Antigravity tracking: {s}\n", .{@errorName(err)}) catch "seance: could not enable Antigravity tracking\n");
+        return 1;
+    };
+    return 0;
+}
+
+fn cmdAntigravityHook(ctx: Ctx) u8 {
+    const agy = @import("antigravity.zig");
+    if (ctx.rest.len != 1) return 1;
+    const ending = eql(ctx.rest[0], "session-end");
+    if (!ending and !eql(ctx.rest[0], "state")) return 1;
+    const directory = io.getenv("SEANCE_AGY_SESSION_DIR") orelse return 0;
+    const input = if (ending) "{}" else io.readToEndAlloc(.stdin(), ctx.alloc, 1024 * 1024) catch return 1;
+    var tracker = agy.Tracker.open(ctx.alloc, directory) catch return 0;
+    defer tracker.close();
+    if (tracker.state.closed) return 0;
+    const h = HookCtx{
+        .alloc = ctx.alloc,
+        .socket_path = ctx.socket_path,
+        .input = .null,
+        .session_id = null,
+        .workspace = ctx.workspace orelse envInt("SEANCE_WORKSPACE_ID"),
+        .surface = ctx.surface orelse envInt("SEANCE_SURFACE_ID"),
+        .store = SessionStore.init(ctx.alloc),
+        .agent = antigravity_agent,
+    };
+    if (ending) {
+        tracker.state.closed = true;
+        tracker.save(ctx.alloc, tracker.state) catch return 1;
+        return agentHookSessionEnd(h);
+    }
+    const parsed = std.json.parseFromSlice(agy.Snapshot, ctx.alloc, input, .{ .ignore_unknown_fields = true }) catch return 1;
+    const update = agy.transition(tracker.state, parsed.value) orelse return 0;
+    if (!update.changed) return 0;
+    if (h.workspace) |ws| {
+        trySetAgentStatus(h, ws, update.state.phase.label(), if (update.state.phase == .idle or update.state.phase == .failed) 5 else 10) catch return 1;
+        if (update.notification != .none) {
+            const title = if (update.notification == .permission) "Antigravity needs input" else "Antigravity is idle";
+            const body = if (update.notification == .permission) "A tool is waiting for your approval." else parsed.value.cwd;
+            emitNotification(h, ws, title, body, isWorkspaceFocused(h.alloc, h.socket_path, ws));
+        }
+    }
+    tracker.save(ctx.alloc, update.state) catch return 1;
+    return 0;
+}
+
+fn cmdOpencodeConfig(ctx: Ctx) u8 {
+    if (ctx.rest.len != 1) return 1;
+    const content = @import("opencode.zig").withPlugin(ctx.alloc, io.getenv("OPENCODE_CONFIG_CONTENT") orelse "", ctx.rest[0]) catch {
+        werr("seance: could not add OpenCode plugin to inline config\n");
+        return 1;
+    };
+    wout(content);
+    return 0;
+}
 
 const mimocode_agent = AgentConfig{
     .name = "MiMoCode",
@@ -1420,13 +1498,12 @@ fn cmdFreebuffHook(ctx: Ctx) u8 {
 }
 
 fn cmdSubagentUpdate(ctx: Ctx) u8 {
-    const stdin_file: std.fs.File = .stdin();
-    const stdin_data = stdin_file.readToEndAlloc(ctx.alloc, 1024 * 1024) catch "";
+    const stdin_data = io.readToEndAlloc(.stdin(), ctx.alloc, 1024 * 1024) catch "";
     const input = blk: {
         const trimmed = std.mem.trim(u8, stdin_data, &[_]u8{ '\r', '\n', ' ' });
-        if (trimmed.len == 0) break :blk JsonValue{ .object = std.json.ObjectMap.init(ctx.alloc) };
+        if (trimmed.len == 0) break :blk JsonValue{ .object = .empty };
         const parsed = std.json.parseFromSlice(JsonValue, ctx.alloc, trimmed, .{}) catch
-            break :blk JsonValue{ .object = std.json.ObjectMap.init(ctx.alloc) };
+            break :blk JsonValue{ .object = .empty };
         break :blk parsed.value;
     };
     const ws_id = getJsonInt(input, "workspace_id") orelse envInt("SEANCE_WORKSPACE_ID") orelse {
@@ -1444,13 +1521,12 @@ fn cmdSubagentUpdate(ctx: Ctx) u8 {
 }
 
 fn cmdSetIdle(ctx: Ctx) u8 {
-    const stdin_file: std.fs.File = .stdin();
-    const stdin_data = stdin_file.readToEndAlloc(ctx.alloc, 1024 * 1024) catch "";
+    const stdin_data = io.readToEndAlloc(.stdin(), ctx.alloc, 1024 * 1024) catch "";
     const input = blk: {
         const trimmed = std.mem.trim(u8, stdin_data, &[_]u8{ '\r', '\n', ' ' });
-        if (trimmed.len == 0) break :blk JsonValue{ .object = std.json.ObjectMap.init(ctx.alloc) };
+        if (trimmed.len == 0) break :blk JsonValue{ .object = .empty };
         const parsed = std.json.parseFromSlice(JsonValue, ctx.alloc, trimmed, .{}) catch
-            break :blk JsonValue{ .object = std.json.ObjectMap.init(ctx.alloc) };
+            break :blk JsonValue{ .object = .empty };
         break :blk parsed.value;
     };
     const ws_id = getJsonInt(input, "workspace_id") orelse envInt("SEANCE_WORKSPACE_ID") orelse {
@@ -1845,13 +1921,13 @@ fn cmdAgentHook(ctx: Ctx, agent: AgentConfig) u8 {
     }
 
     // Read stdin (hook payload)
-    const stdin_file: std.fs.File = .stdin();
-    const stdin_data = stdin_file.readToEndAlloc(ctx.alloc, 1024 * 1024) catch "";
+    const stdin_file: std.Io.File = .stdin();
+    const stdin_data = io.readToEndAlloc(stdin_file, ctx.alloc, 1024 * 1024) catch "";
     const input = blk: {
         const trimmed = std.mem.trim(u8, stdin_data, &[_]u8{ '\r', '\n', ' ' });
-        if (trimmed.len == 0) break :blk JsonValue{ .object = std.json.ObjectMap.init(ctx.alloc) };
+        if (trimmed.len == 0) break :blk JsonValue{ .object = .empty };
         const parsed = std.json.parseFromSlice(JsonValue, ctx.alloc, trimmed, .{}) catch
-            break :blk JsonValue{ .object = std.json.ObjectMap.init(ctx.alloc) };
+            break :blk JsonValue{ .object = .empty };
         break :blk parsed.value;
     };
 
@@ -1900,15 +1976,33 @@ fn cmdAgentHook(ctx: Ctx, agent: AgentConfig) u8 {
     if (eql(hook_cmd, "approval-request")) return agentHookApprovalRequest(h);
     if (eql(hook_cmd, "approval-response")) return agentHookApprovalResponse(h);
     if (eql(hook_cmd, "interrupt")) return agentHookInterrupt(h);
+    if (eql(agent.name, "OpenCode") and eql(hook_cmd, "state")) return agentHookOpenCodeState(h);
 
     wfmt("seance: unknown hook '{s}'\n", .{hook_cmd});
     return 1;
 }
 
+fn agentHookOpenCodeState(h: HookCtx) u8 {
+    const state = getNestedString(h.input, "state") orelse return 1;
+    if (!eql(state, "Running") and !eql(state, "Idle") and !eql(state, "Needs input")) return 1;
+    if (h.workspace) |workspace| {
+        setAgentStatus(h, workspace, state, if (eql(state, "Idle")) 5 else 10);
+        if (getNestedString(h.input, "title")) |title| {
+            emitNotification(h, workspace, title, getNestedString(h.input, "message") orelse "", isWorkspaceFocused(h.alloc, h.socket_path, workspace));
+        }
+    }
+    wout(h.agent.response);
+    return 0;
+}
+
 fn setAgentStatus(h: HookCtx, ws: u64, value: []const u8, priority: i32) void {
+    trySetAgentStatus(h, ws, value, priority) catch {};
+}
+
+fn trySetAgentStatus(h: HookCtx, ws: u64, value: []const u8, priority: i32) !void {
     const sk = jsonEscapeAlloc(h.alloc, h.getStatusKey());
-    const p = std.fmt.allocPrint(h.alloc, "{{\"workspace_id\":{d},\"key\":\"{s}\",\"value\":\"{s}\",\"priority\":{d},\"is_agent\":true,\"display_name\":\"{s}\"}}", .{ ws, sk, jsonEscapeAlloc(h.alloc, value), priority, h.agent.name }) catch null;
-    _ = apiCall(h.alloc, h.socket_path, "workspace.set_status", p) catch {};
+    const p = try std.fmt.allocPrint(h.alloc, "{{\"workspace_id\":{d},\"key\":\"{s}\",\"value\":\"{s}\",\"priority\":{d},\"is_agent\":true,\"display_name\":\"{s}\"}}", .{ ws, sk, jsonEscapeAlloc(h.alloc, value), priority, h.agent.name });
+    _ = try apiCall(h.alloc, h.socket_path, "workspace.set_status", p);
 }
 
 fn statusWithSubagentCount(alloc: Allocator, base: []const u8, count: u64) []const u8 {
@@ -1943,7 +2037,7 @@ fn agentHookSessionStart(h: HookCtx) u8 {
         if (h.workspace) |w| fields.putInt("workspace_id", w);
         if (h.surface) |s| fields.putInt("surface_id", s);
         fields.putInt("pid", pid);
-        fields.putFloat("started_at", @floatFromInt(std.time.timestamp()));
+        fields.putFloat("started_at", @floatFromInt(io.timestamp()));
         if (cwd) |c| fields.putStr("cwd", c);
         h.store.upsert(sid, fields);
     }
@@ -2109,7 +2203,7 @@ fn agentHookNotification(h: HookCtx) u8 {
     var body = summary.body;
 
     // Debug: log what summarizeNotification found
-    if (std.posix.getenv("SEANCE_DEBUG")) |_| {
+    if (io.getenv("SEANCE_DEBUG")) |_| {
         std.log.info("agentHookNotification: subtitle={s} body={s}", .{ summary.subtitle, body });
     }
 
@@ -2221,9 +2315,9 @@ fn agentHookSessionEnd(h: HookCtx) u8 {
     }
 
     if (h.agent.session_dir_env) |env_name| {
-        if (std.posix.getenv(env_name)) |dir| {
+        if (io.getenv(env_name)) |dir| {
             if (isValidSessionDir(dir)) {
-                std.fs.deleteTreeAbsolute(dir) catch {};
+                std.Io.Dir.cwd().deleteTree(io.get(), dir) catch {};
             } else {
                 std.log.warn("seance: refusing to delete unexpected session dir: {s}", .{dir});
             }
@@ -2237,7 +2331,7 @@ fn agentHookSessionEnd(h: HookCtx) u8 {
 // ── Hook helpers ────────────────────────────────────────────────────────
 
 fn isValidSessionDir(dir: []const u8) bool {
-    const home = std.posix.getenv("HOME") orelse return false;
+    const home = io.getenv("HOME") orelse return false;
     const cache_prefixes = [_][]const u8{ "/.cache/seance-codex/", "/.cache/seance-pi/" };
     for (cache_prefixes) |prefix| {
         // Check for $HOME/.cache/seance-<agent>/<id>
@@ -2441,10 +2535,10 @@ const SessionStore = struct {
     alloc: Allocator,
 
     fn init(alloc: Allocator) SessionStore {
-        if (std.posix.getenv("SEANCE_CLAUDE_HOOK_STATE_PATH")) |p| {
+        if (io.getenv("SEANCE_CLAUDE_HOOK_STATE_PATH")) |p| {
             return .{ .path = p, .alloc = alloc };
         }
-        const home = std.posix.getenv("HOME") orelse "/tmp";
+        const home = io.getenv("HOME") orelse "/tmp";
         const path = std.fmt.allocPrint(alloc, "{s}/.seance/claude-hook-sessions.json", .{home}) catch "/tmp/claude-hook-sessions.json";
         return .{ .path = path, .alloc = alloc };
     }
@@ -2458,9 +2552,9 @@ const SessionStore = struct {
 
     fn upsert(self: SessionStore, session_id: []const u8, fields: JsonFields) void {
         var data = self.readStore() orelse blk: {
-            var obj = std.json.ObjectMap.init(self.alloc);
-            obj.put("version", JsonValue{ .integer = 1 }) catch return;
-            obj.put("sessions", JsonValue{ .object = std.json.ObjectMap.init(self.alloc) }) catch return;
+            var obj: std.json.ObjectMap = .empty;
+            obj.put(self.alloc, "version", JsonValue{ .integer = 1 }) catch return;
+            obj.put(self.alloc, "sessions", JsonValue{ .object = .empty }) catch return;
             break :blk JsonValue{ .object = obj };
         };
 
@@ -2468,17 +2562,17 @@ const SessionStore = struct {
         if (sessions.* != .object) return;
 
         if (!sessions.object.contains(session_id)) {
-            var rec = std.json.ObjectMap.init(self.alloc);
-            rec.put("session_id", JsonValue{ .string = session_id }) catch {};
-            sessions.object.put(session_id, JsonValue{ .object = rec }) catch {};
+            var rec: std.json.ObjectMap = .empty;
+            rec.put(self.alloc, "session_id", JsonValue{ .string = session_id }) catch {};
+            sessions.object.put(self.alloc, session_id, JsonValue{ .object = rec }) catch {};
         }
 
         if (sessions.object.getPtr(session_id)) |rec_ptr| {
             if (rec_ptr.* == .object) {
                 for (fields.keys.items, fields.values.items) |k, v| {
-                    rec_ptr.object.put(k, v) catch {};
+                    rec_ptr.object.put(self.alloc, k, v) catch {};
                 }
-                rec_ptr.object.put("updated_at", JsonValue{ .float = @floatFromInt(std.time.timestamp()) }) catch {};
+                rec_ptr.object.put(self.alloc, "updated_at", JsonValue{ .float = @floatFromInt(io.timestamp()) }) catch {};
             }
         }
 
@@ -2500,9 +2594,9 @@ const SessionStore = struct {
     }
 
     fn readStore(self: SessionStore) ?JsonValue {
-        const file = std.fs.openFileAbsolute(self.path, .{}) catch return null;
-        defer file.close();
-        const content = file.readToEndAlloc(self.alloc, 1024 * 1024) catch return null;
+        const file = std.Io.Dir.openFileAbsolute(io.get(), self.path, .{}) catch return null;
+        defer file.close(io.get());
+        const content = io.readToEndAlloc(file, self.alloc, 1024 * 1024) catch return null;
         if (content.len == 0) return null;
         const parsed = std.json.parseFromSlice(JsonValue, self.alloc, content, .{}) catch return null;
         if (parsed.value != .object) return null;
@@ -2515,7 +2609,7 @@ const SessionStore = struct {
     fn writeStore(self: SessionStore, data: JsonValue) void {
         // Ensure parent directory exists
         if (std.mem.lastIndexOfScalar(u8, self.path, '/')) |sep| {
-            std.fs.makeDirAbsolute(self.path[0..sep]) catch |e| switch (e) {
+            std.Io.Dir.createDirAbsolute(io.get(), self.path[0..sep], .default_dir) catch |e| switch (e) {
                 error.PathAlreadyExists => {},
                 else => return,
             };
@@ -2525,19 +2619,19 @@ const SessionStore = struct {
         var tmp_buf: [std.fs.max_path_bytes]u8 = undefined;
         const tmp_path = std.fmt.bufPrint(&tmp_buf, "{s}.tmp", .{self.path}) catch return;
 
-        const file = std.fs.createFileAbsolute(tmp_path, .{}) catch return;
+        const file = std.Io.Dir.createFileAbsolute(io.get(), tmp_path, .{}) catch return;
+        defer file.close(io.get());
 
         const json_bytes = Stringify.valueAlloc(self.alloc, data, .{ .whitespace = .indent_2 }) catch return;
-        file.writeAll(json_bytes) catch return;
-        file.close();
+        file.writeStreamingAll(io.get(), json_bytes) catch return;
 
         // Atomic rename — on Linux, rename(2) is atomic for same-filesystem
-        std.fs.renameAbsolute(tmp_path, self.path) catch {};
+        std.Io.Dir.renameAbsolute(tmp_path, self.path, io.get()) catch {};
     }
 
     fn pruneOld(self: SessionStore, sessions: *JsonValue) void {
         if (sessions.* != .object) return;
-        const cutoff: f64 = @floatFromInt(std.time.timestamp() - 7 * 86400);
+        const cutoff: f64 = @floatFromInt(io.timestamp() - 7 * 86400);
         var to_remove: std.ArrayList([]const u8) = .empty;
         var it = sessions.object.iterator();
         while (it.next()) |entry| {
@@ -2705,19 +2799,19 @@ fn prettyLabel(key: []const u8) []const u8 {
 }
 
 fn wout(s: []const u8) void {
-    const f: std.fs.File = .stdout();
-    f.writeAll(s) catch {};
+    const f: std.Io.File = .stdout();
+    f.writeStreamingAll(io.get(), s) catch {};
 }
 
 fn werr(s: []const u8) void {
-    const f: std.fs.File = .stderr();
-    f.writeAll(s) catch {};
+    const f: std.Io.File = .stderr();
+    f.writeStreamingAll(io.get(), s) catch {};
 }
 
 fn wfmt(comptime fmt: []const u8, args: anytype) void {
-    const f: std.fs.File = .stdout();
+    const f: std.Io.File = .stdout();
     var buf: [4096]u8 = undefined;
-    var w = f.writer(&buf);
+    var w = f.writer(io.get(), &buf);
     w.interface.print(fmt, args) catch {};
     w.interface.flush() catch {};
 }
@@ -2733,7 +2827,7 @@ fn parseU64(s: []const u8) ?u64 {
 }
 
 fn envInt(name: []const u8) ?u64 {
-    const val = std.posix.getenv(name) orelse return null;
+    const val = io.getenv(name) orelse return null;
     return parseU64(val);
 }
 
@@ -2749,12 +2843,12 @@ fn findNamedArg(args: []const []const u8, name: []const u8) ?[]const u8 {
 
 fn getSocketPath(override: ?[]const u8, buf: []u8) ?[]const u8 {
     if (override) |p| return p;
-    if (std.posix.getenv("SEANCE_SOCKET_PATH")) |p| return p;
+    if (io.getenv("SEANCE_SOCKET_PATH")) |p| return p;
     // Match SocketServer.resolvedPath: prefer XDG_RUNTIME_DIR, fall back to $HOME/.seance/
-    if (std.posix.getenv("XDG_RUNTIME_DIR")) |runtime_dir| {
+    if (io.getenv("XDG_RUNTIME_DIR")) |runtime_dir| {
         return std.fmt.bufPrint(buf, "{s}/seance/seance.sock", .{runtime_dir}) catch null;
     }
-    const home = std.posix.getenv("HOME") orelse return null;
+    const home = io.getenv("HOME") orelse return null;
     return std.fmt.bufPrint(buf, "{s}/.seance/seance.sock", .{home}) catch null;
 }
 
@@ -2892,9 +2986,11 @@ fn printUsage() void {
         \\            pre-tool-use, post-tool-use, stop, notification
         \\
         \\Freebuff Hooks:
-        \\  freebuff-hook <event>   Handle Freebuff lifecycle event
-        \\    Events: session-start, session-end, prompt-submit,
-        \\            pre-tool-use, post-tool-use, stop, notification
+        \\
+        \\Antigravity CLI Hooks:
+        \\  antigravity-hook <state|session-end>  Track Antigravity CLI status
+        \\  antigravity-config <settings.json>   Install its status callback
+        \\
     );
 }
 
@@ -2903,18 +2999,18 @@ fn printUsage() void {
 // ---------------------------------------------------------------------------
 
 fn makeTempStore(alloc: Allocator) !SessionStore {
-    const base = std.posix.getenv("TMPDIR") orelse "/tmp";
-    const ts = std.time.timestamp();
+    const base = io.getenv("TMPDIR") orelse "/tmp";
+    const ts = io.timestamp();
     const dir_path = try std.fmt.allocPrint(alloc, "{s}/seance-test-ctl-{d}", .{ base, ts });
-    try std.fs.makeDirAbsolute(dir_path);
+    try std.Io.Dir.createDirAbsolute(io.get(), dir_path, .default_dir);
     const file_path = try std.fmt.allocPrint(alloc, "{s}/store.json", .{dir_path});
     return SessionStore{ .path = file_path, .alloc = alloc };
 }
 
 fn cleanupTempStore(store: SessionStore) void {
-    std.posix.unlink(store.path) catch {};
+    std.Io.Dir.deleteFileAbsolute(io.get(), store.path) catch {};
     if (std.fs.path.dirname(store.path)) |dir| {
-        std.fs.cwd().deleteDir(dir) catch {};
+        std.Io.Dir.deleteDirAbsolute(io.get(), dir) catch {};
     }
 }
 
@@ -3046,8 +3142,8 @@ test "SessionStore: readStore returns null for empty file" {
     var store = try makeTempStore(alloc);
     defer cleanupTempStore(store);
 
-    const file = try std.fs.createFileAbsolute(store.path, .{});
-    file.close();
+    const file = try std.Io.Dir.createFileAbsolute(io.get(), store.path, .{});
+    defer file.close(io.get());
 
     try std.testing.expect(store.readStore() == null);
 }
@@ -3059,9 +3155,9 @@ test "SessionStore: readStore returns null for invalid version" {
     var store = try makeTempStore(alloc);
     defer cleanupTempStore(store);
 
-    const file = try std.fs.createFileAbsolute(store.path, .{});
-    try file.writeAll("{\"version\":2,\"sessions\":{}}");
-    file.close();
+    const file = try std.Io.Dir.createFileAbsolute(io.get(), store.path, .{});
+    try file.writeStreamingAll(io.get(), "{\"version\":2,\"sessions\":{}}");
+    file.close(io.get());
 
     try std.testing.expect(store.readStore() == null);
 }
@@ -3073,9 +3169,9 @@ test "SessionStore: readStore returns null for non-object root" {
     var store = try makeTempStore(alloc);
     defer cleanupTempStore(store);
 
-    const file = try std.fs.createFileAbsolute(store.path, .{});
-    try file.writeAll("[1,2,3]");
-    file.close();
+    const file = try std.Io.Dir.createFileAbsolute(io.get(), store.path, .{});
+    try file.writeStreamingAll(io.get(), "[1,2,3]");
+    file.close(io.get());
 
     try std.testing.expect(store.readStore() == null);
 }
@@ -3087,13 +3183,13 @@ test "SessionStore: writeStore and readStore round-trip" {
     var store = try makeTempStore(alloc);
     defer cleanupTempStore(store);
 
-    var obj = std.json.ObjectMap.init(alloc);
-    obj.put("version", JsonValue{ .integer = 1 }) catch unreachable;
-    var sessions = std.json.ObjectMap.init(alloc);
-    var rec = std.json.ObjectMap.init(alloc);
-    rec.put("status", JsonValue{ .string = "running" }) catch unreachable;
-    sessions.put("sess-1", JsonValue{ .object = rec }) catch unreachable;
-    obj.put("sessions", JsonValue{ .object = sessions }) catch unreachable;
+    var obj: std.json.ObjectMap = .empty;
+    obj.put(alloc, "version", JsonValue{ .integer = 1 }) catch unreachable;
+    var sessions: std.json.ObjectMap = .empty;
+    var rec: std.json.ObjectMap = .empty;
+    rec.put(alloc, "status", JsonValue{ .string = "running" }) catch unreachable;
+    sessions.put(alloc, "sess-1", JsonValue{ .object = rec }) catch unreachable;
+    obj.put(alloc, "sessions", JsonValue{ .object = sessions }) catch unreachable;
 
     store.writeStore(JsonValue{ .object = obj });
 
@@ -3112,19 +3208,19 @@ test "SessionStore: pruneOld removes sessions older than 7 days" {
     var store = try makeTempStore(alloc);
     defer cleanupTempStore(store);
 
-    var data = std.json.ObjectMap.init(alloc);
-    data.put("version", JsonValue{ .integer = 1 }) catch unreachable;
-    var sessions = std.json.ObjectMap.init(alloc);
+    var data: std.json.ObjectMap = .empty;
+    data.put(alloc, "version", JsonValue{ .integer = 1 }) catch unreachable;
+    var sessions: std.json.ObjectMap = .empty;
 
-    var old_rec = std.json.ObjectMap.init(alloc);
-    old_rec.put("updated_at", JsonValue{ .float = @floatFromInt(std.time.timestamp() - 8 * 86400) }) catch unreachable;
-    sessions.put("old-sess", JsonValue{ .object = old_rec }) catch unreachable;
+    var old_rec: std.json.ObjectMap = .empty;
+    old_rec.put(alloc, "updated_at", JsonValue{ .float = @floatFromInt(io.timestamp() - 8 * 86400) }) catch unreachable;
+    sessions.put(alloc, "old-sess", JsonValue{ .object = old_rec }) catch unreachable;
 
-    var new_rec = std.json.ObjectMap.init(alloc);
-    new_rec.put("updated_at", JsonValue{ .float = @floatFromInt(std.time.timestamp() - 3600) }) catch unreachable;
-    sessions.put("new-sess", JsonValue{ .object = new_rec }) catch unreachable;
+    var new_rec: std.json.ObjectMap = .empty;
+    new_rec.put(alloc, "updated_at", JsonValue{ .float = @floatFromInt(io.timestamp() - 3600) }) catch unreachable;
+    sessions.put(alloc, "new-sess", JsonValue{ .object = new_rec }) catch unreachable;
 
-    data.put("sessions", JsonValue{ .object = sessions }) catch unreachable;
+    data.put(alloc, "sessions", JsonValue{ .object = sessions }) catch unreachable;
 
     var data_val: JsonValue = .{ .object = data };
     store.pruneOld(data_val.object.getPtr("sessions").?);
@@ -3141,15 +3237,15 @@ test "SessionStore: pruneOld keeps sessions without updated_at" {
     var store = try makeTempStore(alloc);
     defer cleanupTempStore(store);
 
-    var data = std.json.ObjectMap.init(alloc);
-    data.put("version", JsonValue{ .integer = 1 }) catch unreachable;
-    var sessions = std.json.ObjectMap.init(alloc);
+    var data: std.json.ObjectMap = .empty;
+    data.put(alloc, "version", JsonValue{ .integer = 1 }) catch unreachable;
+    var sessions: std.json.ObjectMap = .empty;
 
-    var rec = std.json.ObjectMap.init(alloc);
-    rec.put("status", JsonValue{ .string = "working" }) catch unreachable;
-    sessions.put("no-timestamp", JsonValue{ .object = rec }) catch unreachable;
+    var rec: std.json.ObjectMap = .empty;
+    rec.put(alloc, "status", JsonValue{ .string = "working" }) catch unreachable;
+    sessions.put(alloc, "no-timestamp", JsonValue{ .object = rec }) catch unreachable;
 
-    data.put("sessions", JsonValue{ .object = sessions }) catch unreachable;
+    data.put(alloc, "sessions", JsonValue{ .object = sessions }) catch unreachable;
 
     var data_val: JsonValue = .{ .object = data };
     store.pruneOld(data_val.object.getPtr("sessions").?);

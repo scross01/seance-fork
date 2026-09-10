@@ -17,7 +17,83 @@ zig build
 ./zig-out/bin/seance
 ```
 
-You need Zig 0.15.2+, GTK4, libadwaita, OpenGL 4.3+, and Linux. The submodule (`ghostty`) must be checked out for libghostty to build.
+You need Zig 0.16.x, GTK4, libadwaita, OpenGL 4.3+, and Linux. The submodule (`ghostty`) must be checked out for libghostty to build.
+
+The fork's [patch ledger](ghostty/SEANCE_PATCHES.md) documents the embedding
+changes that must survive upstream updates. Run `zig build test` and
+`xvfb-run zig build e2e`, then exercise scrollback restore, clipboard, and pane
+reparenting with:
+
+```bash
+SEANCE_TEST_BINARY="$PWD/zig-out/bin/seance" xvfb-run python3 -m unittest discover -s tests -p 'test_ghostty_integration.py' -v
+```
+
+Run the Codex wrapper regression tests with `python3 -m unittest discover -s tests -v`.
+Set `SEANCE_TEST_CODEX` to the real Codex binary (outside Séance's wrapper directory)
+to also check hook loading and approval persistence using its local app-server.
+This check uses a temporary Codex home and makes no model calls.
+
+The same Python discovery command runs the OpenCode wrapper tests and, with Node
+installed, the plugin lifecycle tests. Node is only a test dependency; OpenCode
+provides the plugin runtime. To also verify plugin loading against an installed
+OpenCode binary without model calls:
+
+```bash
+SEANCE_TEST_BINARY="$PWD/zig-out/bin/seance" SEANCE_TEST_OPENCODE=/usr/bin/opencode \
+  python3 -m unittest discover -s tests -p 'test_opencode.py' -v
+```
+
+Antigravity wrapper, configuration, and lifecycle regressions run through the same
+Python discovery command after building. They use the real Séance binary with a
+fake agent and socket server, without model calls. The pane test requires Xvfb:
+
+```bash
+python3 -m unittest discover -s tests -p 'test_antigravity.py' -v
+SEANCE_TEST_BINARY="$PWD/zig-out/bin/seance" xvfb-run -a python3 -m unittest discover -s tests -p 'test_antigravity_pane.py' -v
+```
+
+For a live Antigravity check, launch `agy` in a pane of the new build. Confirm
+working/idle status, then use a command that requires approval and verify
+**Needs input** and one notification while the dialog stays open. Exercise both
+approval and denial, cancellation, conversation switching, and exit. Preserve
+any existing status-line script and verify its output survives setup. Antigravity
+1.1.22 emits `tool_confirmation_pending` only while a tool dialog is visible;
+`PreToolUse` alone is not evidence of an approval request. The status callback
+also reports idle after cancellation, so notifications describe readiness rather
+than successful completion. Use an isolated profile for permission-setting changes.
+
+Fullscreen tests require Openbox, Xvfb, xdotool, setxkbmap, a C compiler, and
+libadwaita headers. They use a separate X server and window manager. Shell
+integration tests require zsh and check user startup files and both sets of hooks:
+
+```bash
+SEANCE_TEST_BINARY="$PWD/zig-out/bin/seance" python3 -m unittest discover -s tests -p 'test_fullscreen.py' -v
+SEANCE_TEST_BINARY="$PWD/zig-out/bin/seance" xvfb-run -a python3 -m unittest discover -s tests -p 'test_shell_integration.py' -v
+```
+
+Physical keyboard remap tests require `Xvfb`, `xdotool`, and `setxkbmap`.
+They create a separate X server and never modify your desktop's keyboard layout:
+
+```bash
+SEANCE_TEST_BINARY="$PWD/zig-out/bin/seance" python3 -m unittest discover -s tests -p 'test_keyboard_remaps.py' -v
+```
+
+IME tests also use isolated X servers. They exercise GTK's compose engine and a
+test input context for Korean syllable transitions, asynchronous commits, focus,
+and cursor positioning. The test context requires a C compiler and GTK4 headers:
+
+```bash
+SEANCE_TEST_BINARY="$PWD/zig-out/bin/seance" python3 -m unittest discover -s tests -p 'test_ime.py' -v
+```
+
+For a desktop check, build and launch `./zig-out/bin/seance` at your next restart
+so an older running instance does not handle the launch. Enable your Korean
+input method and type `안녕` followed by a space. Also insert Korean text into the
+middle of an existing shell command, and switch panes during composition. Check
+that syllables appear once, the candidate popup follows the cursor, and ordinary
+typing and shortcuts still work after switching back. The automated X11 tests do
+not replace this check with your usual IME on Wayland. Switch back to your normal
+input method when finished.
 
 ## Code style
 

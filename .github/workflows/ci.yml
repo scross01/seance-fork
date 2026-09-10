@@ -3,6 +3,7 @@ name: CI
 on:
   push:
     branches: [main]
+  pull_request:
 
 jobs:
   build-and-test:
@@ -16,13 +17,12 @@ jobs:
       - name: Install Zig
         uses: mlugg/setup-zig@v2.2.1
         with:
-          version: 0.15.2
-
-      - name: Apply Ghostty patches
-        run: bash scripts/apply-ghostty-patches.sh
+          version: 0.16.0
 
       - name: Install system dependencies
         run: |
+          # Chrome is not a build dependency; its index can block apt updates.
+          sudo rm -f /etc/apt/sources.list.d/google-chrome.list /etc/apt/sources.list.d/google-chrome.sources
           sudo apt-get update
           sudo apt-get install -y \
             libgtk-4-dev \
@@ -38,6 +38,10 @@ jobs:
             libfreetype-dev \
             libharfbuzz-dev \
             libonig-dev \
+            xdotool \
+            x11-xkb-utils \
+            openbox \
+            zsh \
             xvfb
 
       - name: Build
@@ -46,5 +50,33 @@ jobs:
       - name: Unit tests
         run: zig build test
 
+      - name: Codex wrapper tests
+        run: python3 -m unittest discover -s tests -v
+
       - name: E2E tests
         run: xvfb-run zig build e2e
+
+      - name: Ghostty embedding tests
+        run: xvfb-run python3 -m unittest discover -s tests -p 'test_ghostty_integration.py' -v
+        env:
+          SEANCE_TEST_BINARY: ${{ github.workspace }}/zig-out/bin/seance
+
+      - name: Keyboard remap tests
+        run: python3 -m unittest discover -s tests -p 'test_keyboard_remaps.py' -v
+        env:
+          SEANCE_TEST_BINARY: ${{ github.workspace }}/zig-out/bin/seance
+
+      - name: Fullscreen tests
+        run: python3 -m unittest discover -s tests -p 'test_fullscreen.py' -v
+        env:
+          SEANCE_TEST_BINARY: ${{ github.workspace }}/zig-out/bin/seance
+
+      - name: Shell integration tests
+        run: xvfb-run -a python3 -m unittest discover -s tests -p 'test_shell_integration.py' -v
+        env:
+          SEANCE_TEST_BINARY: ${{ github.workspace }}/zig-out/bin/seance
+
+      - name: IME tests
+        run: python3 -m unittest discover -s tests -p 'test_ime.py' -v
+        env:
+          SEANCE_TEST_BINARY: ${{ github.workspace }}/zig-out/bin/seance

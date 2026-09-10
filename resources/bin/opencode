@@ -1,60 +1,62 @@
 #!/usr/bin/env bash
-# seance OpenCode wrapper — intercepts `opencode` invocations inside seance
-# terminals and tracks the process lifecycle so seance can detect agent exit.
+# Add the bundled plugin for this invocation, preserving OpenCode's config layers.
 set -euo pipefail
 
-# ── Find the real opencode binary, skipping our own directory ─────────────
-
-WRAPPER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+WRAPPER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 REAL_OPENCODE=""
 IFS=: read -ra PATH_DIRS <<< "$PATH"
 for dir in "${PATH_DIRS[@]}"; do
-    [[ -z "$dir" ]] && continue
-    resolved="$(cd "$dir" 2>/dev/null && pwd)" || continue
+    dir="${dir:-.}"
+    resolved="$(cd "$dir" 2>/dev/null && pwd -P)" || continue
     [[ "$resolved" == "$WRAPPER_DIR" ]] && continue
-    if [[ -x "$dir/opencode" ]]; then
-        REAL_OPENCODE="$dir/opencode"
+    if [[ -f "$dir/opencode" && -x "$dir/opencode" && ! "$dir/opencode" -ef "${BASH_SOURCE[0]}" ]]; then
+        REAL_OPENCODE="$resolved/opencode"
         break
     fi
 done
-
 if [[ -z "$REAL_OPENCODE" ]]; then
     echo "opencode: command not found" >&2
     exit 127
 fi
 
-# ── Pass-through conditions ──────────────────────────────────────────────
-
-# Not inside seance
-if [[ -z "${SEANCE_SURFACE_ID:-}" ]]; then
+if [[ -z "${SEANCE_SURFACE_ID:-}" || -z "${SEANCE_WORKSPACE_ID:-}" ||
+      -z "${SEANCE_SOCKET_PATH:-}" || "${SEANCE_OPENCODE_HOOKS_DISABLED:-}" == 1 ]]; then
     exec "$REAL_OPENCODE" "$@"
 fi
 
-# Hooks explicitly disabled
-if [[ "${SEANCE_OPENCODE_HOOKS_DISABLED:-}" == "1" ]]; then
+# Remote servers cannot inherit this pane's plugin; management commands should
+# not create agent status. --pure deliberately disables external plugins.
+for arg in "$@"; do
+    case "$arg" in
+        -h|--help|-v|--version|--pure|--pure=true|--attach|--attach=*) exec "$REAL_OPENCODE" "$@" ;;
+    esac
+done
+case "${1:-}" in
+    completion|acp|mcp|attach|debug|providers|auth|agent|upgrade|uninstall|serve|web|models|stats|export|import|github|session|plugin|plug|db|help)
+        exec "$REAL_OPENCODE" "$@" ;;
+esac
+
+# Resolve the matching binary from our install prefix (also inside AppImages).
+# Do not accidentally call an older seance found on PATH.
+SEANCE_OPENCODE_BIN="$WRAPPER_DIR/../../../bin/seance"
+PLUGIN="$WRAPPER_DIR/../opencode/seance.mjs"
+if [[ ! -x "$SEANCE_OPENCODE_BIN" || ! -r "$PLUGIN" ]] ||
+   ! timeout 0.75 "$SEANCE_OPENCODE_BIN" ctl ping >/dev/null 2>&1; then
     exec "$REAL_OPENCODE" "$@"
 fi
-
-# Socket health check (0.75s timeout)
-if ! timeout 0.75 seance ctl --socket "${SEANCE_SOCKET_PATH:-}" ping >/dev/null 2>&1; then
+if ! CONTENT=$("$SEANCE_OPENCODE_BIN" ctl opencode-config "$PLUGIN"); then
     exec "$REAL_OPENCODE" "$@"
 fi
-
-# ── Export PID so seance can track this process ─────────────────────────
-
+export OPENCODE_CONFIG_CONTENT="$CONTENT"
+export SEANCE_OPENCODE_BIN
 export SEANCE_OPENCODE_PID=$$
 
-# ── Launch opencode (no exec — wrapper must survive for cleanup) ─────────
-
-"$REAL_OPENCODE" "$@"
-rc=$?
-
-# ── Session-end cleanup ──────────────────────────────────────────────────
-# OpenCode plugin may not fire session-end on crash or forced exit, so we
-# always run it from the wrapper.
-
-seance ctl opencode-hook session-end <<EOF 2>/dev/null || true
-{"workspace_id":${SEANCE_WORKSPACE_ID:-null},"surface_id":${SEANCE_SURFACE_ID:-null}}
-EOF
-
-exit $rc
+# EXIT runs for successful exits and startup failures alike. Never mask the
+# agent's exit status or leak hook output into the terminal/JSON stream.
+trap 'timeout 3 "$SEANCE_OPENCODE_BIN" ctl opencode-hook session-end <<< "{}" >/dev/null 2>&1 || true' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
+rc=0
+"$REAL_OPENCODE" "$@" || rc=$?
+exit "$rc"

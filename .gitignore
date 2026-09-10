@@ -10,3 +10,5 @@ Makefile
 LOCAL.md
 .mimocode
 __pycache__/
+.freebuff/
+skills-lock.json

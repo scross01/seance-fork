@@ -1,8 +1,10 @@
 const std = @import("std");
+const io = @import("io.zig");
 const c = @import("c.zig").c;
 const config_mod = @import("config.zig");
 const SearchOverlay = @import("search_overlay.zig").SearchOverlay;
 const ghostty_bridge = @import("ghostty_bridge.zig");
+const ime_state = @import("ime_state.zig");
 
 pub const Pane = struct {
     pub const cwd_cap = 512;
@@ -24,9 +26,10 @@ pub const Pane = struct {
     // IME state
     im_context: ?*c.GtkIMContext = null,
     im_composing: bool = false,
-    im_buf: [32]u8 = undefined,
+    im_focused: bool = false,
+    im_buf: [256]u8 = undefined,
     im_len: usize = 0,
-    in_keyevent: bool = false,
+    in_keyevent: ime_state.InKeyEvent = .none,
     surface_initialized: bool = false,
     pending_init_width: u32 = 0,
     pending_init_height: u32 = 0,
@@ -154,6 +157,10 @@ pub const Pane = struct {
     /// the gl_area has already been finalized (the weak pointer added
     /// in create() will have nulled self.gl_area in that case).
     pub fn disconnectSignals(self: *Pane) void {
+        // The IM context borrows its client widget. Detach while it is alive,
+        // including close paths that disconnect the unrealize handler early.
+        self.unfocusImContext();
+        if (self.im_context) |ctx| c.gtk_im_context_set_client_widget(ctx, null);
         if (self.gl_area) |gl| {
             // Remove our weak pointer so a later finalization of gl_area
             // (in paths where the widget outlives this call) doesn't try
@@ -219,7 +226,7 @@ pub const Pane = struct {
 
     pub fn focus(self: *Pane) void {
         if (self.gl_area) |gl| {
-            _ = c.gtk_widget_grab_focus(@as(*c.GtkWidget, @ptrCast(gl)));
+            if (c.gtk_widget_grab_focus(@ptrCast(gl)) != 0) self.focusImContext();
         }
         c.gtk_widget_remove_css_class(self.widget, "pane-unfocused");
         c.gtk_widget_add_css_class(self.widget, "pane-focused");
@@ -243,6 +250,7 @@ pub const Pane = struct {
     }
 
     pub fn unfocus(self: *Pane) void {
+        self.unfocusImContext();
         c.gtk_widget_remove_css_class(self.widget, "pane-focused");
         if (self.surface) |s| {
             c.ghostty_surface_set_focus(s, false);
@@ -252,6 +260,30 @@ pub const Pane = struct {
         } else {
             c.gtk_widget_add_css_class(self.widget, "pane-unfocused");
         }
+    }
+
+    fn focusImContext(self: *Pane) void {
+        if (self.im_focused) return;
+        const ctx = self.im_context orelse return;
+        const gl = self.gl_area orelse return;
+        c.gtk_im_context_set_client_widget(ctx, @ptrCast(gl));
+        syncImCursorLocation(self);
+        c.gtk_im_context_focus_in(@ptrCast(ctx));
+        self.im_focused = true;
+    }
+
+    fn unfocusImContext(self: *Pane) void {
+        if (!self.im_focused) return;
+        const ctx = self.im_context orelse {
+            self.im_focused = false;
+            return;
+        };
+        c.gtk_im_context_focus_out(@ptrCast(ctx));
+        c.gtk_im_context_reset(@ptrCast(ctx));
+        self.im_composing = false;
+        self.im_len = 0;
+        self.im_focused = false;
+        if (self.surface) |s| c.ghostty_surface_preedit(s, null, 0);
     }
 
     pub fn clearScrollback(self: *Pane) void {
@@ -459,6 +491,7 @@ fn setupInputControllers(gl_area_widget: *c.GtkWidget, pane: *Pane) void {
     // Focus controller
     const focus_ctrl = c.gtk_event_controller_focus_new();
     connectSignal(focus_ctrl, "enter", &onFocusEnter, pane);
+    connectSignal(focus_ctrl, "leave", &onFocusLeave, pane);
     c.gtk_widget_add_controller(gl_area_widget, @ptrCast(focus_ctrl));
 }
 
@@ -529,6 +562,9 @@ fn onGlRealize(_: *c.GtkGLArea, user_data: c.gpointer) callconv(.c) void {
     // Set up IM context with the widget
     if (pane.im_context) |ctx| {
         c.gtk_im_context_set_client_widget(@ptrCast(ctx), @as(*c.GtkWidget, @ptrCast(gl_area)));
+        if (c.gtk_widget_has_focus(@as(*c.GtkWidget, @ptrCast(gl_area))) != 0) {
+            pane.focusImContext();
+        }
     }
 }
 
@@ -550,6 +586,7 @@ fn onGlUnrealize(_: *c.GtkGLArea, user_data: c.gpointer) callconv(.c) void {
         }
     }
 
+    pane.unfocusImContext();
     if (pane.im_context) |ctx| {
         c.gtk_im_context_set_client_widget(@ptrCast(ctx), null);
     }
@@ -667,13 +704,13 @@ fn initSurface(pane: *Pane, width: u32, height: u32) void {
     var bin_val: ?[*:0]const u8 = null;
     {
         var exe_buf: [std.fs.max_path_bytes]u8 = undefined;
-        if (std.fs.selfExePath(&exe_buf)) |exe_path| {
+        if (io.executablePath(&exe_buf)) |exe_path| {
             if (std.fs.path.dirname(exe_path)) |exe_dir| {
                 if (std.fs.path.dirname(exe_dir)) |prefix| {
-                    if (std.fmt.bufPrintZ(&int_env_val_buf, "{s}/share/shell-integration", .{prefix})) |iv| {
+                    if (std.fmt.bufPrintZ(&int_env_val_buf, "{s}/share/seance/shell-integration", .{prefix})) |iv| {
                         int_val = iv;
                     } else |_| {}
-                    if (std.fmt.bufPrintZ(&bin_env_val_buf, "{s}/share/bin", .{prefix})) |bv| {
+                    if (std.fmt.bufPrintZ(&bin_env_val_buf, "{s}/share/seance/bin", .{prefix})) |bv| {
                         bin_val = bv;
                     } else |_| {}
                 }
@@ -686,7 +723,7 @@ fn initSurface(pane: *Pane, width: u32, height: u32) void {
     var path_val: ?[*:0]const u8 = null;
     if (bin_val) |bv| {
         const bin_dir = std.mem.sliceTo(bv, 0);
-        if (std.posix.getenv("PATH")) |existing_path| {
+        if (io.getenv("PATH")) |existing_path| {
             if (std.fmt.bufPrintZ(&path_env_buf, "{s}:{s}", .{ bin_dir, existing_path })) |pv| {
                 path_val = pv;
             } else |_| {}
@@ -726,7 +763,7 @@ fn initSurface(pane: *Pane, width: u32, height: u32) void {
 
     // Build env var array. Keep this ceiling above the sum of all possible entries
     // (unconditional + every conditional hook-disabled flag + port/path/socket vars).
-    const max_env_vars = 26;
+    const max_env_vars = 27;
     var env_vars: [max_env_vars]c.ghostty_env_var_s = undefined;
     var env_count: usize = 0;
 
@@ -768,6 +805,10 @@ fn initSurface(pane: *Pane, width: u32, height: u32) void {
     }
     if (!cfg.opencode_hooks) {
         env_vars[env_count] = .{ .key = "SEANCE_OPENCODE_HOOKS_DISABLED", .value = "1" };
+        env_count += 1;
+    }
+    if (!cfg.antigravity_hooks) {
+        env_vars[env_count] = .{ .key = "SEANCE_ANTIGRAVITY_HOOKS_DISABLED", .value = "1" };
         env_count += 1;
     }
     if (!cfg.kilo_hooks) {
@@ -872,6 +913,93 @@ fn initSurface(pane: *Pane, width: u32, height: u32) void {
 
 // ── Key event handling ──────────────────────────────────────────────
 
+// The embedded API accepts native keycodes, not translated keysyms. Resolve
+// non-text keys like Ghostty's GTK remapKey (apprt/gtk/key.zig), then pass the
+// canonical Linux evdev+8 code expected by its embedded key table. Keep letter
+// keys physical: layouts and printable text are handled by the text fields.
+fn canonicalKeycode(keyval: c.guint, keycode: c.guint, is_modifier: bool) c.guint {
+    return switch (keyval) {
+        c.GDK_KEY_BackSpace => 22,
+        c.GDK_KEY_Tab, c.GDK_KEY_ISO_Left_Tab => 23,
+        c.GDK_KEY_Return => 36,
+        c.GDK_KEY_KP_Enter => 104,
+        c.GDK_KEY_Escape => 9,
+        c.GDK_KEY_Delete => 119,
+        c.GDK_KEY_Insert => 118,
+        c.GDK_KEY_Home => 110,
+        c.GDK_KEY_End => 115,
+        c.GDK_KEY_Page_Up => 112,
+        c.GDK_KEY_Page_Down => 117,
+        c.GDK_KEY_Left => 113,
+        c.GDK_KEY_Right => 114,
+        c.GDK_KEY_Up => 111,
+        c.GDK_KEY_Down => 116,
+        c.GDK_KEY_Caps_Lock => 66,
+        c.GDK_KEY_Num_Lock => 77,
+        c.GDK_KEY_Scroll_Lock => 78,
+        c.GDK_KEY_Shift_L => 50,
+        c.GDK_KEY_Shift_R => 62,
+        c.GDK_KEY_Control_L => 37,
+        c.GDK_KEY_Control_R => 105,
+        c.GDK_KEY_Alt_L => 64,
+        c.GDK_KEY_Alt_R => 108,
+        c.GDK_KEY_Super_L => 133,
+        c.GDK_KEY_Super_R => 134,
+        c.GDK_KEY_space => 65,
+        c.GDK_KEY_Menu => 135,
+        c.GDK_KEY_Print => 107,
+        c.GDK_KEY_Pause => 127,
+        c.GDK_KEY_F1...c.GDK_KEY_F10 => 67 + keyval - c.GDK_KEY_F1,
+        c.GDK_KEY_F11, c.GDK_KEY_F12 => 95 + keyval - c.GDK_KEY_F11,
+        c.GDK_KEY_F13...c.GDK_KEY_F24 => 191 + keyval - c.GDK_KEY_F13,
+
+        // Unsupported modifier meanings must not fall back to the original
+        // key (e.g. keypad Enter remapped to ISO_Level3_Shift would send Enter).
+        // GDK does not mark every XKB level/group modifier as is_modifier.
+        c.GDK_KEY_Shift_Lock,
+        c.GDK_KEY_Meta_L,
+        c.GDK_KEY_Meta_R,
+        c.GDK_KEY_Hyper_L,
+        c.GDK_KEY_Hyper_R,
+        c.GDK_KEY_Mode_switch,
+        c.GDK_KEY_ISO_Lock,
+        c.GDK_KEY_ISO_Level2_Latch,
+        c.GDK_KEY_ISO_Level3_Shift,
+        c.GDK_KEY_ISO_Level3_Latch,
+        c.GDK_KEY_ISO_Level3_Lock,
+        c.GDK_KEY_ISO_Level5_Shift,
+        c.GDK_KEY_ISO_Level5_Latch,
+        c.GDK_KEY_ISO_Level5_Lock,
+        c.GDK_KEY_ISO_Group_Latch,
+        c.GDK_KEY_ISO_Group_Lock,
+        => 0,
+        else => if (is_modifier) 0 else keycode,
+    };
+}
+
+test "XKB remaps editing keys and both halves of Caps Escape swaps" {
+    try std.testing.expectEqual(@as(c.guint, 22), canonicalKeycode(c.GDK_KEY_BackSpace, 66, false));
+    try std.testing.expectEqual(@as(c.guint, 9), canonicalKeycode(c.GDK_KEY_Escape, 66, false));
+    try std.testing.expectEqual(@as(c.guint, 66), canonicalKeycode(c.GDK_KEY_Caps_Lock, 9, true));
+    try std.testing.expectEqual(@as(c.guint, 105), canonicalKeycode(c.GDK_KEY_Control_R, 66, true));
+    try std.testing.expectEqual(@as(c.guint, 96), canonicalKeycode(c.GDK_KEY_F12, 66, false));
+}
+
+test "XKB modifier targets never fall back to editing keys" {
+    try std.testing.expectEqual(@as(c.guint, 0), canonicalKeycode(c.GDK_KEY_ISO_Level3_Shift, 104, true));
+    try std.testing.expectEqual(@as(c.guint, 0), canonicalKeycode(c.GDK_KEY_Mode_switch, 119, false));
+    try std.testing.expectEqual(@as(c.guint, 0), canonicalKeycode(c.GDK_KEY_VoidSymbol, 119, true));
+}
+
+test "XKB keeps physical writing keys and keypad identity" {
+    try std.testing.expectEqual(@as(c.guint, 26), canonicalKeycode(c.GDK_KEY_f, 26, false));
+    try std.testing.expectEqual(@as(c.guint, 26), canonicalKeycode(c.GDK_KEY_F, 26, false));
+    try std.testing.expectEqual(@as(c.guint, 54), canonicalKeycode(c.GDK_KEY_Cyrillic_tse, 54, false));
+    try std.testing.expectEqual(@as(c.guint, 104), canonicalKeycode(c.GDK_KEY_KP_Enter, 104, false));
+    try std.testing.expectEqual(@as(c.guint, 87), canonicalKeycode(c.GDK_KEY_KP_End, 87, false));
+    try std.testing.expectEqual(@as(c.guint, 23), canonicalKeycode(c.GDK_KEY_ISO_Left_Tab, 23, false));
+}
+
 fn translateMods(state: c.GdkModifierType) c.ghostty_input_mods_e {
     var mods: c_uint = c.GHOSTTY_MODS_NONE;
     const s: c_uint = @bitCast(state);
@@ -917,6 +1045,26 @@ fn addSidedMods(mods: *c_uint, keyval: c.guint, is_release: bool) void {
     }
 }
 
+fn syncImCursorLocation(pane: *Pane) void {
+    const ctx = pane.im_context orelse return;
+    const surface = pane.surface orelse return;
+
+    var x: f64 = 0;
+    var y: f64 = 0;
+    var width: f64 = 1;
+    var height: f64 = 1;
+    c.ghostty_surface_ime_point(surface, &x, &y, &width, &height);
+
+    const rect = c.GdkRectangle{
+        .x = @intFromFloat(x),
+        // Ghostty returns the bottom of the cursor; GTK expects its rectangle.
+        .y = @intFromFloat(y - height),
+        .width = @max(@as(c.gint, 1), @as(c.gint, @intFromFloat(width))),
+        .height = @max(@as(c.gint, 1), @as(c.gint, @intFromFloat(height))),
+    };
+    c.gtk_im_context_set_cursor_location(@ptrCast(ctx), &rect);
+}
+
 fn onKeyPressed(
     controller: *c.GtkEventControllerKey,
     keyval: c.guint,
@@ -949,20 +1097,19 @@ fn handleKeyEvent(
 ) bool {
     const surface = pane.surface orelse return false;
     const event = c.gtk_event_controller_get_current_event(@ptrCast(controller));
+    // Keep translated text until Ghostty encodes it, then clear it on every exit.
+    defer pane.im_len = 0;
 
     // IME handling
     if (pane.im_context) |ctx| {
-        const was_composing = pane.im_composing;
-        pane.in_keyevent = true;
-        defer pane.in_keyevent = false;
+        pane.in_keyevent = ime_state.beginKeyEvent(pane.im_composing);
+        defer pane.in_keyevent = .none;
 
+        syncImCursorLocation(pane);
         const im_handled = c.gtk_im_context_filter_keypress(@ptrCast(ctx), event) != 0;
-        defer pane.im_len = 0;
 
-        if (im_handled) {
-            if (pane.im_composing) return true;
-            if (was_composing) return true;
-            if (pane.im_len == 0) return true;
+        if (ime_state.filterDecision(im_handled, pane.im_composing, pane.in_keyevent, pane.im_len) == .consume) {
+            return true;
         }
     }
 
@@ -999,11 +1146,16 @@ fn handleKeyEvent(
     // Get unshifted codepoint
     const unshifted = c.gdk_keyval_to_unicode(c.gdk_keyval_to_lower(keyval));
 
+    // GDK already resolved the XKB mapping and modifier state. Remapping a key
+    // does not imply Caps Lock is off; another key may have enabled the lock.
+    const is_modifier = if (event) |ev| c.gdk_key_event_is_modifier(ev) != 0 else false;
+    const effective_keycode = canonicalKeycode(keyval, keycode, is_modifier);
+
     const key_ev = c.ghostty_input_key_s{
         .action = if (is_release) c.GHOSTTY_ACTION_RELEASE else c.GHOSTTY_ACTION_PRESS,
         .mods = @intCast(mods),
         .consumed_mods = @intCast(consumed),
-        .keycode = keycode,
+        .keycode = effective_keycode,
         .text = text_ptr,
         .unshifted_codepoint = @intCast(if (unshifted > 0) unshifted else 0),
         .composing = pane.im_composing,
@@ -1018,26 +1170,36 @@ fn onImCommit(_: *c.GtkIMContext, text: [*:0]const u8, user_data: c.gpointer) ca
     const pane: *Pane = @ptrCast(@alignCast(user_data));
     const text_slice = std.mem.sliceTo(text, 0);
 
-    if (pane.in_keyevent) {
-        // Store for association with the key event
-        const len = @min(text_slice.len, pane.im_buf.len - 1);
-        @memcpy(pane.im_buf[0..len], text_slice[0..len]);
-        pane.im_len = len;
-    } else {
-        // Outside key event: send directly to ghostty
-        if (pane.surface) |s| {
-            c.ghostty_surface_text(s, text, text_slice.len);
-        }
+    switch (ime_state.commitRoute(pane.in_keyevent)) {
+        .associate_with_key => {
+            // Plain key translations such as "a" should stay associated with
+            // the key event so Ghostty still sees the physical key metadata.
+            const len = @min(text_slice.len, pane.im_buf.len - 1);
+            @memcpy(pane.im_buf[0..len], text_slice[0..len]);
+            pane.im_len = len;
+            return;
+        },
+        .send_direct => {},
+    }
+
+    pane.im_composing = false;
+    if (pane.surface) |s| {
+        c.ghostty_surface_preedit(s, null, 0);
+        // IME text is typed input; the paste API adds bracketed-paste markers.
+        pane.typeText(text_slice[0..text_slice.len :0]);
     }
 }
 
 fn onImPreeditStart(_: *c.GtkIMContext, user_data: c.gpointer) callconv(.c) void {
     const pane: *Pane = @ptrCast(@alignCast(user_data));
     pane.im_composing = true;
+    pane.im_len = 0;
 }
 
 fn onImPreeditChanged(ctx: *c.GtkIMContext, user_data: c.gpointer) callconv(.c) void {
     const pane: *Pane = @ptrCast(@alignCast(user_data));
+    // Hangul can commit a syllable and continue without another preedit-start.
+    pane.im_composing = true;
     if (pane.surface) |s| {
         var preedit_text: [*c]u8 = null;
         var cursor_pos: c.gint = 0;
@@ -1113,6 +1275,7 @@ fn onMousePress(
     const mods = translateMods(gtk_mods);
 
     _ = c.ghostty_surface_mouse_button(surface, c.GHOSTTY_MOUSE_PRESS, button, mods);
+    syncImCursorLocation(pane);
 }
 
 fn onMouseRelease(
@@ -1132,6 +1295,7 @@ fn onMouseRelease(
     const mods = translateMods(gtk_mods);
 
     _ = c.ghostty_surface_mouse_button(surface, c.GHOSTTY_MOUSE_RELEASE, button, mods);
+    syncImCursorLocation(pane);
 }
 
 fn onScroll(
@@ -1215,6 +1379,8 @@ fn drawScrollbarCb(
 
 fn onFocusEnter(_: *c.GtkEventControllerFocus, user_data: c.gpointer) callconv(.c) void {
     const pane: *Pane = @ptrCast(@alignCast(user_data));
+    pane.focusImContext();
+
     const Window = @import("window.zig");
     const wm = Window.window_manager orelse return;
     const state = wm.findByWorkspaceId(pane.workspace_id) orelse return;
@@ -1244,6 +1410,11 @@ fn onFocusEnter(_: *c.GtkEventControllerFocus, user_data: c.gpointer) callconv(.
     grp.focus();
     if (ws.focused_column != old_col) state.sidebar.refresh();
     state.updateWindowTitle();
+}
+
+fn onFocusLeave(_: *c.GtkEventControllerFocus, user_data: c.gpointer) callconv(.c) void {
+    const pane: *Pane = @ptrCast(@alignCast(user_data));
+    pane.unfocusImContext();
 }
 
 fn onMouseEnter(

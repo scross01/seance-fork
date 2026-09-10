@@ -48,6 +48,11 @@
   <content_rating type="oars-1.1" />
 
   <releases>
+    <release version="0.5.0" date="2026-09-09">
+      <description>
+        <p>Realignment with upstream Séance v0.1.6: OpenCode per-launch plugin injection, Antigravity CLI tracking, IME and XKB fixes, fullscreen toggle, and migration to Zig 0.16. Fork versioning is now independent of upstream.</p>
+      </description>
+    </release>
     <release version="0.4.0" date="2026-08-07">
       <description>
         <p>Browser panel UX overhaul, full keybind customization with conflict detection, and per-shortcut reset.</p>

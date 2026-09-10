@@ -21,9 +21,6 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Apply Ghostty patches
-        run: bash scripts/apply-ghostty-patches.sh
-
       - name: Compute version
         run: |
           if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
@@ -51,6 +48,7 @@ jobs:
             --exclude='./*.AppImage' \
             --exclude='./zig-out' \
             --exclude='./.zig-cache' \
+            --exclude='zig-pkg' \
             --exclude='./linuxdeploy*' \
             --exclude='./demo.gif' \
             ./
@@ -60,7 +58,7 @@ jobs:
       - name: Install Zig
         uses: mlugg/setup-zig@v2.2.1
         with:
-          version: 0.15.2
+          version: 0.16.0
 
       - name: Install system dependencies
         run: |

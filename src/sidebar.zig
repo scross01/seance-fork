@@ -1,4 +1,5 @@
 const std = @import("std");
+const io = @import("io.zig");
 const c = @import("c.zig").c;
 const workspace_mod = @import("workspace.zig");
 const Workspace = workspace_mod.Workspace;
@@ -40,7 +41,7 @@ pub const Sidebar = struct {
 
     // Footer row (add / notif / hide / settings).  Only present when the
     // window is in SSD mode and we can't stash those buttons in an
-    // adw_header_bar.  Null in CSD mode.
+    // adw_header_bar.  Null in CSD mode or when the button bar is disabled.
     footer: ?*c.GtkWidget = null,
 
     // Suppress refresh while interacting (context menu or hover)
@@ -813,7 +814,6 @@ fn makeBranchDirectorySection(branch: ?[]const u8, dirty: bool, cwd: ?[]const u8
     }
 }
 
-
 fn makeStatusLabel(entry: *const workspace_mod.StatusEntry, background_count: u32) *c.GtkWidget {
     const hbox = c.gtk_box_new(c.GTK_ORIENTATION_HORIZONTAL, 4);
 
@@ -1030,7 +1030,7 @@ fn makeLogLabel(entry: *const workspace_mod.LogEntry) *c.GtkWidget {
 }
 
 fn shortenPath(path: []const u8, buf: []u8) []const u8 {
-    const home = std.posix.getenv("HOME") orelse return path;
+    const home = io.getenv("HOME") orelse return path;
     if (std.mem.startsWith(u8, path, home)) {
         const rest = path[home.len..];
         if (1 + rest.len <= buf.len) {
@@ -1127,4 +1127,3 @@ fn onStatusToggleDataDestroy(data: c.gpointer, _: *c.GClosure) callconv(.c) void
     const d: *StatusToggleData = @ptrCast(@alignCast(data));
     d.sidebar.alloc.destroy(d);
 }
-

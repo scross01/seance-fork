@@ -19,6 +19,7 @@
 # position = "left"              # "left" or "right"
 # width = 200
 # visible = true
+# show-button-bar = true         # bottom button row with server-side window decorations
 # show-notification-text = true  # latest notification text below workspace title
 # show-status = true             # custom status metadata pills
 # show-logs = true               # most recent log message
@@ -39,7 +40,8 @@
 # claude-code-hooks = true
 # codex-hooks = true
 # pi-hooks = true
-# opencode-hooks = true
+# opencode-hooks = true          # track local OpenCode sessions (new panes)
+# antigravity-hooks = true       # track Antigravity CLI sessions (new panes)
 # kilo-hooks = true
 # mimocode-hooks = true
 # vibe-hooks = true

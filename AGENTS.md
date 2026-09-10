@@ -3,9 +3,8 @@
 ## Build & Run
 
 ```bash
-# First-time setup (submodule + patches)
+# First-time setup (submodule)
 git submodule update --init --recursive
-bash scripts/apply-ghostty-patches.sh
 
 # Build (installs to AppDir/usr with assets)
 make build
@@ -19,7 +18,7 @@ make appimage
 
 **Do not use `zig-out/bin/seance` directly** — it lacks installed assets (icons, shell integration, themes). Always use `make run` which installs to `AppDir/usr` first.
 
-Requires: Zig 0.15.2+, GTK4, libadwaita, pkg-config, OpenGL 4.3+.
+Requires: Zig 0.16.0+, GTK4, libadwaita, pkg-config, OpenGL 4.3+.
 
 ## Worktrees
 
@@ -30,7 +29,7 @@ scripts/worktree-add.sh <branch> [directory]
 ```
 
 This symlinks the worktree's `ghostty/` to the main repo's submodule.
-Zig's global cache (`~/.cache/zig/`) reuses the compiled `ghostty_static` artifact.
+Zig's global cache (`~/.cache/zig/`) reuses the compiled artifact.
 
 Do NOT modify the shared ghostty submodule from a worktree.
 
@@ -52,29 +51,31 @@ zig build test -Dtest-filter=<name>
 zig build e2e
 ```
 
-Test files: `src/osc_parser.zig`, `src/port_scan.zig` (standalone), `src/e2e_test.zig` (E2E).
+Test files: `src/ime_state.zig`, `src/osc_parser.zig`, `src/port_scan.zig`,
+`src/io.zig`, `src/posix.zig`, `src/opencode.zig`, `src/ctl.zig` (standalone);
+`src/config.zig`, `src/keybinds.zig`, `src/notification.zig`, `src/pane.zig`,
+`src/workspace.zig`, `src/session.zig`, `src/socket_server.zig`,
+`src/web_panel.zig` (GTK/ghostty-backed); `src/e2e_test.zig` (E2E).
 
 ## Updating Ghostty
 
-Patches live in `patches/`. Upstream is `ghostty-org/ghostty`.
+The ghostty submodule points at `no1msd/ghostty`, branch `seance-patches`
+(embedding patches baked in — no local patch application). Upstream for the
+patch set is `ghostty-org/ghostty`.
 
 ```bash
-# Apply patches to working tree
-bash scripts/apply-ghostty-patches.sh
-
-# Update to new upstream version
-bash scripts/update-ghostty.sh <commit-or-tag>
+# Update the submodule ref (e.g. after no1msd/ghostty advances)
+git -C ghostty fetch origin && git -C ghostty checkout <commit-or-tag>
+git add ghostty
 ```
-
-**Do not commit ghostty submodule with patches applied.** The submodule ref should stay at the clean upstream commit.
 
 ## Architecture
 
-- **Language:** Zig (0.15.2), GTK4/libadwaita, OpenGL 4.3+
+- **Language:** Zig (0.16.0), GTK4/libadwaita, OpenGL 4.3+
 - **Entry:** `src/main.zig` → `src/app.zig`
 - **Terminal rendering:** libghostty via `src/ghostty_bridge.zig` (C FFI)
 - **CLI:** `seance ctl` → `src/ctl.zig` (Unix socket IPC)
-- **Plugins:** `plugins/seance-{opencode,kilo,mimocode}/index.ts` (TypeScript, auto-installed)
+- **Plugins:** `plugins/seance-{opencode,kilo,mimocode}/index.ts` (TypeScript, auto-installed); OpenCode also gets a per-launch `.mjs` plugin via inline config (`src/opencode.zig` + `resources/bin/opencode` wrapper)
 - **Config:** `~/.config/seance/config.toml` (runtime), `src/default_config.toml` (defaults)
 
 Key source files:
@@ -102,5 +103,6 @@ Key source files:
 
 - Ghostty requires desktop OpenGL 4.3+, not GLES. `main.zig` sets `GDK_DISABLE=gles-api,vulkan` before GTK init.
 - System fontconfig must be linked once per process (ELF interposition crash). See `build.zig` system_library_options.
+- C imports go through the `translate-c` build module (`src/c.h`), not `@cImport` — Zig 0.16's bundled `@cImport` cannot translate current GTK headers.
 - `LOCAL.md` is gitignored — local dev notes only.
 - `plans/` is gitignored — implementation plans from `/improve` skill.

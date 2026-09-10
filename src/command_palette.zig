@@ -1,4 +1,5 @@
 const std = @import("std");
+const io = @import("io.zig");
 const c = @import("c.zig").c;
 const Window = @import("window.zig");
 const keybinds = @import("keybinds.zig");
@@ -120,6 +121,7 @@ const static_commands = [_]Command{
     .{ .label = "Jump to Unread", .action = .jump_to_unread, .keywords = "jump unread notification" },
     .{ .label = "Open Settings", .action = .open_settings, .keywords = "settings preferences config options" },
     .{ .label = "Reload Configuration", .action = .reload_config, .keywords = "config reload refresh settings" },
+    .{ .label = "Toggle Fullscreen", .action = .toggle_fullscreen, .keywords = "fullscreen toggle window maximize f11" },
     .{ .label = "Quit Seance", .action = .quit_app, .keywords = "quit exit close application app shutdown" },
 
     // Workspace commands
@@ -1423,7 +1425,7 @@ fn onOverlayClick(
 
 /// Check if a binary exists on $PATH using access(2).
 fn detectBinary(binary: []const u8) bool {
-    const path_env = std.posix.getenv("PATH") orelse return false;
+    const path_env = io.getenv("PATH") orelse return false;
     var iter = std.mem.splitScalar(u8, path_env, ':');
     while (iter.next()) |dir| {
         if (dir.len == 0) continue;
@@ -1434,7 +1436,7 @@ fn detectBinary(binary: []const u8) bool {
         @memcpy(buf[dir.len + 1 ..][0..binary.len], binary);
         buf[dir.len + 1 + binary.len] = 0;
         const path_z: [*:0]const u8 = @ptrCast(&buf);
-        std.posix.accessZ(path_z, std.posix.X_OK) catch continue;
+        @import("posix.zig").accessZ(path_z, std.c.X_OK) catch continue;
         return true;
     }
     return false;

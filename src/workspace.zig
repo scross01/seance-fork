@@ -1721,7 +1721,7 @@ pub const Workspace = struct {
     }
 
     pub fn basenameFromPath(path: []const u8) []const u8 {
-        const trimmed = std.mem.trimRight(u8, path, "/");
+        const trimmed = std.mem.trimEnd(u8, path, "/");
         if (trimmed.len == 0) return "Terminal";
         if (std.mem.lastIndexOfScalar(u8, trimmed, '/')) |pos| {
             return trimmed[pos + 1 ..];

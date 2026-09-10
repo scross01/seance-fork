@@ -25,7 +25,7 @@
 
 ## Why Séance?
 
-Séance is a GTK4 terminal multiplexer for Linux. It auto-detects [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Codex](https://github.com/openai/codex), [Pi](https://github.com/badlogic/pi-mono), [OpenCode](https://opencode.ai), [Kilo Code](https://kilo.ai), [MiMo Code](https://mimo.xiaomi.com/mimocode) and [Vibe](https://github.com/mistralai/mistral-vibe) sessions running inside it and tracks their status (working, waiting for permission, idle) live in the sidebar. Permission requests and task completions are surfaced as desktop notifications with unread tracking. Zero configuration, no dotfile edits: open an agent in a pane and it is tracked.
+Séance is a GTK4 terminal multiplexer for Linux. It auto-detects [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Codex](https://github.com/openai/codex), [Pi](https://github.com/badlogic/pi-mono), [OpenCode](https://opencode.ai), [Kilo Code](https://kilo.ai), [MiMo Code](https://mimo.xiaomi.com/mimocode), [Vibe](https://github.com/mistralai/mistral-vibe), and [Antigravity CLI](https://antigravity.google/docs/cli/getting-started) sessions running inside it and tracks their status (working, waiting for permission, idle) live in the sidebar. Permission requests and task completions are surfaced as desktop notifications with unread tracking. Zero configuration, no dotfile edits: open an agent in a pane and it is tracked.
 
 ### Linux-native, not Electron
 
@@ -37,7 +37,38 @@ Panes are arranged in a horizontal strip that you scroll through, borrowing the 
 
 ### Agent-agnostic
 
-Claude Code, Codex, Pi, OpenCode, Kilo CLI, MiMo Code, and Vibe  are auto-tracked out of the box. Adding support for another agent is a hook config PR rather than a rewrite. Agents that do not speak hooks still get all the plain multiplexer features.
+Claude Code, Codex, Pi, OpenCode, Kilo CLI, MiMo Code, Vibe, and Antigravity CLI are auto-tracked out of the box. Adding support for another agent is a hook config PR rather than a rewrite. Agents that do not speak hooks still get all the plain multiplexer features.
+
+Codex requires a one-time review of Séance's hooks via `/hooks`. Approval persists
+across panes and restarts; changes to the hook definitions require a new review.
+Séance adds its hooks for the current invocation and keeps your Codex home,
+existing hooks, authentication, and history in place.
+
+OpenCode's bundled plugin is added for each local launch through its inline
+configuration. Existing configuration, plugins, authentication, and history stay
+in place. Resumed sessions and subagents contribute to the pane's status;
+permission requests and questions show **Needs input** until answered.
+Remote `opencode attach` sessions and `--pure` launches are not tracked.
+Disable tracking in **Settings → Integrations → OpenCode Integration**, or set
+`opencode-hooks = false` under `[behavior]` in Séance's configuration, then open a new pane.
+
+Antigravity CLI (`agy`) is tracked through its [status-line callback](https://antigravity.google/docs/cli/statusline/).
+On first launch inside Séance, the wrapper adds the callback to
+`~/.gemini/antigravity-cli/settings.json`, keeping an original backup at
+`settings.json.seance-backup`. Existing settings and custom status-line output
+are preserved; the default status line stays visible. The callback is inert
+outside tracked launches and resolves Séance through the current wrapper, so it
+also works with AppImages.
+
+Actual tool confirmation dialogs show **Needs input** and trigger one notification
+per transition. Returning to idle triggers **Antigravity is idle**, including
+after cancellation or denial; this does not assert that the task succeeded.
+Reported background tasks keep the pane working until they finish. Tracking is
+limited to the active TUI's reported state: headless/print mode, unreported
+background permission requests, and non-tool input dialogs are not covered.
+An explicitly disabled status-line callback is respected and disables tracking.
+Disable the integration in **Settings → Integrations → Antigravity CLI Integration**,
+or set `antigravity-hooks = false` under `[behavior]`, then open a new pane.
 
 ### Scriptable
 
@@ -47,7 +78,7 @@ A bundled [skill file](skills/seance-skill.md) provides AI agents with a complet
 
 ### And also
 
-Workspaces, session persistence across restarts, tabs within columns, a command palette, focus-follows-mouse, and no telemetry.
+Workspaces, session persistence across restarts, tabs within columns, a command palette, focus-follows-mouse, and no telemetry. Press **F11** to toggle fullscreen, or choose **Toggle Fullscreen** in the command palette. The header bar hides in fullscreen and returns when you exit.
 
 ## Installation
 
@@ -70,7 +101,7 @@ mv seance-*-x86_64.AppImage ~/.local/bin/seance
 
 ### Building from source
 
-Requires Zig **0.15.2+**, GTK4, libadwaita, OpenGL 4.3+, and Linux (X11 or Wayland).
+Requires Zig **0.16.x**, GTK4, libadwaita, OpenGL 4.3+, and Linux (X11 or Wayland).
 
 **Install build dependencies (Ubuntu/Debian):**
 
@@ -96,11 +127,12 @@ git submodule update --init --recursive
 
 ## Agent Integrations
 
-Claude Code, Codex, Pi, OpenCode, and Kilo Code are all tracked automatically — no setup required.
+Claude Code, Codex, Pi, OpenCode, Kilo Code, and Antigravity CLI are all tracked automatically — no setup required.
 
 - **Claude Code, Codex, Pi**: Séance installs wrapper scripts that intercept calls to these agents and inject lifecycle hooks transparently.
 - **OpenCode**: On first launch, Séance auto-installs a plugin to `~/.config/opencode/plugins/` if the OpenCode config directory exists.
 - **Kilo Code**: On first launch, Séance auto-installs a plugin to `~/.config/kilo/plugins/` if the Kilo config directory exists.
+- **Antigravity CLI**: Tracked through its status-line callback, added by the wrapper on first launch. See above for details.
 - **Poolside, Codebuff, Freebuff**: Requires `inotify-tools` for real-time agent status monitoring.
 
 To disable OpenCode integration: **Settings → Terminal → OpenCode Integration**, or set `opencode-hooks = false` in `~/.config/seance/config.toml`.
