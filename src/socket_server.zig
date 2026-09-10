@@ -549,7 +549,7 @@ pub const SocketServer = struct {
             "\"browser.get_url\",\"browser.list\"," ++
             "\"browser.get_title\",\"browser.get_zoom\",\"browser.set_zoom\"," ++
             "\"browser.is_loading\",\"browser.get_progress\",\"browser.eval\",\"browser.close\"]";
-        var result_buf: [1024]u8 = undefined;
+        var result_buf: [2048]u8 = undefined;
         const result = std.fmt.bufPrint(&result_buf, "{{\"methods\":{s}}}", .{methods}) catch
             return writeJsonError(buf, id, "internal", "Buffer overflow");
         return writeJsonOk(buf, id, result);
