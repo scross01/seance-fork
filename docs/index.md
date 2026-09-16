@@ -333,14 +333,6 @@ features:
         <td><span class="check">&#10003;</span></td>
       </tr>
       <tr>
-        <td>Gemini CLI</td>
-        <td><span class="dash">&mdash;</span></td>
-        <td><span class="dash">&mdash;</span></td>
-        <td><span class="check">&#10003;</span></td>
-        <td><span class="dash">&mdash;</span></td>
-        <td><span class="dash">&mdash;</span></td>
-      </tr>
-      <tr>
         <td>Codebuff</td>
         <td><span class="dash">&mdash;</span></td>
         <td><span class="check">&#10003;</span></td>
@@ -406,7 +398,7 @@ features:
       </tr>
       <tr>
         <td>Antigravity CLI</td>
-        <td><span class="dash">&mdash;</span></td>
+        <td><span class="check">&#10003;</span></td>
         <td><span class="check">&#10003;</span></td>
         <td><span class="dash">&mdash;</span></td>
         <td><span class="dash">&mdash;</span></td>
@@ -424,7 +416,7 @@ features:
   </table>
   <p class="comparison-note">
     Séance-fork auto-detects every agent above with zero config.
-    <a href="https://github.com/am-will/limux">Limux</a> ships hooks for Codex, Claude Code, and Gemini CLI;
+    <a href="https://github.com/am-will/limux">Limux</a> ships hooks for Codex and Claude Code;
     <a href="https://github.com/tony1223/better-agent-terminal">Better Agent Terminal</a> builds Claude Code and Codex in directly.
     <a href="https://github.com/patcito/prettymux">PrettyMux</a> exposes a generic agent-status socket any agent can call, but ships no
     built-in auto-detection, so it isn't checked for specific agents. The others all use split or tabbed
