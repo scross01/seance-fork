@@ -16,6 +16,7 @@ All agent integrations ultimately translate to the same set of Séance hooks. Wh
 | **TOML config hooks** | Mistral Vibe | Hooks appended to `~/.vibe/hooks.toml` |
 | **Built-in wrapper** | Codex, Pi Agent | Agent's native hooks call `seance ctl` directly |
 | **Session log monitoring** | Poolside, Codebuff, Freebuff | `inotifywait` watches for file changes |
+| **Status-line callback** | Antigravity CLI | A wrapped status-line callback reports state via `antigravity-hook` |
 
 For detailed documentation on each approach, see:
 - [Plugin-Based Integration](./integration-plugins.md)
@@ -156,6 +157,7 @@ const opencode_agent = AgentConfig{
 
 | Agent | Notification Support |
 |-------|---------------------|
+| Antigravity CLI | Custom (status callback) |
 | Claude Code | Yes (notification hook) |
 | Codebuff | No |
 | Codex | No |
@@ -174,6 +176,7 @@ Most agents clear status on `session-end`. Hermes does not — it uses `llm-comp
 
 | Agent | clear_status_on_end |
 |-------|---------------------|
+| Antigravity CLI | Yes |
 | Claude Code | Yes |
 | Codebuff | Yes |
 | Codex | Yes |

@@ -405,6 +405,14 @@ features:
         <td><span class="dash">&mdash;</span></td>
       </tr>
       <tr>
+        <td>Antigravity CLI</td>
+        <td><span class="dash">&mdash;</span></td>
+        <td><span class="check">&#10003;</span></td>
+        <td><span class="dash">&mdash;</span></td>
+        <td><span class="dash">&mdash;</span></td>
+        <td><span class="dash">&mdash;</span></td>
+      </tr>
+      <tr>
         <td>Poolside Agent CLI</td>
         <td><span class="dash">&mdash;</span></td>
         <td><span class="check">&#10003;</span></td>

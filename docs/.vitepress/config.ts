@@ -48,6 +48,7 @@ export default defineConfig({
             { text: 'MiMo Code', link: '/agents/mimocode' },
             { text: 'Mistral Vibe', link: '/agents/vibe' },
             { text: 'OpenCode', link: '/agents/opencode' },
+            { text: 'Antigravity CLI', link: '/agents/antigravity' },
             { text: 'Pi Agent', link: '/agents/pi' },
             { text: 'Poolside Agent CLI', link: '/agents/poolside' },
             { text: 'Adding New Agents', link: '/agents/adding-agents' },

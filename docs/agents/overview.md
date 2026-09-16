@@ -23,6 +23,7 @@ Agent Framework → Plugin/Hook → Séance Hook → Socket API → Sidebar UI
 | [Freebuff](./freebuff.md) | Session log monitoring (inotifywait) | `freebuff-hooks` | Per-surface |
 | [Hermes Agent](./hermes.md) | Python plugin | `hermes-hooks` | Per-surface |
 | [Kilo Code](./kilo.md) | TypeScript plugin | `kilo-hooks` | Per-surface |
+| [Antigravity CLI](./antigravity.md) | Status-line callback | `antigravity-hooks` | Per-surface |
 | [MiMo Code](./mimocode.md) | TypeScript plugin | `mimocode-hooks` | Per-surface |
 | [Mistral Vibe](./vibe.md) | TOML config hooks | `vibe-hooks` | Per-surface |
 | [OpenCode](./opencode.md) | TypeScript plugin | `opencode-hooks` | Per-surface |

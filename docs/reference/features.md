@@ -4,21 +4,22 @@ Comparison of Séance's agent integration capabilities across all supported agen
 
 ## Integration Overview
 
-| Feature | Claude Code | Codebuff | Codex | Freebuff | Hermes Agent | Kilo Code | MiMo Code | Mistral Vibe | OpenCode | Pi Agent | Poolside Agent CLI |
-|---------|:-----------:|:--------:|:-----:|:--------:|:------------:|:---------:|:---------:|:------------:|:--------:|:--------:|:------------------:|
-| Hook mechanism | Shell hooks | inotifywait | Built-in | inotifywait | Python plugin | TS plugin | TS plugin | TOML config | TS plugin | Built-in | inotifywait |
-| Auto-install | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
-| Notification support | Yes | No | No | No | Custom | Yes | Yes | No | Yes | No | No |
-| AskUser / permission detection | Yes | No | No | No | Yes | Yes | Yes | No | Yes | No | No |
-| Session directory tracking | No | No | No | No | No | Yes | Yes | No | Yes | No | No |
-| Subagent tracking | No | No | No | No | No | No | Yes | No | No | No | No |
-| Status key mode | session | surface | surface | surface | surface | surface | surface | surface | surface | surface | surface |
-| clear\_status\_on\_end | Yes | Yes | Yes | Yes | No | Yes | Yes | Yes | Yes | Yes | Yes |
+| Feature | Antigravity CLI | Claude Code | Codebuff | Codex | Freebuff | Hermes Agent | Kilo Code | MiMo Code | Mistral Vibe | OpenCode | Pi Agent | Poolside Agent CLI |
+|---------|:----------:|:-----------:|:--------:|:-----:|:--------:|:------------:|:---------:|:---------:|:------------:|:--------:|:--------:|:------------------:|
+| Hook mechanism | Status callback | Shell hooks | inotifywait | Built-in | inotifywait | Python plugin | TS plugin | TS plugin | TOML config | TS plugin | Built-in | inotifywait |
+| Auto-install | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
+| Notification support | Custom | Yes | No | No | No | Custom | Yes | Yes | No | Yes | No | No |
+| AskUser / permission detection | Yes | Yes | No | No | No | Yes | Yes | Yes | No | Yes | No | No |
+| Session directory tracking | No | No | No | No | No | No | Yes | Yes | No | Yes | No | No |
+| Subagent tracking | No | No | No | No | No | No | No | Yes | No | No | No | No |
+| Status key mode | surface | session | surface | surface | surface | surface | surface | surface | surface | surface | surface | surface |
+| clear\_status\_on\_end | Yes | Yes | Yes | Yes | Yes | No | Yes | Yes | Yes | Yes | Yes | Yes |
 
 ## Hook Mechanism Details
 
 | Agent | Mechanism | Install target | Bundled artifact |
 |-------|-----------|----------------|------------------|
+| Antigravity CLI | Status-line callback | `~/.gemini/antigravity-cli/settings.json` | Wrapper script + callback |
 | Claude Code | Shell hooks | `~/.claude/settings.json` | Wrapper script only |
 | Codebuff | Session log monitoring | *(inotifywait)* | Wrapper script |
 | Codex | Built-in wrapper | *(native)* | *(none)* |
@@ -46,6 +47,8 @@ Agents with notification support emit desktop notifications when:
 Agents without native notification support (Codex, Mistral Vibe, Pi Agent) do not forward desktop notifications through Séance.
 
 Hermes Agent achieves notification parity through custom handlers (`llm-complete`, `approval-request`) rather than the standard notification hook.
+
+Antigravity CLI emits its own notifications (permission requests and idle transitions) directly from the status-line callback rather than a hook.
 
 ## clear\_status\_on\_end
 

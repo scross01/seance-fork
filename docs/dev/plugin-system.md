@@ -90,6 +90,7 @@ Every agent integration includes a wrapper script in `resources/bin/` that inter
 | `resources/bin/pi` | Pi Agent | `SEANCE_PI_PID` | `pi-hook` |
 | `resources/bin/pool` | Poolside Agent CLI | `SEANCE_POOL_PID` | `pool-hook` |
 | `resources/bin/vibe` | Mistral Vibe | `SEANCE_VIBE_PID` | `vibe-hook` |
+| `resources/bin/agy` | Antigravity CLI | `SEANCE_AGY_PID` | `antigravity-hook` |
 
 ## Config Toggles
 
@@ -107,6 +108,7 @@ codebuff-hooks = true
 freebuff-hooks = true
 vibe-hooks = true
 hermes-hooks = true
+antigravity-hooks = true
 ```
 
 Or via the Settings UI: **Settings → Terminal → Agent Integration**.
