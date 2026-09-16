@@ -14,6 +14,8 @@ pub const Pane = struct {
     pane_group_id: u64,
     surface: c.ghostty_surface_t = null,
     gl_area: ?*c.GtkGLArea = null,
+    // Owned reference: GTK can retain focus controllers past widget teardown.
+    focus_controller: ?*c.GtkEventController = null,
     widget: *c.GtkWidget, // outer wrapper box (for CSS border)
     cwd: [cwd_cap]u8 = [_]u8{0} ** cwd_cap,
     cwd_len: usize = 0,
@@ -151,12 +153,42 @@ pub const Pane = struct {
         return pane;
     }
 
-    /// Disconnect signal handlers on the gl_area so GTK won't fire
+    /// Disconnect signal handlers on the GLArea and focus controller so GTK won't fire
     /// callbacks into this pane after it is freed or the widget is
     /// finalized. Safe to call multiple times, and safe to call after
     /// the gl_area has already been finalized (the weak pointer added
     /// in create() will have nulled self.gl_area in that case).
     pub fn disconnectSignals(self: *Pane) void {
+        if (self.scrollbar_hide_timeout != 0) {
+            _ = c.g_source_remove(self.scrollbar_hide_timeout);
+            self.scrollbar_hide_timeout = 0;
+        }
+        if (self.scrollbar_widget) |scrollbar| {
+            // The widget may outlive Pane. Remove both callbacks that borrow
+            // pane memory before destroy() frees it.
+            c.gtk_drawing_area_set_draw_func(@ptrCast(scrollbar), null, null, null);
+            c.g_object_remove_weak_pointer(
+                @as(*c.GObject, @ptrCast(scrollbar)),
+                @ptrCast(&self.scrollbar_widget),
+            );
+            self.scrollbar_widget = null;
+        }
+        // Closing the last tab can finalize the GLArea before destroy().
+        // GTK may still emit focus-leave when selecting the replacement pane,
+        // so disconnect the controller independently of the GLArea's lifetime.
+        if (self.focus_controller) |controller| {
+            _ = c.g_signal_handlers_disconnect_matched(
+                @as(c.gpointer, @ptrCast(controller)),
+                c.G_SIGNAL_MATCH_DATA,
+                0,
+                0,
+                null,
+                null,
+                @as(c.gpointer, @ptrCast(self)),
+            );
+            self.focus_controller = null;
+            c.g_object_unref(@ptrCast(controller));
+        }
         // The IM context borrows its client widget. Detach while it is alive,
         // including close paths that disconnect the unrealize handler early.
         self.unfocusImContext();
@@ -190,10 +222,6 @@ pub const Pane = struct {
         }
         if (self.flash_timeout != 0) {
             _ = c.g_source_remove(self.flash_timeout);
-        }
-        if (self.scrollbar_hide_timeout != 0) {
-            _ = c.g_source_remove(self.scrollbar_hide_timeout);
-            self.scrollbar_hide_timeout = 0;
         }
         if (self.title_refresh_timeout != 0) {
             _ = c.g_source_remove(self.title_refresh_timeout);
@@ -295,6 +323,9 @@ pub const Pane = struct {
     }
 
     pub fn updateScrollbar(self: *Pane, total: u64, offset: u64, len: u64) void {
+        // GTK can finalize the widget before Ghostty delivers its last action.
+        // Do not touch the widget or schedule another timeout after teardown.
+        const widget = self.scrollbar_widget orelse return;
         self.scrollbar_total = total;
         self.scrollbar_offset = offset;
         self.scrollbar_len = len;
@@ -306,7 +337,7 @@ pub const Pane = struct {
             // Show scrollbar and reset hide timer
             if (!self.scrollbar_visible) {
                 self.scrollbar_visible = true;
-                if (self.scrollbar_widget) |w| c.gtk_widget_set_visible(w, 1);
+                c.gtk_widget_set_visible(widget, 1);
             }
             // Reset auto-hide timeout
             if (self.scrollbar_hide_timeout != 0) {
@@ -317,7 +348,7 @@ pub const Pane = struct {
             // At bottom with scrollback: briefly show then auto-hide
             if (!self.scrollbar_visible) {
                 self.scrollbar_visible = true;
-                if (self.scrollbar_widget) |w| c.gtk_widget_set_visible(w, 1);
+                c.gtk_widget_set_visible(widget, 1);
             }
             if (self.scrollbar_hide_timeout != 0) {
                 _ = c.g_source_remove(self.scrollbar_hide_timeout);
@@ -326,11 +357,11 @@ pub const Pane = struct {
         } else {
             // No scrollback content — hide immediately
             self.scrollbar_visible = false;
-            if (self.scrollbar_widget) |w| c.gtk_widget_set_visible(w, 0);
+            c.gtk_widget_set_visible(widget, 0);
         }
 
         // Redraw the scrollbar
-        if (self.scrollbar_widget) |w| c.gtk_widget_queue_draw(w);
+        c.gtk_widget_queue_draw(widget);
     }
 
     pub fn notify(self: *Pane) void {
@@ -490,6 +521,8 @@ fn setupInputControllers(gl_area_widget: *c.GtkWidget, pane: *Pane) void {
 
     // Focus controller
     const focus_ctrl = c.gtk_event_controller_focus_new();
+    _ = c.g_object_ref(@ptrCast(focus_ctrl));
+    pane.focus_controller = @ptrCast(focus_ctrl);
     connectSignal(focus_ctrl, "enter", &onFocusEnter, pane);
     connectSignal(focus_ctrl, "leave", &onFocusLeave, pane);
     c.gtk_widget_add_controller(gl_area_widget, @ptrCast(focus_ctrl));
@@ -526,6 +559,12 @@ fn setupOverlays(overlay: *c.GtkWidget, pane: *Pane) void {
     );
     c.gtk_overlay_add_overlay(@ptrCast(overlay), scrollbar_da);
     pane.scrollbar_widget = scrollbar_da;
+    // Window teardown can destroy the overlay while its Pane and Ghostty
+    // surface are still alive. Clear the borrowed pointer on finalization.
+    c.g_object_add_weak_pointer(
+        @as(*c.GObject, @ptrCast(scrollbar_da)),
+        @ptrCast(&pane.scrollbar_widget),
+    );
 }
 
 // ── GLArea callbacks ────────────────────────────────────────────────
@@ -975,6 +1014,41 @@ fn canonicalKeycode(keyval: c.guint, keycode: c.guint, is_modifier: bool) c.guin
         => 0,
         else => if (is_modifier) 0 else keycode,
     };
+}
+
+test "scrollbar updates after widget finalization are ignored" {
+    if (c.gtk_init_check() == 0) return error.SkipZigTest;
+    const pane = try Pane.create(std.testing.allocator, null, 1, 1);
+    defer pane.destroy(std.testing.allocator);
+    const widget = pane.widget;
+    _ = c.g_object_ref_sink(@ptrCast(widget));
+
+    // Simulate GTK tearing down a window before the final Ghostty action.
+    c.g_object_unref(@ptrCast(widget));
+    pane.updateScrollbar(100, 80, 20);
+    try std.testing.expect(pane.scrollbar_widget == null);
+    try std.testing.expectEqual(0, pane.scrollbar_hide_timeout);
+}
+
+test "scrollbar callbacks stop when a pane disconnects before its widgets" {
+    if (c.gtk_init_check() == 0) return error.SkipZigTest;
+    const pane = try Pane.create(std.testing.allocator, null, 1, 1);
+    const widget = pane.widget;
+    _ = c.g_object_ref_sink(@ptrCast(widget));
+    defer c.g_object_unref(@ptrCast(widget));
+    defer pane.destroy(std.testing.allocator);
+
+    const scrollbar = pane.scrollbar_widget.?;
+    pane.updateScrollbar(100, 80, 20);
+    try std.testing.expect(c.gtk_widget_get_visible(scrollbar) != 0);
+    try std.testing.expect(pane.scrollbar_hide_timeout != 0);
+
+    pane.disconnectSignals();
+    pane.disconnectSignals();
+    c.gtk_widget_set_visible(scrollbar, 0);
+    pane.updateScrollbar(200, 180, 20);
+    try std.testing.expectEqual(0, c.gtk_widget_get_visible(scrollbar));
+    try std.testing.expectEqual(0, pane.scrollbar_hide_timeout);
 }
 
 test "XKB remaps editing keys and both halves of Caps Escape swaps" {

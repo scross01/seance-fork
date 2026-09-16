@@ -28,6 +28,5 @@ pkgbase = seance
 	options = !debug
 	source = seance-fork-0.5.0-src.tar.gz::https://github.com/scross01/seance-fork/releases/download/v0.5.0/seance-fork-0.5.0-src.tar.gz
 	sha256sums = (set at release time)
->>>>>>> upstream/main
 
 pkgname = seance-fork
