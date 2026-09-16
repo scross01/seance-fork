@@ -1,6 +1,6 @@
 pkgbase = seance
 	pkgdesc = Scrolling terminal multiplexer for running multiple AI coding agents side by side
-	pkgver = 0.5.0
+	pkgver = 0.5.1
 	pkgrel = 1
 	url = https://github.com/scross01/seance-fork
 	arch = x86_64
@@ -26,7 +26,7 @@ pkgbase = seance
 	depends = harfbuzz
 	depends = oniguruma
 	options = !debug
-	source = seance-fork-0.5.0-src.tar.gz::https://github.com/scross01/seance-fork/releases/download/v0.5.0/seance-fork-0.5.0-src.tar.gz
+	source = seance-fork-0.5.1-src.tar.gz::https://github.com/scross01/seance-fork/releases/download/v0.5.1/seance-fork-0.5.1-src.tar.gz
 	sha256sums = (set at release time)
 
 pkgname = seance-fork

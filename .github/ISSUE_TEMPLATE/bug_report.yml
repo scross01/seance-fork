@@ -34,7 +34,7 @@ body:
     attributes:
       label: Séance version
       description: Output of `seance --version`, or the git SHA if built from source.
-      placeholder: "0.5.0"
+      placeholder: "0.5.1"
     validations:
       required: true
 

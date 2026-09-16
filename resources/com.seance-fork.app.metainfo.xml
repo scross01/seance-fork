@@ -48,6 +48,11 @@
   <content_rating type="oars-1.1" />
 
   <releases>
+    <release version="0.5.1" date="2026-09-16">
+      <description>
+        <p>Merges upstream Séance v0.1.7: fixes a crash when closing the last pane, socket server numeric-input crashes and scrollbar teardown, and a deadlock when closing busy windows and workspaces (the embedded ghostty submodule advances with the deadlock fix).</p>
+      </description>
+    </release>
     <release version="0.5.0" date="2026-09-09">
       <description>
         <p>Realignment with upstream Séance v0.1.6: OpenCode per-launch plugin injection, Antigravity CLI tracking, IME and XKB fixes, fullscreen toggle, and migration to Zig 0.16. Fork versioning is now independent of upstream.</p>
