@@ -51,13 +51,12 @@ The `--recursive` flag initializes the Ghostty submodule during clone. If you cl
 git submodule update --init --recursive
 ```
 
-### First-Time Setup (Patches)
+### First-Time Setup
 
-After cloning, apply the Ghostty patches:
-
-```bash
-bash scripts/apply-ghostty-patches.sh
-```
+The Ghostty submodule points at `no1msd/ghostty` on the `seance-patches`
+branch, which has the embedding patches baked in — no local patch
+application needed. After cloning with `--recursive`, the submodule is
+ready to build.
 
 ### Build with Assets
 
@@ -105,21 +104,14 @@ mv seance-*-x86_64.AppImage ~/.local/bin/seance
 
 ## Updating Ghostty
 
-Patches live in `patches/`. The upstream is `ghostty-org/ghostty`.
-
-### Apply Patches
-
-```bash
-bash scripts/apply-ghostty-patches.sh
-```
-
-### Update to New Upstream Version
+The Ghostty submodule points at `no1msd/ghostty`, branch `seance-patches`
+(embedding patches baked in — no local patch application). Upstream for the
+patch set is `ghostty-org/ghostty`.
 
 ```bash
-bash scripts/update-ghostty.sh <commit-or-tag>
+git -C ghostty fetch origin && git -C ghostty checkout <commit-or-tag>
+git add ghostty
 ```
-
-**Do not commit the ghostty submodule with patches applied.** The submodule ref should stay at the clean upstream commit.
 
 ## Worktrees
 
@@ -170,4 +162,4 @@ Requires Xvfb for a virtual display.
 - **OpenGL requirement:** Ghostty requires desktop OpenGL 4.3+, not GLES. `main.zig` sets `GDK_DISABLE=gles-api,vulkan` before GTK init.
 - **Fontconfig linking:** System fontconfig must be linked once per process (ELF interposition crash). See `build.zig` `system_library_options`.
 - **Do not use `zig-out/bin/seance` directly:** It lacks installed assets. Use `make run` instead.
-- **Ghostty submodule:** Keep the submodule ref at the clean upstream commit. Patches are applied to the working tree, not committed to the submodule.
+- **Ghostty submodule:** Points at the `seance-patches` branch with embedding patches baked in — do not point it back to a clean `ghostty-org/ghostty` commit.
