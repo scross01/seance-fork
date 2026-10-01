@@ -47,7 +47,7 @@ pub const WindowManager = struct {
         // shutting down — must happen BEFORE removing from the list so the
         // closing window's state is captured for next-launch restore.
         if (is_last_window or is_shutdown) {
-            session.saveAll(self, true);
+            session.saveAll(self, true, false);
         }
 
         // Mark as destroyed so in-flight background work won't touch state
@@ -63,12 +63,6 @@ pub const WindowManager = struct {
         if (win.metadata_timer != 0) {
             _ = c.g_source_remove(win.metadata_timer);
             win.metadata_timer = 0;
-        }
-
-        // Stop vim check timer
-        if (win.vim_check_timer != 0) {
-            _ = c.g_source_remove(win.vim_check_timer);
-            win.vim_check_timer = 0;
         }
 
         // Stop port scan timer
@@ -106,7 +100,7 @@ pub const WindowManager = struct {
         win.workspaces.clearRetainingCapacity();
 
         // Save session with remaining windows (no scrollback for speed)
-        session.saveAll(self, false);
+        session.saveAll(self, false, false);
     }
 
     pub fn setActiveWindow(self: *WindowManager, win: *Window.WindowState) void {
@@ -174,7 +168,7 @@ pub const WindowManager = struct {
 
     fn onAutoSave(data: c.gpointer) callconv(.c) c.gboolean {
         const self: *WindowManager = @ptrCast(@alignCast(data));
-        session.saveAll(self, false);
+        session.saveAll(self, false, true);
         return 1; // G_SOURCE_CONTINUE
     }
 };

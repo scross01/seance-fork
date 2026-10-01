@@ -79,11 +79,21 @@ pub const WebPanel = struct {
         c.gtk_widget_set_hexpand(webview_widget, 1);
         c.gtk_widget_set_vexpand(webview_widget, 1);
 
-        // Root container
+        // Root container: overlay wrapper (carries pane focus classes) >
+        // box (toolbar + webview), with a dim layer for unfocused state.
         const box = c.gtk_box_new(c.GTK_ORIENTATION_VERTICAL, 0);
         c.gtk_widget_set_hexpand(box, 1);
         c.gtk_widget_set_vexpand(box, 1);
-        c.gtk_widget_add_css_class(box, "pane-unfocused");
+
+        const dim = c.gtk_box_new(c.GTK_ORIENTATION_HORIZONTAL, 0);
+        c.gtk_widget_set_can_target(dim, 0);
+        c.gtk_widget_set_can_focus(dim, 0);
+        c.gtk_widget_add_css_class(dim, "pane-dim");
+
+        const wrapper = c.gtk_overlay_new();
+        c.gtk_overlay_set_child(@ptrCast(wrapper), box);
+        c.gtk_overlay_add_overlay(@ptrCast(wrapper), dim);
+        c.gtk_widget_add_css_class(@ptrCast(wrapper), "pane-unfocused");
 
         // Toolbar: [◀] [▶] [⟲/✕] [URL entry] [✕]
         const toolbar = c.gtk_box_new(c.GTK_ORIENTATION_HORIZONTAL, 4);
@@ -165,7 +175,7 @@ pub const WebPanel = struct {
         const panel = try alloc.create(WebPanel);
         panel.* = .{
             .id = id,
-            .widget = box,
+            .widget = @ptrCast(wrapper),
             .toolbar = toolbar,
             .url_stack = url_stack,
             .entry = @ptrCast(entry),
@@ -359,8 +369,6 @@ pub const WebPanel = struct {
     pub fn focus(self: *WebPanel) void {
         c.gtk_widget_remove_css_class(self.widget, "pane-unfocused");
         c.gtk_widget_add_css_class(self.widget, "pane-focused");
-        if (@import("config.zig").get().dim_unfocused_panes)
-            c.gtk_widget_set_opacity(@ptrCast(self.webview), 1.0);
         const uri = c.webkit_web_view_get_uri(self.webview);
         if (uri) |u| {
             c.gtk_editable_set_text(@ptrCast(self.entry), u);
@@ -372,8 +380,6 @@ pub const WebPanel = struct {
     pub fn unfocus(self: *WebPanel) void {
         c.gtk_widget_remove_css_class(self.widget, "pane-focused");
         c.gtk_widget_add_css_class(self.widget, "pane-unfocused");
-        if (@import("config.zig").get().dim_unfocused_panes)
-            c.gtk_widget_set_opacity(@ptrCast(self.webview), 0.8);
     }
 
     pub fn updateBackgroundColor(self: *WebPanel) void {
@@ -419,8 +425,6 @@ pub const WebPanel = struct {
     pub fn focusVisuals(self: *WebPanel) void {
         c.gtk_widget_remove_css_class(self.widget, "pane-unfocused");
         c.gtk_widget_add_css_class(self.widget, "pane-focused");
-        if (@import("config.zig").get().dim_unfocused_panes)
-            c.gtk_widget_set_opacity(@ptrCast(self.webview), 1.0);
     }
 
     pub fn queueResize(self: *WebPanel) void {

@@ -272,14 +272,18 @@ pub const Sidebar = struct {
 
         var ids: [128]u64 = undefined;
         var pinned: [128]bool = undefined;
+        var sigs: [128]u64 = undefined;
         for (self.display_order[0..self.display_order_len], 0..) |ws_idx, i| {
-            ids[i] = self.workspaces.items[ws_idx].id;
-            pinned[i] = self.workspaces.items[ws_idx].is_pinned;
+            const ws = self.workspaces.items[ws_idx];
+            ids[i] = ws.id;
+            pinned[i] = ws.is_pinned;
+            sigs[i] = self.wsContentSignature(ws);
         }
 
         self.tab_bar.reconcile(
             ids[0..self.display_order_len],
             pinned[0..self.display_order_len],
+            sigs[0..self.display_order_len],
             &contentBuilderCallback,
         );
 
@@ -305,6 +309,79 @@ pub const Sidebar = struct {
                 c.gtk_widget_set_visible(badge, 0);
             }
         }
+    }
+
+    /// Hash every input buildTabContent renders for a workspace, so
+    /// reconcile can skip rebuilding tabs whose content cannot have changed.
+    fn wsContentSignature(self: *Sidebar, ws: *Workspace) u64 {
+        const cfg = config_mod.get();
+        var h = std.hash.Wyhash.init(0);
+        h.update(ws.getTitle());
+        h.update(&[_]u8{
+            @intFromBool(ws.is_pinned),
+            @intFromBool(cfg.sidebar_show_notification_text),
+            @intFromBool(cfg.sidebar_show_status),
+            @intFromBool(cfg.sidebar_show_logs),
+            @intFromBool(cfg.sidebar_show_progress),
+            @intFromBool(cfg.sidebar_show_branch),
+            @intFromBool(cfg.sidebar_show_ports),
+            @intFromBool(self.isStatusExpanded(ws.id)),
+        });
+
+        if (self.notif_store) |store| {
+            const unread = store.unreadForWorkspace(ws.id);
+            h.update(std.mem.asBytes(&unread));
+            if (store.latestForWorkspace(ws.id)) |notif| {
+                h.update(notif.getTitle());
+                h.update(notif.getSubtitle());
+                h.update(notif.getBody());
+            }
+        }
+
+        const md = &ws.metadata;
+        h.update(std.mem.asBytes(&md.status_count));
+        h.update(std.mem.asBytes(&md.background_count));
+        for (md.status_entries[0..md.status_count]) |*entry| {
+            h.update(entry.getKey());
+            h.update(entry.getValue());
+            if (entry.getDisplayName()) |dn| h.update(dn);
+            h.update(std.mem.asBytes(&entry.priority));
+            h.update(&[_]u8{@intFromBool(entry.is_agent)});
+        }
+
+        if (md.log_count > 0) {
+            var log_buf: [1]workspace_mod.LogEntry = undefined;
+            if (md.getRecentLogs(&log_buf) > 0) {
+                h.update(log_buf[0].getMessage());
+                h.update(&[_]u8{@intFromEnum(log_buf[0].level)});
+            }
+        }
+
+        h.update(&[_]u8{@intFromBool(md.progress.active)});
+        if (md.progress.active) {
+            h.update(std.mem.asBytes(&md.progress.value));
+            if (md.progress.getLabel()) |label| h.update(label);
+        }
+
+        if (ws.getGitBranch()) |branch| h.update(branch);
+        h.update(&[_]u8{@intFromBool(ws.git_dirty)});
+        if (ws.getActivePaneCwd()) |cwd| h.update(cwd);
+
+        const ports = ws.getActivePorts();
+        h.update(std.mem.sliceAsBytes(ports));
+
+        // Column indicator dots: live column count and focused live index
+        var live_count: usize = 0;
+        var focused_live: usize = 0;
+        for (ws.columns.items, 0..) |col, i| {
+            if (col.closing) continue;
+            if (i == ws.focused_column) focused_live = live_count;
+            live_count += 1;
+        }
+        h.update(std.mem.asBytes(&live_count));
+        h.update(std.mem.asBytes(&focused_live));
+
+        return h.final();
     }
 
     /// Content builder callback passed to VerticalTabBar.reconcile.

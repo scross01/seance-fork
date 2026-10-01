@@ -1124,7 +1124,7 @@ fn onShutdown(_: *c.AdwApplication) callconv(.c) void {
         }
 
         if (manager.windows.items.len > 0) {
-            session.saveAll(manager, true);
+            session.saveAll(manager, true, false);
         }
     }
 

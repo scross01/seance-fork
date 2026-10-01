@@ -370,13 +370,6 @@ pub const Pane = struct {
         c.gtk_widget_add_css_class(self.widget, "pane-notification");
     }
 
-    pub fn checkVimStatus(self: *Pane) bool {
-        // Vim detection requires child PID which ghostty manages internally.
-        // For now, maintain current state (detected via shell integration reports).
-        _ = self;
-        return false;
-    }
-
     pub fn triggerFlash(self: *Pane) void {
         if (self.flash_timeout != 0) {
             _ = c.g_source_remove(self.flash_timeout);
@@ -535,6 +528,16 @@ fn setupInputControllers(gl_area_widget: *c.GtkWidget, pane: *Pane) void {
 }
 
 fn setupOverlays(overlay: *c.GtkWidget, pane: *Pane) void {
+    // Dim layer for unfocused panes: a translucent black overlay is
+    // composited cheaply, unlike a CSS filter which forces the whole
+    // pane subtree offscreen every frame. Added first so the focus bar,
+    // search overlay, and scrollbar stay above it.
+    const dim = c.gtk_box_new(c.GTK_ORIENTATION_HORIZONTAL, 0);
+    c.gtk_widget_set_can_target(dim, 0);
+    c.gtk_widget_set_can_focus(dim, 0);
+    c.gtk_widget_add_css_class(dim, "pane-dim");
+    c.gtk_overlay_add_overlay(@ptrCast(overlay), dim);
+
     // Focus-indicator bar (accent bar at top edge, driven by CSS)
     const focus_bar = c.gtk_box_new(c.GTK_ORIENTATION_HORIZONTAL, 0);
     c.gtk_widget_set_valign(focus_bar, c.GTK_ALIGN_START);

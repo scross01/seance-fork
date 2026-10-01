@@ -23,6 +23,10 @@ pub const TabInfo = struct {
     is_pinned: bool,
     needs_attention: bool = false,
     color_bar_provider: ?*c.GtkCssProvider = null,
+    content_signature: u64 = 0, // hash of builder inputs; unchanged = skip rebuild
+    color_hex: [8]u8 = undefined, // last applied color-bar hex (e.g. "#1e78e4")
+    color_hex_len: usize = 0,
+    has_color: bool = false,
     reveal_source_id: c.guint = 0, // pending g_idle reveal callback (0 = none)
     // Layout fields for smooth drag animation
     base_y: f64 = 0,
@@ -324,6 +328,13 @@ pub const VerticalTabBar = struct {
         const idx = self.findTabById(id) orelse return;
         var tab = &self.tabs[idx];
 
+        // Skip re-parsing the CSS when the color hasn't changed.
+        if (color) |hex| {
+            if (tab.has_color and tab.color_hex_len == hex.len and
+                std.mem.eql(u8, tab.color_hex[0..tab.color_hex_len], hex)) return;
+            if (hex.len > tab.color_hex.len) return;
+        } else if (!tab.has_color) return;
+
         if (color) |hex| {
             // Show the color bar with the given color
             c.gtk_widget_set_visible(tab.color_bar, 1);
@@ -341,9 +352,14 @@ pub const VerticalTabBar = struct {
                 c.gtk_style_context_add_provider(ctx, @ptrCast(provider), c.GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
                 tab.color_bar_provider = provider;
             }
+            @memcpy(tab.color_hex[0..hex.len], hex);
+            tab.color_hex_len = hex.len;
+            tab.has_color = true;
         } else {
             // Hide the color bar
             c.gtk_widget_set_visible(tab.color_bar, 0);
+            tab.has_color = false;
+            tab.color_hex_len = 0;
         }
     }
 
@@ -388,6 +404,7 @@ pub const VerticalTabBar = struct {
         self: *VerticalTabBar,
         ids: []const u64,
         pinned: []const bool,
+        signatures: []const u64,
         builder: *const fn (*VerticalTabBar, u64) ?*c.GtkWidget,
     ) void {
         // 1. Remove tabs not in new list
@@ -414,8 +431,14 @@ pub const VerticalTabBar = struct {
         for (ids, 0..) |new_id, pos| {
             if (self.findTabById(new_id)) |existing_idx| {
                 self.tabs[existing_idx].is_pinned = pinned[pos];
-                if (builder(self, new_id)) |new_content| {
-                    self.updateContent(new_id, new_content);
+                // Skip the content rebuild when the builder's inputs are
+                // unchanged — rebuilding every row per refresh was the
+                // sidebar's main widget churn.
+                if (self.tabs[existing_idx].content_signature != signatures[pos]) {
+                    if (builder(self, new_id)) |new_content| {
+                        self.updateContent(new_id, new_content);
+                        self.tabs[existing_idx].content_signature = signatures[pos];
+                    }
                 }
                 if (existing_idx != pos) {
                     self.moveTabToPosition(existing_idx, pos);
@@ -423,6 +446,9 @@ pub const VerticalTabBar = struct {
             } else {
                 if (builder(self, new_id)) |content| {
                     self.addTab(new_id, content, pinned[pos], pos);
+                    if (self.findTabById(new_id)) |idx| {
+                        self.tabs[idx].content_signature = signatures[pos];
+                    }
                 }
             }
         }

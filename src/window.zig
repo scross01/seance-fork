@@ -91,7 +91,6 @@ pub const WindowState = struct {
     window_manager: *WindowManager,
     gtk_window: *c.GtkWidget,
     metadata_timer: c.guint = 0,
-    vim_check_timer: c.guint = 0,
     port_scan_timer: c.guint = 0,
     command_palette: command_palette_mod.CommandPalette = undefined,
     toast_overlay: *c.GtkWidget = undefined,
@@ -1560,9 +1559,6 @@ pub fn create(wm: *WindowManager) !*WindowState {
     // git branch and CWD in real time, so this is a fallback/catch-up.
     state.metadata_timer = c.g_timeout_add_seconds(15, @ptrCast(&onMetadataRefresh), @ptrCast(state));
 
-    // Start periodic vim detection (every 3 seconds)
-    state.vim_check_timer = c.g_timeout_add_seconds(3, @ptrCast(&onVimCheckRefresh), @ptrCast(state));
-
     // Start periodic port scanning (every 10 seconds)
     state.port_scan_timer = c.g_timeout_add_seconds(10, @ptrCast(&onPortScanRefresh), @ptrCast(state));
 
@@ -2031,27 +2027,6 @@ fn onMetadataRefresh(data: c.gpointer) callconv(.c) c.gboolean {
     return 1; // G_SOURCE_CONTINUE
 }
 
-fn onVimCheckRefresh(data: c.gpointer) callconv(.c) c.gboolean {
-    const state: *WindowState = @ptrCast(@alignCast(data));
-    var changed = false;
-    for (state.workspaces.items) |ws| {
-        for (ws.columns.items) |col| {
-            for (col.groups.items) |grp| {
-                for (grp.panels.items) |panel| {
-                    if (panel.asTerminal()) |pane| {
-                        if (pane.checkVimStatus()) changed = true;
-                    }
-                }
-            }
-        }
-    }
-    if (changed) {
-        state.sidebar.refresh();
-        state.sidebar.setActive(state.active_workspace);
-    }
-    return 1; // G_SOURCE_CONTINUE
-}
-
 fn onPortScanRefresh(data: c.gpointer) callconv(.c) c.gboolean {
     const state: *WindowState = @ptrCast(@alignCast(data));
     if (state.config.sidebar_show_ports) state.refreshPorts();
@@ -2260,9 +2235,16 @@ fn loadThemeCss() void {
         \\
     , .{ accent, accent, accent, pane_bg, pane_bg }) catch return;
 
+    // Unfocused-pane dim: overlay composite, not a filter — a CSS filter
+    // would force every unfocused terminal/webview offscreen per frame.
+    w.print(
+        \\.pane-dim {{ background-color: transparent; transition: background-color 150ms ease-in-out; }}
+        \\
+    , .{}) catch return;
+
     if (cfg.dim_unfocused_panes) {
         w.print(
-            \\.pane-unfocused > * {{ filter: brightness(0.8); }}
+            \\.pane-unfocused .pane-dim {{ background-color: rgba(0, 0, 0, 0.2); }}
             \\
         , .{}) catch return;
     }

@@ -144,7 +144,7 @@ pub const SocketServer = struct {
             .events = posix.POLL.IN,
             .revents = 0,
         }};
-        _ = posix.poll(&pfd, 10) catch return 1;
+        _ = posix.poll(&pfd, 1) catch return 1; // 1ms max stall per chunk
         if (pfd[0].revents & posix.POLL.IN == 0) return 1;
 
         // Read command. Sized to accommodate a 4096-byte text payload in its
@@ -159,7 +159,7 @@ pub const SocketServer = struct {
             total += n;
             if (std.mem.indexOfScalar(u8, buf[0..total], '\n') != null) break;
             var pfd2 = [1]posix.pollfd{.{ .fd = conn_fd, .events = posix.POLL.IN, .revents = 0 }};
-            const ready = posix.poll(&pfd2, 10) catch break;
+            const ready = posix.poll(&pfd2, 1) catch break; // 1ms bounded stall
             if (ready == 0) break;
             if (pfd2[0].revents & posix.POLL.IN == 0) break;
         }
@@ -1030,8 +1030,9 @@ pub const SocketServer = struct {
     fn handleSurfaceList(params: ?std.json.Value, id: []const u8, buf: []u8) []const u8 {
         const wm = getWindowManager() orelse return writeJsonError(buf, id, "not_ready", "Window manager not initialized");
         const state = wm.active_window orelse return writeJsonError(buf, id, "no_window", "No active window");
-        var result_buf: [8192]u8 = undefined;
+        var result_buf: [65536]u8 = undefined;
         var pos: usize = 0;
+        var overflow = false;
 
         pos += copySlice(result_buf[pos..], "{\"surfaces\":[");
 
@@ -1039,24 +1040,35 @@ pub const SocketServer = struct {
         var first = true;
 
         for (state.workspaces.items) |ws| {
+            if (overflow) break;
             if (ws_filter) |filt| {
                 if (ws.id != filt) continue;
             }
-            collectSurfaces(ws, &result_buf, &pos, &first);
+            collectSurfaces(ws, &result_buf, &pos, &first, &overflow);
         }
 
-        pos += copySlice(result_buf[pos..], "]}");
+        pos += copySlice(result_buf[pos..], "]");
+        if (overflow) pos += copySlice(result_buf[pos..], ",\"overflow\":true");
+        pos += copySlice(result_buf[pos..], "}");
         return writeJsonOk(buf, id, result_buf[0..pos]);
     }
 
-    fn collectSurfaces(ws: *@import("workspace.zig").Workspace, result_buf: []u8, pos: *usize, first: *bool) void {
+    fn collectSurfaces(ws: *@import("workspace.zig").Workspace, result_buf: *[65536]u8, pos: *usize, first: *bool, overflow: *bool) void {
         const fg = ws.focusedGroup();
         for (ws.columns.items) |col| {
             if (col.closing) continue;
             for (col.groups.items) |grp| {
                 for (grp.panels.items) |panel| {
+                    if (overflow.*) return;
                     const pane = panel.asTerminal() orelse continue;
-                    if (!first.*) pos.* += copySlice(result_buf[pos.*..], ",");
+                    if (!first.*) {
+                        const n = copySlice(result_buf[pos.*..], ",");
+                        pos.* += n;
+                        if (n < 1) {
+                            overflow.* = true;
+                            return;
+                        }
+                    }
                     first.* = false;
 
                     var cwd_esc: [1024]u8 = undefined;
@@ -1074,7 +1086,10 @@ pub const SocketServer = struct {
                         if (is_focused) "true" else "false",
                         if (pane.has_unread) "true" else "false",
                         escaped_cwd,
-                    }) catch return;
+                    }) catch {
+                        overflow.* = true;
+                        return;
+                    };
                     pos.* += entry.len;
                 }
             }

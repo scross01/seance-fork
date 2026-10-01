@@ -14,6 +14,36 @@ pub const AUTOSAVE_INTERVAL_SECS: u32 = 8;
 pub const SESSION_VERSION: u32 = 1;
 
 var load_error: ErrorBuf("Session restore error (details too long)") = .{};
+var write_in_flight: std.atomic.Value(bool) = std.atomic.Value(bool).init(false);
+
+const AsyncWrite = struct {
+    json: []u8,
+    alloc: Allocator,
+    path: [std.fs.max_path_bytes]u8 = undefined,
+    path_len: usize,
+};
+
+fn writeWorker(aw: *AsyncWrite) void {
+    defer {
+        aw.alloc.free(aw.json);
+        aw.alloc.destroy(aw);
+        write_in_flight.store(false, .release);
+    }
+    const path = aw.path[0..aw.path_len];
+    if (std.fs.path.dirname(path)) |dir| {
+        std.Io.Dir.cwd().createDirPath(io.get(), dir) catch |e| {
+            std.log.warn("session: failed to create session dir: {s}", .{@errorName(e)});
+        };
+    }
+    const file = std.Io.Dir.cwd().createFile(io.get(), path, .{}) catch |e| {
+        std.log.warn("session: failed to create session file: {s}", .{@errorName(e)});
+        return;
+    };
+    defer file.close(io.get());
+    file.writeStreamingAll(io.get(), aw.json) catch |e| {
+        std.log.warn("session: failed to write session file: {s}", .{@errorName(e)});
+    };
+}
 
 pub fn getLoadError() ?[*:0]const u8 {
     return load_error.get();
@@ -30,7 +60,7 @@ pub fn getSessionPath(buf: []u8) ?[]const u8 {
 
 // ── Save (multi-window) ──────────────────────────────────────────────
 
-pub fn saveAll(wm: anytype, include_scrollback: bool) void {
+pub fn saveAll(wm: anytype, include_scrollback: bool, async_write: bool) void {
     var path_buf: [std.fs.max_path_bytes]u8 = undefined;
     const path = getSessionPath(&path_buf) orelse {
         std.log.warn("session: cannot save — session path unavailable", .{});
@@ -53,16 +83,50 @@ pub fn saveAll(wm: anytype, include_scrollback: bool) void {
         };
     }
 
-    const file = std.Io.Dir.cwd().createFile(io.get(), path, .{}) catch |e| {
-        std.log.warn("session: failed to create session file: {s}", .{@errorName(e)});
-        return;
-    };
-    file.writeStreamingAll(io.get(), json_buf.items) catch |e| {
-        std.log.warn("session: failed to write session file: {s}", .{@errorName(e)});
+    // Synchronous write used for shutdown / immediate saves.
+    if (!async_write) {
+        const file = std.Io.Dir.cwd().createFile(io.get(), path, .{}) catch |e| {
+            std.log.warn("session: failed to create session file: {s}", .{@errorName(e)});
+            return;
+        };
+        file.writeStreamingAll(io.get(), json_buf.items) catch |e| {
+            std.log.warn("session: failed to write session file: {s}", .{@errorName(e)});
+            file.close(io.get());
+            return;
+        };
         file.close(io.get());
-        return;
-    };
-    file.close(io.get());
+    }
+
+    // Asynchronous file write: serialize synchronously (must read live GTK
+    // state) but write off the main loop to avoid stalling it.
+    if (async_write) {
+        if (write_in_flight.cmpxchgStrong(false, true, .acq_rel, .acquire)) |prev| {
+            // Previous value was true — already in flight; skip this autosave.
+            _ = prev; // suppress "unused capture"
+            write_in_flight.store(false, .release);
+        } else {
+            // Previous value was false; we are the writer. Proceed async.
+            if (std.heap.page_allocator.create(AsyncWrite) catch null) |aw| {
+                const maybe_json = std.heap.page_allocator.dupe(u8, json_buf.items) catch null;
+                if (maybe_json) |json_copy| {
+                    const plen = @min(path.len, aw.path.len);
+                    aw.* = .{ .json = json_copy, .alloc = std.heap.page_allocator, .path_len = plen };
+                    @memcpy(aw.path[0..plen], path[0..plen]);
+                    if (std.Thread.spawn(.{}, writeWorker, .{aw})) |thread| {
+                        thread.detach();
+                    } else |_| {
+                        std.heap.page_allocator.free(json_copy);
+                        std.heap.page_allocator.destroy(aw);
+                        write_in_flight.store(false, .release);
+                    }
+                    return;
+                } else {
+                    std.heap.page_allocator.destroy(aw);
+                    write_in_flight.store(false, .release);
+                }
+            }
+        }
+    }
 }
 
 fn writeMultiWindowJson(buf: *std.ArrayList(u8), alloc: Allocator, wm: anytype, include_scrollback: bool) !void {
