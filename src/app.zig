@@ -14,9 +14,6 @@ const kde_decoration = @import("kde_decoration.zig");
 
 const is_linux = builtin.os.tag == .linux;
 
-const SEANCE_OPENCODE_VERSION: u32 = 2;
-const SEANCE_KILO_VERSION: u32 = 2;
-const SEANCE_MIMOCODE_VERSION: u32 = 36;
 const SEANCE_VIBE_VERSION: u32 = 1;
 const SEANCE_HERMES_PLUGIN_VERSION: u32 = 1;
 pub const SEANCE_POOL_VERSION: u32 = 1;
@@ -28,11 +25,6 @@ pub fn installOpenCodePlugin() void {
     const config_dir_path = std.fmt.allocPrint(alloc, "{s}/.config/opencode", .{home}) catch return;
     defer alloc.free(config_dir_path);
     _ = std.Io.Dir.openDirAbsolute(io.get(), config_dir_path, .{}) catch return; // no opencode config dir → not installed
-
-    // Fast path: if version marker matches, skip all further IO
-    if (readVersionMarker(config_dir_path)) |marker_version| {
-        if (marker_version >= SEANCE_OPENCODE_VERSION) return;
-    }
 
     // Read bundled plugin
     const bundled_path = blk: {
@@ -84,7 +76,6 @@ pub fn installOpenCodePlugin() void {
         if (stat.kind == .sym_link) return;
     } else |_| {}
     std.Io.Dir.renameAbsolute(tmp_path, plugin_path, io.get()) catch return;
-    writeVersionMarker(config_dir_path, SEANCE_OPENCODE_VERSION);
 }
 
 /// Remove OpenCode plugin if installed.
@@ -153,11 +144,6 @@ pub fn installKiloPlugin() void {
     defer alloc.free(config_dir_path);
     _ = std.Io.Dir.openDirAbsolute(io.get(), config_dir_path, .{}) catch return; // no kilo config dir → not installed
 
-    // Fast path: if version marker matches, skip all further IO
-    if (readVersionMarker(config_dir_path)) |marker_version| {
-        if (marker_version >= SEANCE_KILO_VERSION) return;
-    }
-
     // Read bundled plugin
     const bundled_path = blk: {
         var exe_buf: [std.fs.max_path_bytes]u8 = undefined;
@@ -208,7 +194,6 @@ pub fn installKiloPlugin() void {
         if (stat.kind == .sym_link) return;
     } else |_| {}
     std.Io.Dir.renameAbsolute(tmp_path, plugin_path, io.get()) catch return;
-    writeVersionMarker(config_dir_path, SEANCE_KILO_VERSION);
 }
 
 /// Remove Kilo Code plugin if installed.
@@ -241,11 +226,6 @@ pub fn installMimocodePlugin() void {
     const config_dir_path = std.fmt.allocPrint(alloc, "{s}/.config/mimocode", .{home}) catch return;
     defer alloc.free(config_dir_path);
     _ = std.Io.Dir.openDirAbsolute(io.get(), config_dir_path, .{}) catch return; // no mimocode config dir → not installed
-
-    // Fast path: if version marker matches, skip all further IO
-    if (readVersionMarker(config_dir_path)) |marker_version| {
-        if (marker_version >= SEANCE_MIMOCODE_VERSION) return;
-    }
 
     // Read bundled plugin
     const bundled_path = blk: {
@@ -297,7 +277,6 @@ pub fn installMimocodePlugin() void {
         if (stat.kind == .sym_link) return;
     } else |_| {}
     std.Io.Dir.renameAbsolute(tmp_path, plugin_path, io.get()) catch return;
-    writeVersionMarker(config_dir_path, SEANCE_MIMOCODE_VERSION);
 }
 
 /// Remove MiMo Code plugin if installed.
