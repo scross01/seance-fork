@@ -128,7 +128,7 @@ pub const WebPanel = struct {
         const btn_devtools = c.gtk_button_new();
         c.gtk_widget_set_halign(btn_devtools, c.GTK_ALIGN_START);
         const devtools_box = c.gtk_box_new(c.GTK_ORIENTATION_HORIZONTAL, 8);
-        _ = c.gtk_box_append(@ptrCast(devtools_box), c.gtk_button_new_from_icon_name("system-run-symbolic"));
+        _ = c.gtk_box_append(@ptrCast(devtools_box), c.gtk_image_new_from_icon_name("system-run-symbolic"));
         _ = c.gtk_box_append(@ptrCast(devtools_box), c.gtk_label_new("Developer Tools"));
         c.gtk_button_set_child(@ptrCast(btn_devtools), devtools_box);
         c.gtk_widget_set_tooltip_text(btn_devtools, "Open WebKit Inspector (Ctrl+Shift+I)");
@@ -403,6 +403,12 @@ pub const WebPanel = struct {
             self.flash_timeout = 0;
         }
         c.gtk_widget_remove_css_class(self.widget, "pane-flash");
+        // Reduced motion: single static highlight instead of a pulse.
+        if (!@import("a11y.zig").animationsEnabled()) {
+            c.gtk_widget_add_css_class(self.widget, "pane-flash");
+            self.flash_timeout = c.g_timeout_add(400, @ptrCast(&onFlashClear), @ptrCast(self));
+            return;
+        }
         self.flash_step = 0;
         advanceFlash(self);
     }
@@ -663,6 +669,13 @@ fn onFlashStep(data: c.gpointer) callconv(.c) c.gboolean {
     return 0;
 }
 
+fn onFlashClear(data: c.gpointer) callconv(.c) c.gboolean {
+    const panel: *WebPanel = @ptrCast(@alignCast(data));
+    panel.flash_timeout = 0;
+    c.gtk_widget_remove_css_class(panel.widget, "pane-flash");
+    return 0;
+}
+
 fn onTlsError(
     webview_: ?*c.WebKitWebView,
     failing_uri: ?[*:0]const u8,
@@ -683,7 +696,7 @@ fn onTlsError(
     const dialog = c.adw_alert_dialog_new("Insecure Connection", &msg_buf);
     c.adw_alert_dialog_add_response(@as(*c.AdwAlertDialog, @ptrCast(dialog)), "cancel", "Cancel");
     c.adw_alert_dialog_add_response(@as(*c.AdwAlertDialog, @ptrCast(dialog)), "proceed", "Proceed Anyway");
-    c.adw_alert_dialog_set_response_appearance(@as(*c.AdwAlertDialog, @ptrCast(dialog)), "proceed", c.ADW_RESPONSE_SUGGESTED);
+    c.adw_alert_dialog_set_response_appearance(@as(*c.AdwAlertDialog, @ptrCast(dialog)), "proceed", c.ADW_RESPONSE_DESTRUCTIVE);
     c.adw_alert_dialog_set_default_response(@as(*c.AdwAlertDialog, @ptrCast(dialog)), "cancel");
     c.adw_alert_dialog_set_close_response(@as(*c.AdwAlertDialog, @ptrCast(dialog)), "cancel");
 

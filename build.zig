@@ -62,7 +62,6 @@ fn addSeanceDeps(
 
     // Linux-only desktop integration libraries
     if (is_linux) {
-        mod.linkSystemLibrary("libnotify", sys_lib);
         mod.linkSystemLibrary("libcanberra", sys_lib);
         mod.linkSystemLibrary("webkitgtk-6.0", sys_lib);
 
@@ -137,7 +136,6 @@ pub fn build(b: *std.Build) void {
     if (is_linux) requirePkgConfig(b, &.{
         "gtk4",
         "libadwaita-1",
-        "libnotify",
         "libcanberra",
         "webkitgtk-6.0",
         "x11",
@@ -174,7 +172,7 @@ pub fn build(b: *std.Build) void {
     for ([_][]const u8{ "gtk4", "libadwaita-1" }) |name|
         c_libs.append(b.allocator, .{ .name = name, .options = sys_lib }) catch @panic("OOM");
     if (is_linux) {
-        for ([_][]const u8{ "libnotify", "libcanberra", "webkitgtk-6.0", "x11", "wayland-client" }) |name|
+        for ([_][]const u8{ "libcanberra", "webkitgtk-6.0", "x11", "wayland-client" }) |name|
             c_libs.append(b.allocator, .{ .name = name, .options = sys_lib }) catch @panic("OOM");
     }
     const translated: translate_c.Translator = .init(b.dependency("translate_c", .{}), .{

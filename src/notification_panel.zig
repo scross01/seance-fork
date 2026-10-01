@@ -199,6 +199,7 @@ fn buildNotificationRow(notif: *notification.Notification, now: i64, panel: *Not
         const dot = c.gtk_label_new("\xe2\x97\x8f"); // ●
         c.gtk_widget_add_css_class(dot, "notif-unread-dot");
         c.gtk_widget_set_valign(dot, c.GTK_ALIGN_CENTER);
+        @import("a11y.zig").setLabel(dot, "Unread");
         c.adw_action_row_add_prefix(action_row, dot);
     }
 
@@ -215,7 +216,7 @@ fn buildNotificationRow(notif: *notification.Notification, now: i64, panel: *Not
     c.gtk_widget_add_css_class(@ptrCast(dismiss_btn), "flat");
     c.gtk_widget_add_css_class(@ptrCast(dismiss_btn), "notif-dismiss-btn");
     c.gtk_widget_set_valign(@ptrCast(dismiss_btn), c.GTK_ALIGN_CENTER);
-    c.gtk_widget_set_focusable(@ptrCast(dismiss_btn), 0);
+    c.gtk_widget_set_tooltip_text(@ptrCast(dismiss_btn), "Dismiss");
     c.adw_action_row_add_suffix(action_row, @ptrCast(dismiss_btn));
 
     // Store the panel pointer on the button for the dismiss handler

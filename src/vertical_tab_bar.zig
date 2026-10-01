@@ -152,6 +152,7 @@ pub const VerticalTabBar = struct {
         // Tab frame (holds padding, background, border-radius)
         const tab_frame = c.gtk_box_new(c.GTK_ORIENTATION_HORIZONTAL, 0);
         c.gtk_widget_add_css_class(tab_frame, "vtab");
+        @import("a11y.zig").setTabRole(tab_frame);
 
         // Overlay: content + close button
         const overlay = c.gtk_overlay_new();
@@ -166,6 +167,7 @@ pub const VerticalTabBar = struct {
 
         const close_btn = c.gtk_button_new_from_icon_name("window-close-symbolic");
         c.gtk_widget_add_css_class(close_btn, "vtab-close");
+        c.gtk_widget_set_tooltip_text(close_btn, "Close Tab");
         c.gtk_widget_set_halign(close_btn, c.GTK_ALIGN_END);
         c.gtk_widget_set_valign(close_btn, c.GTK_ALIGN_START);
         c.gtk_revealer_set_child(@ptrCast(close_revealer), close_btn);
@@ -293,6 +295,7 @@ pub const VerticalTabBar = struct {
             if (old < self.tab_count) {
                 c.gtk_widget_remove_css_class(self.tabs[old].tab_frame, "vtab-selected");
                 c.gtk_widget_remove_css_class(self.tabs[old].tab_frame, "vtab-active-rail");
+                @import("a11y.zig").setSelectedState(self.tabs[old].tab_frame, false);
             }
         }
 
@@ -301,6 +304,7 @@ pub const VerticalTabBar = struct {
         c.gtk_widget_add_css_class(self.tabs[idx].tab_frame, "vtab-selected");
 
         c.gtk_widget_add_css_class(self.tabs[idx].tab_frame, "vtab-active-rail");
+        @import("a11y.zig").setSelectedState(self.tabs[idx].tab_frame, true);
 
         self.scrollToTab(idx);
         self.updateSeparators();
@@ -922,6 +926,11 @@ pub const VerticalTabBar = struct {
         const close_data = self.alloc.create(TabEventData) catch return;
         close_data.* = .{ .vtab = self, .tab_id = tab.id };
         _ = c.g_signal_connect_data(@ptrCast(tab.close_btn), "clicked", @as(c.GCallback, @ptrCast(&onCloseClicked)), @ptrCast(close_data), @ptrCast(&onTabEventDataDestroy), 0);
+
+        // Keyboard parity with hover: reveal the close button while it holds focus
+        const focus_data = self.alloc.create(TabEventData) catch return;
+        focus_data.* = .{ .vtab = self, .tab_id = tab.id };
+        _ = c.g_signal_connect_data(@ptrCast(tab.close_btn), "notify::has-focus", @as(c.GCallback, @ptrCast(&onCloseBtnFocusChanged)), @ptrCast(focus_data), @ptrCast(&onTabEventDataDestroy), 0);
     }
 
     // ── Helper structs ──
@@ -995,6 +1004,16 @@ pub const VerticalTabBar = struct {
     fn onCloseClicked(_: *c.GtkButton, data: c.gpointer) callconv(.c) void {
         const d: *TabEventData = @ptrCast(@alignCast(data));
         if (d.vtab.on_close) |cb| cb(d.tab_id);
+    }
+
+    fn onCloseBtnFocusChanged(btn: *c.GtkWidget, _: *c.GParamSpec, data: c.gpointer) callconv(.c) void {
+        const d: *TabEventData = @ptrCast(@alignCast(data));
+        const idx = d.vtab.findTabById(d.tab_id) orelse return;
+        if (c.gtk_widget_has_focus(btn) != 0) {
+            c.gtk_revealer_set_reveal_child(@ptrCast(d.vtab.tabs[idx].close_revealer), 1);
+        } else if (d.vtab.hover_tab_index != idx) {
+            c.gtk_revealer_set_reveal_child(@ptrCast(d.vtab.tabs[idx].close_revealer), 0);
+        }
     }
 
     // ── Autoscroll ──

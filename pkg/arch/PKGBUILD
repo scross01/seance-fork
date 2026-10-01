@@ -9,7 +9,6 @@ license=('MIT')
 depends=(
     'gtk4'
     'libadwaita'
-    'libnotify'
     'libcanberra'
     'libx11'
     'wayland'

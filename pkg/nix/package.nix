@@ -7,7 +7,6 @@
   ncurses,
   pkg-config,
   zig_0_16,
-  libnotify,
   libcanberra,
   adwaita-icon-theme,
   pkgs,
@@ -62,7 +61,6 @@ in
     buildInputs =
       ghosttyBuildInputs
       ++ [
-        libnotify
         libcanberra
         adwaita-icon-theme
       ];

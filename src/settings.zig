@@ -1303,16 +1303,8 @@ fn onSoundPreviewClicked(_: *c.GtkButton, _: c.gpointer) callconv(.c) void {
 }
 
 fn onCustomSoundBrowseClicked(_: *c.GtkButton, _: c.gpointer) callconv(.c) void {
-    const dialog = c.gtk_file_chooser_dialog_new(
-        "Choose Sound File",
-        if (win) |w_ptr| @as(?*c.GtkWindow, @ptrCast(w_ptr)) else null,
-        c.GTK_FILE_CHOOSER_ACTION_OPEN,
-        "Cancel",
-        @as(c_int, c.GTK_RESPONSE_CANCEL),
-        "Open",
-        @as(c_int, c.GTK_RESPONSE_ACCEPT),
-        @as(?*anyopaque, null),
-    );
+    const dialog = c.gtk_file_dialog_new();
+    c.gtk_file_dialog_set_title(dialog, "Choose Sound File");
 
     // Filter to common audio formats
     const filter = c.gtk_file_filter_new();
@@ -1322,7 +1314,12 @@ fn onCustomSoundBrowseClicked(_: *c.GtkButton, _: c.gpointer) callconv(.c) void 
     c.gtk_file_filter_add_pattern(filter, "*.oga");
     c.gtk_file_filter_add_pattern(filter, "*.flac");
     c.gtk_file_filter_add_pattern(filter, "*.mp3");
-    c.gtk_file_chooser_add_filter(@as(*c.GtkFileChooser, @ptrCast(dialog)), filter);
+    const store = c.g_list_store_new(c.gtk_file_filter_get_type());
+    c.g_list_store_append(store, filter);
+    c.gtk_file_dialog_set_filters(dialog, @ptrCast(store));
+    c.gtk_file_dialog_set_default_filter(dialog, filter);
+    c.g_object_unref(@ptrCast(store));
+    c.g_object_unref(@ptrCast(filter));
 
     // Pre-seed with the current path if any
     const cfg = config_mod.get();
@@ -1335,40 +1332,32 @@ fn onCustomSoundBrowseClicked(_: *c.GtkButton, _: c.gpointer) callconv(.c) void 
             z[n] = 0;
             const gfile = c.g_file_new_for_path(@ptrCast(&z));
             if (gfile != null) {
-                _ = c.gtk_file_chooser_set_file(@as(*c.GtkFileChooser, @ptrCast(dialog)), gfile, null);
+                c.gtk_file_dialog_set_initial_file(dialog, gfile);
                 c.g_object_unref(@ptrCast(gfile));
             }
         }
     }
 
-    _ = c.g_signal_connect_data(
-        @as(c.gpointer, @ptrCast(dialog)),
-        "response",
-        @as(c.GCallback, @ptrCast(&onCustomSoundChosen)),
+    c.gtk_file_dialog_open(
+        dialog,
+        if (win) |w_ptr| @as(?*c.GtkWindow, @ptrCast(w_ptr)) else null,
         null,
+        @as(c.GAsyncReadyCallback, @ptrCast(&onCustomSoundChosen)),
         null,
-        0,
     );
-
-    c.gtk_widget_set_visible(@as(*c.GtkWidget, @ptrCast(dialog)), 1);
+    c.g_object_unref(@ptrCast(dialog));
 }
 
-fn onCustomSoundChosen(dialog: *c.GtkDialog, response_id: c_int, _: c.gpointer) callconv(.c) void {
-    if (response_id == c.GTK_RESPONSE_ACCEPT) {
-        const chooser: *c.GtkFileChooser = @ptrCast(@alignCast(dialog));
-        const gfile: ?*c.GFile = c.gtk_file_chooser_get_file(chooser);
-        if (gfile) |f| {
-            const path_z: ?[*:0]const u8 = c.g_file_get_path(f);
-            if (path_z) |p| {
-                if (w.custom_sound_path) |entry| {
-                    c.gtk_editable_set_text(@as(*c.GtkEditable, @ptrCast(entry)), p);
-                }
-                c.g_free(@ptrCast(@constCast(p)));
-            }
-            c.g_object_unref(@ptrCast(f));
-        }
+fn onCustomSoundChosen(source: ?*c.GObject, res: ?*c.GAsyncResult, _: c.gpointer) callconv(.c) void {
+    const dialog: *c.GtkFileDialog = @ptrCast(source orelse return);
+    const gfile = c.gtk_file_dialog_open_finish(dialog, res, null) orelse return;
+    defer c.g_object_unref(@ptrCast(gfile));
+
+    const path_z = c.g_file_get_path(gfile) orelse return;
+    defer c.g_free(@ptrCast(@constCast(path_z)));
+    if (w.custom_sound_path) |entry| {
+        c.gtk_editable_set_text(@as(*c.GtkEditable, @ptrCast(entry)), path_z);
     }
-    c.gtk_window_destroy(@as(*c.GtkWindow, @ptrCast(@alignCast(dialog))));
 }
 
 fn onTestNotificationClicked(_: *c.GtkButton, _: c.gpointer) callconv(.c) void {

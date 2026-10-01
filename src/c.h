@@ -6,7 +6,6 @@
 #include <gdk/wayland/gdkwayland.h>
 #include <X11/Xlib.h>
 #include <X11/Xatom.h>
-#include <libnotify/notify.h>
 #include <canberra.h>
 #include <webkit/webkit.h>
 #endif

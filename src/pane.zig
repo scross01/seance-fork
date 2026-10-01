@@ -383,6 +383,12 @@ pub const Pane = struct {
             self.flash_timeout = 0;
         }
         c.gtk_widget_remove_css_class(self.widget, "pane-flash");
+        // Reduced motion: single static highlight instead of a pulse.
+        if (!@import("a11y.zig").animationsEnabled()) {
+            c.gtk_widget_add_css_class(self.widget, "pane-flash");
+            self.flash_timeout = c.g_timeout_add(400, @ptrCast(&onFlashClear), @ptrCast(self));
+            return;
+        }
         self.flash_step = 0;
         advanceFlash(self);
     }
@@ -1654,6 +1660,13 @@ fn advanceFlash(pane: *Pane) void {
 fn onFlashStep(data: c.gpointer) callconv(.c) c.gboolean {
     const pane: *Pane = @ptrCast(@alignCast(data));
     advanceFlash(pane);
+    return 0;
+}
+
+fn onFlashClear(data: c.gpointer) callconv(.c) c.gboolean {
+    const pane: *Pane = @ptrCast(@alignCast(data));
+    pane.flash_timeout = 0;
+    c.gtk_widget_remove_css_class(pane.widget, "pane-flash");
     return 0;
 }
 

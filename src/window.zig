@@ -1110,27 +1110,16 @@ pub const WindowState = struct {
     }
 
     pub fn showOpenFolderDialog(self: *WindowState) void {
-        const dialog = c.gtk_file_chooser_dialog_new(
-            "Open Folder",
+        const dialog = c.gtk_file_dialog_new();
+        c.gtk_file_dialog_set_title(dialog, "Open Folder");
+        c.gtk_file_dialog_select_folder(
+            dialog,
             @as(*c.GtkWindow, @ptrCast(self.gtk_window)),
-            c.GTK_FILE_CHOOSER_ACTION_SELECT_FOLDER,
-            "Cancel",
-            @as(c_int, c.GTK_RESPONSE_CANCEL),
-            "Open",
-            @as(c_int, c.GTK_RESPONSE_ACCEPT),
-            @as(?*anyopaque, null),
-        );
-
-        _ = c.g_signal_connect_data(
-            @as(c.gpointer, @ptrCast(dialog)),
-            "response",
-            @as(c.GCallback, @ptrCast(&onFolderChosen)),
-            @ptrCast(self),
             null,
-            0,
+            @as(c.GAsyncReadyCallback, @ptrCast(&onFolderChosen)),
+            @ptrCast(self),
         );
-
-        c.gtk_widget_set_visible(@as(*c.GtkWidget, @ptrCast(dialog)), 1);
+        c.g_object_unref(@ptrCast(dialog));
     }
 
     pub fn newWorkspaceWithCwd(self: *WindowState, cwd: [*:0]const u8, title: []const u8) void {
@@ -1368,25 +1357,20 @@ fn applyConfigToPane(pane: *@import("pane.zig").Pane, config: *anyopaque) void {
     pane.queueDeferredRedraw();
 }
 
-fn onFolderChosen(dialog: *c.GtkDialog, response_id: c_int, data: c.gpointer) callconv(.c) void {
+fn onFolderChosen(source: ?*c.GObject, res: ?*c.GAsyncResult, data: c.gpointer) callconv(.c) void {
     const state: *WindowState = @ptrCast(@alignCast(data));
+    const dialog: *c.GtkFileDialog = @ptrCast(source orelse return);
 
-    if (response_id == c.GTK_RESPONSE_ACCEPT) {
-        const chooser: *c.GtkFileChooser = @ptrCast(@alignCast(dialog));
-        const gfile: ?*c.GFile = c.gtk_file_chooser_get_file(chooser);
-        if (gfile) |f| {
-            const path_z: ?[*:0]const u8 = c.g_file_get_path(f);
-            if (path_z) |p| {
-                const path = std.mem.sliceTo(p, 0);
-                const folder_name = Workspace.basenameFromPath(path);
-                state.newWorkspaceWithCwd(p, folder_name);
-                c.g_free(@ptrCast(@constCast(p)));
-            }
-            c.g_object_unref(@ptrCast(f));
-        }
-    }
+    // Cancel and portal errors both surface as a null file; nothing to report.
+    const gfile = c.gtk_file_dialog_select_folder_finish(dialog, res, null) orelse return;
+    defer c.g_object_unref(@ptrCast(gfile));
 
-    c.gtk_window_destroy(@as(*c.GtkWindow, @ptrCast(@alignCast(dialog))));
+    const path_z = c.g_file_get_path(gfile) orelse return;
+    defer c.g_free(@ptrCast(@constCast(path_z)));
+
+    const path = std.mem.sliceTo(path_z, 0);
+    const folder_name = Workspace.basenameFromPath(path);
+    state.newWorkspaceWithCwd(path_z, folder_name);
 }
 
 // Global window manager pointer (replaces old window_state)
@@ -1990,11 +1974,14 @@ fn ncTabBadgeUpdate(ctx: *anyopaque, pane_id: u64, has_notif: bool) void {
 
 fn ncDesktopNotify(title: [*:0]const u8, body: [*:0]const u8) void {
     if (comptime builtin.os.tag == .linux) {
-        const notif = c.notify_notification_new(title, body, "dialog-information");
-        if (notif != null) {
-            _ = c.notify_notification_show(notif, null);
-            c.g_object_unref(@ptrCast(notif));
-        }
+        const gapp = c.g_application_get_default() orelse return;
+        const notif = c.g_notification_new(title);
+        c.g_notification_set_body(notif, body);
+        const icon = c.g_themed_icon_new("com.seance-fork.app");
+        c.g_notification_set_icon(notif, @ptrCast(icon));
+        c.g_object_unref(@ptrCast(icon));
+        c.g_application_send_notification(gapp, null, notif);
+        c.g_object_unref(@ptrCast(notif));
     }
     // TODO: macOS notification support (e.g. NSUserNotification / UNUserNotificationCenter)
 }
@@ -2190,31 +2177,35 @@ fn loadThemeCss() void {
     // Override libadwaita's named colors with the terminal theme colors
     // so that all UI chrome (@window_bg_color, @window_fg_color refs) matches the terminal.
     // Includes sidebar_* colors added in libadwaita 1.4+ which are separate from window_*.
-    w.print(
-        \\@define-color window_bg_color {s};
-        \\@define-color window_fg_color {s};
-        \\@define-color view_bg_color {s};
-        \\@define-color view_fg_color {s};
-        \\@define-color card_bg_color {s};
-        \\@define-color card_fg_color {s};
-        \\@define-color headerbar_bg_color {s};
-        \\@define-color headerbar_fg_color {s};
-        \\@define-color popover_bg_color {s};
-        \\@define-color popover_fg_color {s};
-        \\@define-color dialog_bg_color {s};
-        \\@define-color dialog_fg_color {s};
-        \\@define-color sidebar_bg_color {s};
-        \\@define-color sidebar_fg_color {s};
-        \\@define-color sidebar_backdrop_color {s};
-        \\@define-color secondary_sidebar_bg_color {s};
-        \\@define-color secondary_sidebar_fg_color {s};
-        \\@define-color secondary_sidebar_backdrop_color {s};
-        \\@define-color accent_bg_color {s};
-        \\@define-color accent_fg_color {s};
-        \\@define-color accent_color {s};
-        \\@define-color borders alpha({s}, 0.15);
-        \\
-    , .{ bg, fg, bg, fg, bg, fg, bg, fg, bg, fg, bg, fg, bg, fg, bg, bg, fg, bg, accent, accent_fg, accent, fg }) catch return;
+    // Skipped under the system high-contrast preference: HC themes ship their
+    // own named colors and the terminal palette must not defeat them.
+    if (!@import("a11y.zig").highContrast()) {
+        w.print(
+            \\@define-color window_bg_color {s};
+            \\@define-color window_fg_color {s};
+            \\@define-color view_bg_color {s};
+            \\@define-color view_fg_color {s};
+            \\@define-color card_bg_color {s};
+            \\@define-color card_fg_color {s};
+            \\@define-color headerbar_bg_color {s};
+            \\@define-color headerbar_fg_color {s};
+            \\@define-color popover_bg_color {s};
+            \\@define-color popover_fg_color {s};
+            \\@define-color dialog_bg_color {s};
+            \\@define-color dialog_fg_color {s};
+            \\@define-color sidebar_bg_color {s};
+            \\@define-color sidebar_fg_color {s};
+            \\@define-color sidebar_backdrop_color {s};
+            \\@define-color secondary_sidebar_bg_color {s};
+            \\@define-color secondary_sidebar_fg_color {s};
+            \\@define-color secondary_sidebar_backdrop_color {s};
+            \\@define-color accent_bg_color {s};
+            \\@define-color accent_fg_color {s};
+            \\@define-color accent_color {s};
+            \\@define-color borders alpha({s}, 0.15);
+            \\
+        , .{ bg, fg, bg, fg, bg, fg, bg, fg, bg, fg, bg, fg, bg, fg, bg, bg, fg, bg, accent, accent_fg, accent, fg }) catch return;
+    }
 
     // libadwaita forces `background: none` on any headerbar living inside
     // an AdwToolbarView's top/bottom bar, so @headerbar_bg_color never gets
@@ -2264,10 +2255,10 @@ fn loadThemeCss() void {
     w.print(
         \\.sidebar-row-dragging {{ opacity: 0.6; }}
         \\.sidebar-row-drag-over {{ background: alpha({s}, 0.15); border-top: 2px solid alpha({s}, 0.6); }}
-        \\.pane-focused {{ outline: 2px solid transparent; outline-offset: -2px; background-color: {s}; }}
+        \\.pane-focused {{ outline: 2px solid alpha({s}, 0.45); outline-offset: -2px; background-color: {s}; }}
         \\.pane-unfocused {{ outline: 2px solid transparent; outline-offset: -2px; background-color: {s}; }}
         \\
-    , .{ accent, accent, pane_bg, pane_bg }) catch return;
+    , .{ accent, accent, accent, pane_bg, pane_bg }) catch return;
 
     if (cfg.dim_unfocused_panes) {
         w.print(
@@ -2289,7 +2280,7 @@ fn loadThemeCss() void {
         \\.notif-bell-badge {{ background-color: {s}; color: {s}; border-radius: 50%; min-width: 16px; min-height: 16px; font-size: 8px; font-weight: 700; padding: 0; margin-top: 2px; margin-right: 2px; }}
         \\.sidebar-notif-preview {{ font-size: 10px; opacity: 0.8; }}
         \\.sidebar-status-entry {{ font-size: 10px; opacity: 0.8; }}
-        \\.sidebar-show-more-btn {{ font-size: 10px; padding: 0; min-height: 0; opacity: 0.8; margin-top: 2px; margin-bottom: 2px; }}
+        \\.sidebar-show-more-btn {{ font-size: 10px; padding: 0; min-height: 24px; opacity: 0.8; margin-top: 2px; margin-bottom: 2px; }}
         \\.sidebar-show-more-btn:hover {{ opacity: 1.0; }}
         \\.sidebar-progress-label {{ font-size: 10px; opacity: 0.8; }}
         \\.sidebar-col-dots {{ font-size: 8px; opacity: 0.5; margin-top: 2px; letter-spacing: 1px; }}
@@ -2338,8 +2329,10 @@ fn loadThemeCss() void {
         \\.vtab-selected {{ background-color: mix(@window_bg_color, @accent_bg_color, 0.35); }}
         \\.vtab-selected:hover {{ background-color: mix(@window_bg_color, @accent_bg_color, 0.45); }}
         \\.vtab-sep-line {{ background-color: alpha(@window_fg_color, 0.12); min-height: 1px; border-radius: 0; }}
-        \\.vtab-close {{ min-width: 16px; min-height: 16px; padding: 0; margin: 4px; border-radius: 50%; opacity: 0.7; transition: opacity 150ms ease-in-out; }}
+        \\.vtab-bar:focus-visible {{ outline: 2px solid alpha(@accent_bg_color, 0.7); outline-offset: -2px; border-radius: 6px; }}
+        \\.vtab-close {{ min-width: 24px; min-height: 24px; padding: 0; margin: 2px; border-radius: 50%; opacity: 0.7; transition: opacity 150ms ease-in-out; }}
         \\.vtab-close:hover {{ opacity: 1.0; background-color: alpha(@window_fg_color, 0.1); }}
+        \\.vtab-close:focus-visible {{ opacity: 1.0; }}
         \\.vtab-dragging {{ box-shadow: 0 2px 8px alpha(black, 0.3); }}
         \\.vtab-attention {{ }}
         \\.vtab-color-bar {{ min-width: 3px; border-radius: 2px; margin-left: 5px; margin-top: 5px; margin-bottom: 6px; }}
@@ -2503,6 +2496,12 @@ pub fn reloadTheme() void {
 
 var reloading_theme: bool = false;
 
+/// High contrast overrides the terminal-palette named colors, so chrome must
+/// be re-rendered against the HC theme whenever the preference flips.
+fn onHighContrastChanged(_: *c.GObject, _: *c.GParamSpec, _: c.gpointer) callconv(.c) void {
+    reloadTheme();
+}
+
 /// Connect to AdwStyleManager's notify::dark signal to track system dark/light changes.
 /// Must be called once during app startup.
 pub fn initThemeTracking() void {
@@ -2511,6 +2510,14 @@ pub fn initThemeTracking() void {
         @as(c.gpointer, @ptrCast(style_manager)),
         "notify::dark",
         @as(c.GCallback, @ptrCast(&onSystemDarkChanged)),
+        null,
+        null,
+        0,
+    );
+    _ = c.g_signal_connect_data(
+        @as(c.gpointer, @ptrCast(style_manager)),
+        "notify::high-contrast",
+        @as(c.GCallback, @ptrCast(&onHighContrastChanged)),
         null,
         null,
         0,

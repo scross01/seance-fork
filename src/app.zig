@@ -1027,10 +1027,6 @@ var server: socket_server.SocketServer = .{};
 pub var shutting_down: bool = false;
 
 pub fn create() *c.AdwApplication {
-    if (is_linux) {
-        _ = c.notify_init("seance");
-    }
-
     const app = c.adw_application_new("com.seance-fork.app", c.G_APPLICATION_DEFAULT_FLAGS);
     _ = c.g_signal_connect_data(
         @as(c.gpointer, @ptrCast(app)),

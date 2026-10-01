@@ -88,6 +88,7 @@ pub const PaneGroup = struct {
 
         const add_btn = c.gtk_button_new_from_icon_name("list-add-symbolic");
         c.gtk_widget_add_css_class(@ptrCast(add_btn), "flat");
+        c.gtk_widget_set_tooltip_text(@ptrCast(add_btn), "New Tab");
         c.adw_tab_bar_set_end_action_widget(tab_bar, @ptrCast(add_btn));
 
         const tb_widget = asWidget(tab_bar);

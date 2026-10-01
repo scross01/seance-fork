@@ -109,7 +109,7 @@ Customize keyboard shortcuts in the `[keybinds]` section. Use keybind strings li
 
 ```toml
 [keybinds]
-command_palette = "ctrl+shift+p"
+open_command_palette = "ctrl+shift+p"
 open_folder = "ctrl+shift+o"
 reload_config = "ctrl+shift+comma"
 ```

@@ -367,6 +367,10 @@ pub const Sidebar = struct {
         c.gtk_label_set_ellipsize(@ptrCast(title_label), c.PANGO_ELLIPSIZE_END);
         c.gtk_widget_set_hexpand(title_label, 1);
 
+        // The tooltip doubles as the accessible name for the tab content
+        // (vertical tabs are custom widgets, not GtkListBoxRows).
+        c.gtk_widget_set_tooltip_text(row_box, &title_z);
+
         c.gtk_box_append(@ptrCast(title_hbox), title_label);
         c.gtk_box_append(@ptrCast(row_box), title_hbox);
 
