@@ -1,16 +1,13 @@
 // Séance plugin for OpenCode
 // Copy to ~/.config/opencode/plugins/seance-opencode.ts
-// @seance-version 13
+// @seance-version 14
 
 export const SeancePlugin = async ({ $ }) => {
   const socket = process.env.SEANCE_SOCKET_PATH;
   if (!socket) return {};
   if (process.env.SEANCE_OPENCODE_HOOKS_DISABLED === "1") return {};
 
-  const binDir = process.env.SEANCE_BIN_DIR;
-  const seanceBin = binDir
-    ? binDir.replace(/\/share\/bin$/, "/bin/seance")
-    : "seance";
+  const seanceBin = process.env.SEANCE_OPENCODE_BIN ?? "seance";
 
   const surfaceId = process.env.SEANCE_SURFACE_ID;
   const workspaceId = process.env.SEANCE_WORKSPACE_ID;
