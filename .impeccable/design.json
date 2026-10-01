@@ -1,0 +1,170 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-01T00:00:00Z",
+  "title": "Design System: Séance-fork",
+  "extensions": {
+    "colorMeta": {
+      "accent-blue": { "role": "primary", "displayName": "Signal Blue", "canonical": "#1e78e4", "tonalRamp": ["#0a2347", "#0e3265", "#124287", "#1656ad", "#1e78e4", "#4f95ec", "#7fb2f2", "#b3d1f8"] },
+      "accent-fg": { "role": "primary", "displayName": "Accent Foreground", "canonical": "#f6f5f4", "tonalRamp": ["#3a3a3e", "#55555a", "#717176", "#8e8e93", "#ababaf", "#c8c8cc", "#e3e3e5", "#f6f5f4"] },
+      "notify-blue": { "role": "primary", "displayName": "Knock Blue", "canonical": "#51a1ff", "tonalRamp": ["#0d2c4d", "#143f6e", "#1b5494", "#2a6fc2", "#51a1ff", "#7ab6ff", "#a3cbff", "#cfe3ff"] },
+      "window-bg-dark": { "role": "neutral", "displayName": "Séance Dark", "canonical": "#222226", "tonalRamp": ["#131316", "#1a1a1d", "#222226", "#2d2d31", "#38383c", "#434347", "#4f4f54", "#5c5c61"] },
+      "window-fg-dark": { "role": "neutral", "displayName": "Séance Dark Ink", "canonical": "#ffffff", "tonalRamp": ["#3a3a3e", "#55555a", "#717176", "#8e8e93", "#ababaf", "#c8c8cc", "#e3e3e5", "#ffffff"] },
+      "window-bg-light": { "role": "neutral", "displayName": "Medium Paper", "canonical": "#fafafa", "tonalRamp": ["#241f31", "#3b3648", "#534f60", "#6c6978", "#868491", "#a1a0ab", "#cdcdd2", "#fafafa"] },
+      "window-fg-light": { "role": "neutral", "displayName": "Medium Ink", "canonical": "#241f31", "tonalRamp": ["#14111d", "#1b1826", "#241f31", "#322c42", "#413a53", "#554e68", "#6c6880", "#8b8799"] },
+      "border-subtle": { "role": "neutral", "displayName": "Veil", "canonical": "rgba(94, 92, 100, 0.15)", "tonalRamp": ["#1c1b1f", "#2a292d", "#39383d", "#4a4950", "#5e5c64", "#7b7981", "#9d9ca3", "#c6c5ca"] },
+      "tab-red": { "role": "tertiary", "displayName": "Tab Red", "canonical": "#c01c28", "tonalRamp": ["#3d060a", "#58090f", "#760d15", "#98121d", "#c01c28", "#d44550", "#e27981", "#f0b2b7"] },
+      "tab-green": { "role": "tertiary", "displayName": "Tab Green", "canonical": "#2ec27e", "tonalRamp": ["#0a3a24", "#0f5234", "#146d46", "#1c8c5c", "#2ec27e", "#55d097", "#85ddb3", "#bcebd4"] },
+      "tab-yellow": { "role": "tertiary", "displayName": "Tab Yellow", "canonical": "#f5c211", "tonalRamp": ["#4a3803", "#6b5105", "#8f6d07", "#b78c09", "#f5c211", "#f7cf45", "#f9dc7a", "#fcebab"] },
+      "tab-blue": { "role": "tertiary", "displayName": "Tab Blue", "canonical": "#1e78e4", "tonalRamp": ["#0a2347", "#0e3265", "#124287", "#1656ad", "#1e78e4", "#4f95ec", "#7fb2f2", "#b3d1f8"] },
+      "tab-purple": { "role": "tertiary", "displayName": "Tab Purple", "canonical": "#9841bb", "tonalRamp": ["#2c1237", "#411a50", "#58236c", "#732e8c", "#9841bb", "#ae62cc", "#c48ddb", "#dfbdee"] },
+      "tab-cyan": { "role": "tertiary", "displayName": "Tab Cyan", "canonical": "#0ab9dc", "tonalRamp": ["#033744", "#054e5f", "#07687d", "#0986a1", "#0ab9dc", "#3bc7e4", "#6ed6eb", "#a9e7f3"] },
+      "tab-white": { "role": "tertiary", "displayName": "Tab White", "canonical": "#c0bfbc", "tonalRamp": ["#2e2d2b", "#42413f", "#575653", "#6d6c69", "#85837f", "#9e9d9a", "#c0bfbc", "#e0dfdd"] }
+    },
+    "typographyMeta": {
+      "headline": { "displayName": "Headline", "purpose": "Sidebar section headers only." },
+      "title": { "displayName": "Title", "purpose": "Workspace row titles in the sidebar." },
+      "body": { "displayName": "Body", "purpose": "Command-palette input and results; dialogs otherwise inherit the GTK default." },
+      "label": { "displayName": "Label", "purpose": "Metadata: branch lines, ports, status entries, notification previews. Always at 0.8 opacity." },
+      "micro": { "displayName": "Micro", "purpose": "Unread and bell badges on accent circles." },
+      "terminal": { "displayName": "Terminal", "purpose": "Terminal cells only, user-configurable in Settings → Font. Never touches app chrome, which is always the system UI font." }
+    },
+    "shadows": [
+      { "name": "palette-shadow", "value": "0 5px 10px rgba(0,0,0,0.24)", "purpose": "Command palette only — the one true overlay." },
+      { "name": "drag-shadow", "value": "0 2px 8px rgba(0,0,0,0.3)", "purpose": "Vertical tab being drag-reordered." }
+    ],
+    "motion": [
+      { "name": "focus-bar-fade", "value": "opacity 100ms ease-in-out", "purpose": "Pane focus bar appearing/disappearing." },
+      { "name": "control-hover", "value": "150ms ease-in-out", "purpose": "Vertical tab background, close-button opacity." },
+      { "name": "sidebar-reveal", "value": "150ms slide", "purpose": "Sidebar show/hide via GtkRevealer." },
+      { "name": "backdrop-dim", "value": "filter 200ms ease-in-out", "purpose": "Sidebar chrome dims to 50% opacity when the window loses focus." }
+    ]
+  },
+  "components": [
+    {
+      "name": "Sidebar Workspace Row",
+      "kind": "nav",
+      "refersTo": "sidebar-row",
+      "description": "The unit of the familiar's watch: workspace title, agent status icon, unread badge, and metadata line.",
+      "html": "<div class=\"ds-sidebar-row\"><svg class=\"ds-status-icon\" viewBox=\"0 0 16 16\" fill=\"currentColor\"><path d=\"M8 1.5 6.6 5.6H2.5l3.4 2.6-1.3 4.1L8 9.7l3.4 2.6-1.3-4.1 3.4-2.6H9.4z\"/></svg><div class=\"ds-row-main\"><span class=\"ds-row-title\">seance-fork</span><span class=\"ds-row-meta\">main · opencode · :8080</span></div><span class=\"ds-badge\">3</span></div>",
+      "css": ".ds-sidebar-row { display: flex; align-items: center; gap: 8px; padding: 10px 12px 10px 15px; background: transparent; color: #ffffff; font-family: Cantarell, system-ui, sans-serif; cursor: pointer; transition: background-color 150ms ease-in-out; } .ds-sidebar-row:hover { background-color: rgba(255,255,255,0.04); } .ds-status-icon { width: 16px; height: 16px; opacity: 0.8; flex: none; } .ds-row-main { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1; } .ds-row-title { font-size: 12.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } .ds-row-meta { font-size: 10px; opacity: 0.8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } .ds-badge { flex: none; min-width: 18px; min-height: 18px; border-radius: 50%; background: #1e78e4; color: #f6f5f4; font-size: 9px; font-weight: 600; display: inline-flex; align-items: center; justify-content: center; padding: 0 4px; }"
+    },
+    {
+      "name": "Sidebar Workspace Row (Selected)",
+      "kind": "nav",
+      "refersTo": "sidebar-row-selected",
+      "description": "Selection is a 35% accent mix over the window background — never a lift, never a new hue.",
+      "html": "<div class=\"ds-sidebar-row ds-selected\"><svg class=\"ds-status-icon\" viewBox=\"0 0 16 16\" fill=\"currentColor\"><path d=\"M8 2a5.5 5.5 0 0 0-5.5 5.5c0 1 .27 1.94.74 2.75L2 14l3.9-1.2A5.5 5.5 0 1 0 8 2z\"/></svg><div class=\"ds-row-main\"><span class=\"ds-row-title\">dotfiles</span><span class=\"ds-row-meta\">needs input · claude</span></div></div>",
+      "css": ".ds-sidebar-row { display: flex; align-items: center; gap: 8px; padding: 10px 12px 10px 15px; background: #214069; color: #ffffff; font-family: Cantarell, system-ui, sans-serif; cursor: pointer; transition: background-color 150ms ease-in-out; } .ds-sidebar-row:hover { background: #20497c; } .ds-status-icon { width: 16px; height: 16px; opacity: 0.8; flex: none; } .ds-row-main { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1; } .ds-row-title { font-size: 12.5px; font-weight: 600; } .ds-row-meta { font-size: 10px; opacity: 0.8; }"
+    },
+    {
+      "name": "Unread Badge",
+      "kind": "chip",
+      "refersTo": "badge-unread",
+      "description": "Accent-filled circle counting unread notifications — the most saturated object in the UI.",
+      "html": "<span class=\"ds-badge\">7</span>",
+      "css": ".ds-badge { min-width: 18px; min-height: 18px; border-radius: 50%; background: #1e78e4; color: #f6f5f4; font-family: Cantarell, system-ui, sans-serif; font-size: 9px; font-weight: 600; display: inline-flex; align-items: center; justify-content: center; padding: 0 4px; }"
+    },
+    {
+      "name": "Vertical Tab",
+      "kind": "custom",
+      "refersTo": "vtab",
+      "description": "Tab in a column's vertical tab bar: 6px radius, 3px workspace color bar on the left edge, circular close button.",
+      "html": "<div class=\"ds-vtab\"><span class=\"ds-color-bar\"></span><svg class=\"ds-vtab-icon\" viewBox=\"0 0 16 16\" fill=\"currentColor\"><path d=\"M2 3h12v10H2z\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.4\"/><path d=\"M4 6l2.5 2L4 10M7.5 10H10\" stroke=\"currentColor\" stroke-width=\"1.4\" fill=\"none\" stroke-linecap=\"round\"/></svg><span class=\"ds-vtab-label\">opencode</span><button class=\"ds-vtab-close\" aria-label=\"Close tab\"><svg viewBox=\"0 0 16 16\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.6\" stroke-linecap=\"round\"><path d=\"M4 4l8 8M12 4l-8 8\"/></svg></button></div>",
+      "css": ".ds-vtab { display: flex; align-items: center; gap: 6px; margin: 1px 6px; padding: 5px 6px 6px 6px; border-radius: 6px; background: transparent; color: #ffffff; font-family: Cantarell, system-ui, sans-serif; font-size: 12px; cursor: pointer; transition: background-color 150ms ease-in-out; } .ds-vtab:hover { background: rgba(255,255,255,0.04); } .ds-vtab.ds-selected { background: #214069; } .ds-vtab.ds-selected:hover { background: #20497c; } .ds-color-bar { flex: none; width: 3px; align-self: stretch; border-radius: 2px; background: #9841bb; margin: 5px 0 6px 5px; } .ds-vtab-icon { width: 16px; height: 16px; flex: none; } .ds-vtab-label { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } .ds-vtab-close { flex: none; width: 16px; height: 16px; padding: 0; border: none; border-radius: 50%; background: transparent; color: #ffffff; opacity: 0.7; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; transition: opacity 150ms ease-in-out, background-color 150ms ease-in-out; } .ds-vtab-close svg { width: 10px; height: 10px; } .ds-vtab-close:hover { opacity: 1; background: rgba(255,255,255,0.1); }"
+    },
+    {
+      "name": "Pane Frame (Focused)",
+      "kind": "custom",
+      "refersTo": "pane-frame",
+      "description": "Focused pane in a multi-pane strip: 3px accent focus bar at the top edge, fading in over 100ms. State lives in outlines, never shadows.",
+      "html": "<div class=\"ds-pane\"><div class=\"ds-focus-bar\"></div><div class=\"ds-pane-body\"><span class=\"ds-pane-hint\">$ opencode</span><span class=\"ds-pane-line\">⠋ Compacting session…</span></div></div>",
+      "css": ".ds-pane { position: relative; background: #222226; color: #ffffff; font-family: Monospace; font-size: 11px; padding: 8px; min-width: 260px; } .ds-focus-bar { position: absolute; top: 0; left: 0; right: 0; height: 3px; background: #8fb5e9; opacity: 1; transition: opacity 100ms ease-in-out; } .ds-pane-body { display: flex; flex-direction: column; gap: 4px; padding-top: 4px; } .ds-pane-hint { color: #51a1ff; } .ds-pane-line { opacity: 0.8; }"
+    },
+    {
+      "name": "Pane Frame (Notification)",
+      "kind": "custom",
+      "refersTo": "pane-notification",
+      "description": "A pane that needs you: 2px Knock Blue outline at −2px offset. Knock Blue is never decorative.",
+      "html": "<div class=\"ds-pane ds-notify\"><div class=\"ds-pane-body\"><span class=\"ds-pane-line\">Permission required: edit src/main.zig</span></div></div>",
+      "css": ".ds-pane { position: relative; background: #222226; color: #ffffff; font-family: Monospace; font-size: 11px; padding: 8px; min-width: 260px; } .ds-notify { outline: 2px solid #51a1ff; outline-offset: -2px; } .ds-pane-body { display: flex; flex-direction: column; gap: 4px; } .ds-pane-line { opacity: 0.8; }"
+    },
+    {
+      "name": "Command Palette",
+      "kind": "input",
+      "refersTo": "command-palette",
+      "description": "The one elevated surface: 8px radius, palette shadow, centered over a 24% black scrim.",
+      "html": "<div class=\"ds-scrim\"><div class=\"ds-palette\"><input class=\"ds-palette-entry\" value=\"switch workspace\" readonly/><div class=\"ds-palette-result ds-active\"><span>Switch to workspace: seance-fork</span><span class=\"ds-chip\">Ctrl+1</span></div><div class=\"ds-palette-result\"><span>Switch to workspace: dotfiles</span><span class=\"ds-chip\">Ctrl+2</span></div><div class=\"ds-palette-hint\">↑↓ to navigate · ↵ to run · esc to dismiss</div></div></div>",
+      "css": ".ds-scrim { background: rgba(0,0,0,0.24); padding: 24px; display: flex; justify-content: center; } .ds-palette { background: #222226; border-radius: 8px; border: 1px solid rgba(255,255,255,0.18); box-shadow: 0 5px 10px rgba(0,0,0,0.24); min-width: 340px; padding: 4px; font-family: Cantarell, system-ui, sans-serif; color: #ffffff; } .ds-palette-entry { width: 100%; font-size: 13px; padding: 7px 9px; border: none; background: transparent; color: #ffffff; outline: none; } .ds-palette-result { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 3px 12px; min-height: 24px; font-size: 13px; border-radius: 4px; cursor: pointer; } .ds-palette-result:hover { background: rgba(255,255,255,0.04); } .ds-palette-result.ds-active { background: #214069; } .ds-chip { font-size: 11px; font-weight: 500; color: rgba(255,255,255,0.6); background: rgba(255,255,255,0.08); border-radius: 4px; padding: 1px 6px; } .ds-palette-hint { font-size: 11px; color: rgba(255,255,255,0.5); padding: 6px 9px; }"
+    },
+    {
+      "name": "Notification Row",
+      "kind": "custom",
+      "refersTo": "notif-row",
+      "description": "One knock from the familiar: unread dot, bold title, dimmed body and timestamp.",
+      "html": "<div class=\"ds-notif-row\"><span class=\"ds-unread-dot\"></span><div class=\"ds-notif-main\"><span class=\"ds-notif-title\">OpenCode needs input — seance-fork</span><span class=\"ds-notif-body\">Permission requested: bash git push</span><span class=\"ds-notif-time\">2 min ago</span></div></div>",
+      "css": ".ds-notif-row { display: flex; align-items: flex-start; gap: 8px; padding: 10px 8px; border-radius: 6px; background: transparent; color: #ffffff; font-family: Cantarell, system-ui, sans-serif; cursor: pointer; transition: background-color 150ms ease-in-out; } .ds-notif-row:hover { background: rgba(255,255,255,0.05); } .ds-unread-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: #1e78e4; margin-top: 5px; } .ds-notif-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; } .ds-notif-title { font-size: 12px; font-weight: 700; } .ds-notif-body { font-size: 11px; opacity: 0.6; } .ds-notif-time { font-size: 10px; opacity: 0.5; }"
+    },
+    {
+      "name": "Chrome Icon Button",
+      "kind": "button",
+      "refersTo": "icon-button",
+      "description": "Header-bar and sidebar-footer button: 28px minimum, 6px radius, symbolic icon only.",
+      "html": "<button class=\"ds-icon-btn\" aria-label=\"Add workspace\"><svg viewBox=\"0 0 16 16\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.6\" stroke-linecap=\"round\"><path d=\"M8 3v10M3 8h10\"/></svg></button>",
+      "css": ".ds-icon-btn { min-width: 28px; min-height: 28px; padding: 4px; border: none; border-radius: 6px; background: transparent; color: #ffffff; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; transition: background-color 150ms ease-in-out; } .ds-icon-btn svg { width: 16px; height: 16px; } .ds-icon-btn:hover { background: rgba(255,255,255,0.08); } .ds-icon-btn:focus-visible { outline: 2px solid #1e78e4; outline-offset: -2px; }"
+    },
+    {
+      "name": "Hairline Progress Bar",
+      "kind": "custom",
+      "refersTo": "progress-bar",
+      "description": "3px trough at 20% ink, accent fill — a hairline, not a bar.",
+      "html": "<div class=\"ds-progress\"><div class=\"ds-progress-fill\" style=\"width: 62%\"></div></div>",
+      "css": ".ds-progress { height: 3px; border-radius: 1.5px; background: rgba(255,255,255,0.2); overflow: hidden; } .ds-progress-fill { height: 3px; border-radius: 1.5px; background: #1e78e4; }"
+    },
+    {
+      "name": "Agent Status Icons",
+      "kind": "custom",
+      "refersTo": "status-icon",
+      "description": "Agent state is a symbolic icon at 0.8 opacity, never a color: working (flash), needs input (bell), idle (pause).",
+      "html": "<div class=\"ds-status-set\"><span class=\"ds-status\" title=\"Working\"><svg viewBox=\"0 0 16 16\" fill=\"currentColor\"><path d=\"M8.8 1 3.5 9h3.3L6.6 15 12 6.6H8.6z\"/></svg>working</span><span class=\"ds-status\" title=\"Needs input\"><svg viewBox=\"0 0 16 16\" fill=\"currentColor\"><path d=\"M8 1.5A4.5 4.5 0 0 0 3.5 6v3l-1.2 2.4h11.4L12.5 9V6A4.5 4.5 0 0 0 8 1.5zM6.5 12.5a1.5 1.5 0 0 0 3 0z\"/></svg>needs input</span><span class=\"ds-status\" title=\"Idle\"><svg viewBox=\"0 0 16 16\" fill=\"currentColor\"><rect x=\"4\" y=\"3\" width=\"2.6\" height=\"10\" rx=\"1\"/><rect x=\"9.4\" y=\"3\" width=\"2.6\" height=\"10\" rx=\"1\"/></svg>idle</span></div>",
+      "css": ".ds-status-set { display: flex; gap: 16px; color: #ffffff; font-family: Cantarell, system-ui, sans-serif; font-size: 10px; } .ds-status { display: inline-flex; align-items: center; gap: 5px; opacity: 0.8; } .ds-status svg { width: 16px; height: 16px; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Familiar",
+    "overview": "Séance-fork is a spirit companion that watches your agents and knocks when one needs you. The interface is the quiet room; the terminals are the summoned. Chrome stays still and Adwaita-true while the state of each agent surfaces through small, precise signals: a symbolic icon, an unread dot, a 2px outline, a knock-blue flash. By default the chrome is simply the OS system theme — stock libadwaita, light or dark, tracked live. The defining mechanism is opt-in possession: set a ghostty theme and every chrome color is re-derived from the terminal palette; unset it and the window returns to stock Adwaita. Depth is tonal, never shadowed; state is outlined, never recolored.",
+    "keyCharacteristics": [
+      "System theme by default: stock libadwaita chrome following the OS light/dark preference",
+      "Opt-in palette possession: setting a ghostty theme re-derives every chrome color from the terminal palette",
+      "Flat surfaces; depth comes from fg/bg mixes at 4–15%, never from shadows",
+      "State carried by 2px outlines and symbolic icons, not by status hues",
+      "One accent (ANSI blue), one notification color (ANSI bright blue)",
+      "Adwaita-native controls, symbolic icons, system typography",
+      "Motion is short and functional: 100–200ms ease-in-out, 150ms revealers"
+    ],
+    "rules": [
+      { "name": "The Palette Is the Chrome Rule", "body": "Never hardcode a chrome color. In the default state, reference libadwaita's named colors and let the OS theme resolve them; in the possessed state, the same named colors resolve from the terminal palette.", "section": "colors" },
+      { "name": "The One Accent Rule", "body": "Agent status never gets its own hue. Working, idle, and needs-input are distinguished by symbolic icon and outline, not by green/yellow/red.", "section": "colors" },
+      { "name": "The Dim Label Rule", "body": "Secondary information is the primary ink at reduced opacity (0.8 / 0.6 / 0.5), never a second text color and never smaller than 8px.", "section": "typography" },
+      { "name": "The Two Fonts Rule", "body": "The app has exactly two fonts: the system UI font for chrome (fixed, unconfigurable) and the terminal font for cell content (user-configurable in Settings). Font settings never cross the boundary in either direction.", "section": "typography" },
+      { "name": "The Outline Carries State Rule", "body": "Focus, notification, flash, and drop-target are 2px outlines at −2px offset. Shadows are for overlays and drag physics only — never for resting surfaces.", "section": "elevation" },
+      { "name": "The Backdrop Dim Rule", "body": "When the window loses focus, sidebar chrome dims to 50% opacity over 200ms; accent-colored selection stays lit.", "section": "elevation" }
+    ],
+    "dos": [
+      "Do resolve every new chrome color from @window_bg_color / @window_fg_color (or a documented 4–15% mix), the accent, or the notify token",
+      "Do use symbolic (*-symbolic) icons exclusively; tint with color, size via icon-size or px",
+      "Do express state as 2px outlines at −2px offset and symbolic-icon swaps, keeping layout stable",
+      "Do keep secondary text as the primary ink at 0.8/0.6/0.5 opacity",
+      "Do use stock libadwaita patterns (AdwDialog, AdwPreferencesPage, .boxed-list, .dim-label, .title-4) for dialogs",
+      "Do swap theme CSS atomically: attach the new provider before detaching the old"
+    ],
+    "donts": [
+      "Don't add status hues — no @success_color/@warning_color/@error_color in chrome; .destructive-action in settings dialogs is the sole exception",
+      "Don't add resting shadows or card-style elevation; the command palette shadow is a deliberate singleton",
+      "Don't style chrome toward one fixed palette; the default state must stay correct under stock libadwaita, light and dark",
+      "Don't let the terminal font setting leak into chrome, or add an app-font setting — The Two Fonts Rule; nothing in chrome exceeds 14px",
+      "Don't use Knock Blue (#51a1ff) decoratively — it means a pane needs you",
+      "Don't give workspace color codes any status meaning; they are user-assigned identity tags",
+      "Don't introduce GTK3 idioms or non-symbolic icons in new UI"
+    ]
+  }
+}
