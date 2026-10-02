@@ -697,7 +697,6 @@ pub const Workspace = struct {
         }
 
         self.positionResizeHandles();
-        self.updateMultiPaneClass();
     }
 
     fn lerp(a: f64, b: f64, t: f64) f64 {
@@ -2461,27 +2460,6 @@ pub const Workspace = struct {
     /// Close an empty group by ID. Returns true if workspace is now empty.
     pub fn closeEmptyGroup(self: *Workspace, group_id: u64) bool {
         return self.removeColumnByGroupId(group_id);
-    }
-
-    /// Toggle "multi-pane" on the workspace container so CSS can show/hide
-    /// the focus bar depending on whether there is more than one pane.
-    fn updateMultiPaneClass(self: *Workspace) void {
-        const multi = if (self.liveColumnCount() > 1)
-            true
-        else if (self.liveColumnCount() == 1) blk: {
-            // Single column in stacked mode with multiple panels counts as multi-pane.
-            for (self.columns.items) |col| {
-                if (!col.closing and col.layout_mode == .stacked and col.groups.items.len > 0 and col.groups.items[0].panels.items.len > 1)
-                    break :blk true;
-            }
-            break :blk false;
-        } else false;
-
-        if (multi) {
-            c.gtk_widget_add_css_class(self.container, "multi-pane");
-        } else {
-            c.gtk_widget_remove_css_class(self.container, "multi-pane");
-        }
     }
 };
 

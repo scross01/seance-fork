@@ -530,23 +530,16 @@ fn setupInputControllers(gl_area_widget: *c.GtkWidget, pane: *Pane) void {
 fn setupOverlays(overlay: *c.GtkWidget, pane: *Pane) void {
     // Dim layer for unfocused panes: a translucent black overlay is
     // composited cheaply, unlike a CSS filter which forces the whole
-    // pane subtree offscreen every frame. Added first so the focus bar,
-    // search overlay, and scrollbar stay above it.
+    // pane subtree offscreen every frame. Added first so the search
+    // overlay and scrollbar stay above it.
+    //
+    // Focus itself is carried by the .pane-focused outline alone, which
+    // wraps the pane uniformly; there is no separate top-edge bar.
     const dim = c.gtk_box_new(c.GTK_ORIENTATION_HORIZONTAL, 0);
     c.gtk_widget_set_can_target(dim, 0);
     c.gtk_widget_set_can_focus(dim, 0);
     c.gtk_widget_add_css_class(dim, "pane-dim");
     c.gtk_overlay_add_overlay(@ptrCast(overlay), dim);
-
-    // Focus-indicator bar (accent bar at top edge, driven by CSS)
-    const focus_bar = c.gtk_box_new(c.GTK_ORIENTATION_HORIZONTAL, 0);
-    c.gtk_widget_set_valign(focus_bar, c.GTK_ALIGN_START);
-    c.gtk_widget_set_hexpand(focus_bar, 1);
-    c.gtk_widget_set_size_request(focus_bar, -1, 3);
-    c.gtk_widget_set_can_target(focus_bar, 0);
-    c.gtk_widget_set_can_focus(focus_bar, 0);
-    c.gtk_widget_add_css_class(focus_bar, "pane-focus-bar");
-    c.gtk_overlay_add_overlay(@ptrCast(overlay), focus_bar);
 
     // Search overlay
     pane.search_overlay = SearchOverlay.create(pane);

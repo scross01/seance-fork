@@ -84,7 +84,7 @@ Séance-fork is a spirit companion that watches your agents and knocks when one 
 
 By default, the chrome is simply the OS theme: stock libadwaita, light or dark following the system, tracked live. The defining mechanism is opt-in possession — set a ghostty theme (`theme` under `[colors]`) and the chrome adopts the terminal's colors: window, view, card, headerbar, sidebar, popover, and dialog backgrounds alias the terminal background/foreground, the accent becomes the theme's ANSI blue (`palette[4]`), borders become `palette[8]` at 15% alpha, and notification outlines become `palette[12]` bright blue. Unset the theme and the window returns to stock Adwaita. Every swap is one atomic CSS exchange; no widget ever renders unthemed.
 
-The app is Linux-native to the bone: GTK4, libadwaita, symbolic icons only, system fonts, `AdwDialog` + `AdwPreferencesPage` settings, backdrop dimming. It should pass for a well-bred GNOME app at arm's length and reveal its personality up close — in the scrolling strip, the focus bar, and the badge dots. Depth is tonal, never shadowed; state is outlined, never recolored.
+The app is Linux-native to the bone: GTK4, libadwaita, symbolic icons only, system fonts, `AdwDialog` + `AdwPreferencesPage` settings, backdrop dimming. It should pass for a well-bred GNOME app at arm's length and reveal its personality up close — in the scrolling strip, the pane outline, and the badge dots. Depth is tonal, never shadowed; state is outlined, never recolored.
 
 **Key Characteristics:**
 - System theme by default: stock libadwaita chrome following the OS light/dark preference
@@ -100,7 +100,7 @@ The app is Linux-native to the bone: GTK4, libadwaita, symbolic icons only, syst
 The palette is not a fixed brand ramp; it is a resolution strategy with two states. **Default state:** the chrome follows the OS system theme — libadwaita's own colors, light or dark, switching live with the OS preference. **Possessed state:** a configured ghostty theme re-derives every chrome token from the terminal palette. The values below are the system-theme reference points (matching the bundled `Adwaita` / `Adwaita Dark` ghostty themes), not brand constants — in the default state, libadwaita owns the actual values and they change with the OS.
 
 ### Primary
-- **Signal Blue** (#1e78e4): The single accent, resolved from `palette[4]`. Used for selected sidebar rows and tabs (as a 35–45% mix over window bg), unread badges, progress-bar fill, drag-over indicators, and the focus bar (50% mix). Mapped onto libadwaita's `@accent_bg_color`, `@accent_color`, and `@accent_fg_color`.
+- **Signal Blue** (#1e78e4): The single accent, resolved from `palette[4]`. Used for selected sidebar rows and tabs (as a 35–45% mix over window bg), unread badges, progress-bar fill, and drag-over indicators. It is deliberately *not* used for pane focus, which takes the complementary hue. Mapped onto libadwaita's `@accent_bg_color`, `@accent_color`, and `@accent_fg_color`.
 - **Knock Blue** (#51a1ff): The notification signal, resolved from `palette[12]` (bright blue). Reserved for "something needs you": the 2px `.pane-notification` outline, `.pane-flash`, and dashed drop-target outlines. Never used for decoration.
 
 ### Neutral
@@ -145,7 +145,7 @@ Ratios below are relative to the theme font (em), which is what the CSS actually
 
 The window is an `AdwApplicationWindow` → `AdwToastOverlay` → `GtkOverlay` (command palette floats above) → horizontal box: a 240px sidebar in a `GtkRevealer` (slide-left/right, 150ms) plus the workspace stack. On narrow windows the sidebar is capped at 40% of the window width (floor 160px) so the pane strip always keeps the majority of the space. CSD builds get an `AdwToolbarView` (flat) with an `AdwHeaderBar`; the header bar is painted manually because libadwaita strips it inside a toolbar view.
 
-The workspace is a horizontal scrolling strip of columns on a `GtkFixed` inside a `GtkScrolledWindow` — the niri model. Columns hold tab groups (`AdwTabView`/`AdwTabBar`, or a vertical tab bar). A `multi-pane` class on the container arms the focus-bar indicator.
+The workspace is a horizontal scrolling strip of columns on a `GtkFixed` inside a `GtkScrolledWindow` — the niri model. Columns hold tab groups (`AdwTabView`/`AdwTabBar`, or a vertical tab bar). Focus is shown by the pane outline alone, uniformly on all four edges.
 
 Density is compact and terminal-adjacent: 4px toolbar margins, 6px control radius, 8–12px interior padding, sidebar rows at `10px 12px 10px 15px`. Dividers are 1px lines at 12% foreground alpha; resize handles are invisible. Terminal content keeps an 8px window padding (ghostty `window-padding-x/y`).
 
@@ -166,7 +166,7 @@ State is outlined, not elevated: focused panes, notifying panes, and drop target
 
 ## Shapes
 
-Small and consistent: 6px radius is the default for buttons, rows, vertical tabs, and the search overlay; 8px for the command palette; 4px for shortcut chips. Badges and icon-close buttons are full circles (50%). The recurring signatures are thin bars: the 3px focus bar, the 3px × full-height workspace color bar (2px radius), 1.5px-radius progress bars, and 1px divider lines. Pane outlines are sharp-cornered 2px strokes drawn inside the pane edge.
+Small and consistent: 6px radius is the default for buttons, rows, vertical tabs, and the search overlay; 8px for the command palette; 4px for shortcut chips. Badges and icon-close buttons are full circles (50%). The recurring signatures are thin bars: the 3px × full-height workspace color bar (2px radius), 1.5px-radius progress bars, and 1px divider lines. Pane outlines are sharp-cornered 2px strokes drawn inside the pane edge, uniformly on all four sides.
 
 ## Components
 
@@ -183,13 +183,12 @@ Agent state is a 16px symbolic icon at 0.8 opacity, never a color: `camera-flash
 An accent-filled circle (18px, accent-fg text at 9px/600) counting unread notifications per workspace; the header-bar bell wears a 16px version at 8px/700. The single most saturated object in the UI — that is the point.
 
 ### Pane Frame
-- **Outline:** a warm hairline (2px at 12% alpha, −2px offset) in the palette's **complementary hue** — `palette[3]` yellow, ~166° from the accent's ~213°. The accent-blue version read as a contrasting frame bolted onto flat chrome; the complement recedes instead, and it matches the app icon's warm ring around a blue wave. At 12% it measures 1.30:1 against the pane background in both appearances, the same register as the 1px dividers, and never reads as the Yellow workspace colour code.
-- **Focus bar:** 3px strip at the pane's top edge, the same complementary hue at 50% mix with the pane background, fading in over 100ms; only rendered when more than one pane exists (`.multi-pane`). The bar and the ring share one warm cue so active-pane signalling is a single element pair.
+- **Outline:** a warm hairline (2px at 12% alpha, −2px offset) in the palette's **complementary hue** — `palette[3]` yellow, ~166° from the accent's ~213°. The accent-blue version read as a contrasting frame bolted onto flat chrome; the complement recedes instead, and it matches the app icon's warm ring around a blue wave. At 12% it measures 1.30:1 against the pane background in both appearances, the same register as the 1px dividers, and never reads as the Yellow workspace colour code. It wraps all four edges uniformly — there is no heavier top edge.
+- **Notification:** 2px Knock Blue outline when a pane requests attention; `.pane-flash` pulses the same outline once, then removes itself.
+- **Unfocused dim:** a 20% black overlay when `dim_unfocused_panes` is on. This, not the ring, is the primary "which pane is active" signal; the outline only confirms it.
 
 ### Named Rules
-**The Complement Rule.** The active pane is marked in the theme's complementary hue, never in the accent. Accent means interactive selection; the complement means "this pane is active". Keeping the two apart is what stops the focus ring from competing with `.pane-notification`, which stays the only loud outline in the system.
-- **Notification:** 2px Knock Blue outline when a pane requests attention; `.pane-flash` pulses the same outline once, then removes itself.
-- **Unfocused dim:** children at `brightness(0.8)` when `dim_unfocused_panes` is on.
+**The Complement Rule.** The active pane is marked in the theme's complementary hue, never in the accent, and always as a uniform wrap on all four edges — never a heavier edge on one side. Accent means interactive selection; the complement means "this pane is active". Keeping the two apart is what stops the focus ring from competing with `.pane-notification`, which stays the only loud outline in the system.
 
 ### Vertical Tab
 6px radius, `5px 6px 6px 6px` padding inside a `1px 6px` wrapper; 150ms background transition. Selected wears the 35% accent mix. The 3px workspace color bar rides the left edge. Close is a 16px circular `window-close-symbolic` button at 0.7 opacity (full opacity + 10% fg wash on hover).

@@ -33,7 +33,7 @@
       { "name": "drag-shadow", "value": "0 2px 8px rgba(0,0,0,0.3)", "purpose": "Vertical tab being drag-reordered." }
     ],
     "motion": [
-      { "name": "focus-bar-fade", "value": "opacity 100ms ease-in-out", "purpose": "Pane focus bar appearing/disappearing." },
+      { "name": "dim-fade", "value": "background-color 150ms ease-in-out", "purpose": "Unfocused-pane dim layer fading on focus change." },
       { "name": "control-hover", "value": "150ms ease-in-out", "purpose": "Vertical tab background, close-button opacity." },
       { "name": "sidebar-reveal", "value": "150ms slide", "purpose": "Sidebar show/hide via GtkRevealer." },
       { "name": "backdrop-dim", "value": "filter 200ms ease-in-out", "purpose": "Sidebar chrome dims to 50% opacity when the window loses focus." }
@@ -76,9 +76,9 @@
       "name": "Pane Frame (Focused)",
       "kind": "custom",
       "refersTo": "pane-frame",
-      "description": "Focused pane in a multi-pane strip: 3px accent focus bar at the top edge, fading in over 100ms. State lives in outlines, never shadows.",
-      "html": "<div class=\"ds-pane\"><div class=\"ds-focus-bar\"></div><div class=\"ds-pane-body\"><span class=\"ds-pane-hint\">$ opencode</span><span class=\"ds-pane-line\">⠋ Compacting session…</span></div></div>",
-      "css": ".ds-pane { position: relative; background: #222226; color: #ffffff; font-family: Monospace; font-size: 0.75em; padding: 8px; min-width: 260px; } .ds-focus-bar { position: absolute; top: 0; left: 0; right: 0; height: 3px; background: #8fb5e9; opacity: 1; transition: opacity 100ms ease-in-out; } .ds-pane-body { display: flex; flex-direction: column; gap: 4px; padding-top: 4px; } .ds-pane-hint { color: #51a1ff; } .ds-pane-line { opacity: 0.8; }"
+      "description": "Focused pane: a uniform 2px warm hairline on all four edges (palette[3] yellow, 12% alpha), inset 2px. State lives in outlines, never shadows.",
+      "html": "<div class=\"ds-pane\"><div class=\"ds-outline\"></div><div class=\"ds-pane-body\"><span class=\"ds-pane-hint\">$ opencode</span><span class=\"ds-pane-line\">⠋ Compacting session…</span></div></div>",
+      "css": ".ds-pane { position: relative; background: #222226; color: #ffffff; font-family: Monospace; font-size: 0.75em; padding: 8px; min-width: 260px; } .ds-pane-body { display: flex; flex-direction: column; gap: 4px; padding-top: 4px; } .ds-pane-hint { color: #51a1ff; } .ds-pane-line { opacity: 0.8; }"
     },
     {
       "name": "Pane Frame (Notification)",

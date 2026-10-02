@@ -2289,12 +2289,10 @@ fn loadThemeCss() void {
     }
 
     w.print(
-        \\.pane-focus-bar {{ background: mix({s}, {s}, 0.5); opacity: 0; transition: opacity 100ms ease-in-out; }}
-        \\.multi-pane .pane-focused .pane-focus-bar {{ opacity: 1; }}
         \\.pane-notification {{ outline: 2px solid {s}; outline-offset: -2px; background-color: {s}; }}
         \\.pane-drop-target {{ outline: 2px dashed alpha({s}, 0.6); outline-offset: -2px; background-color: {s}; }}
         \\
-    , .{ pane_bg, focus_hue, notify, pane_bg, notify, pane_bg }) catch return;
+    , .{ notify, pane_bg, notify, pane_bg }) catch return;
 
     w.print(
         \\.sidebar-badge {{ background-color: {s}; color: {s}; border-radius: 50%; min-width: 1.25em; min-height: 1.25em; font-size: 0.62em; font-weight: 600; padding: 0; }}
