@@ -127,7 +127,7 @@ pub const WebPanel = struct {
 
         const entry = c.gtk_entry_new();
         c.gtk_widget_set_hexpand(@ptrCast(entry), 1);
-        c.gtk_entry_set_placeholder_text(@ptrCast(entry), "Enter URL...");
+        c.gtk_entry_set_placeholder_text(@ptrCast(entry), "Enter URL…");
         _ = c.gtk_stack_add_named(@ptrCast(url_stack), @ptrCast(entry), "edit");
 
         c.gtk_stack_set_visible_child_name(@ptrCast(url_stack), "display");
@@ -139,7 +139,7 @@ pub const WebPanel = struct {
         c.gtk_widget_set_halign(btn_devtools, c.GTK_ALIGN_START);
         const devtools_box = c.gtk_box_new(c.GTK_ORIENTATION_HORIZONTAL, 8);
         _ = c.gtk_box_append(@ptrCast(devtools_box), c.gtk_image_new_from_icon_name("system-run-symbolic"));
-        _ = c.gtk_box_append(@ptrCast(devtools_box), c.gtk_label_new("Developer Tools"));
+        _ = c.gtk_box_append(@ptrCast(devtools_box), c.gtk_label_new("Developer tools"));
         c.gtk_button_set_child(@ptrCast(btn_devtools), devtools_box);
         c.gtk_widget_set_tooltip_text(btn_devtools, "Open WebKit Inspector (Ctrl+Shift+I)");
         _ = c.gtk_box_append(@ptrCast(menu_box), btn_devtools);
@@ -697,9 +697,9 @@ fn onTlsError(
     var msg_buf: [512:0]u8 = [_:0]u8{0} ** 512;
     _ = std.fmt.bufPrint(&msg_buf, "The certificate for <b>{s}</b> is not trusted.\n\n{s}", .{ host, formatTlsErrorFlags(errors) }) catch {};
 
-    const dialog = c.adw_alert_dialog_new("Insecure Connection", &msg_buf);
+    const dialog = c.adw_alert_dialog_new("Insecure connection", &msg_buf);
     c.adw_alert_dialog_add_response(@as(*c.AdwAlertDialog, @ptrCast(dialog)), "cancel", "Cancel");
-    c.adw_alert_dialog_add_response(@as(*c.AdwAlertDialog, @ptrCast(dialog)), "proceed", "Proceed Anyway");
+    c.adw_alert_dialog_add_response(@as(*c.AdwAlertDialog, @ptrCast(dialog)), "proceed", "Proceed anyway");
     c.adw_alert_dialog_set_response_appearance(@as(*c.AdwAlertDialog, @ptrCast(dialog)), "proceed", c.ADW_RESPONSE_DESTRUCTIVE);
     c.adw_alert_dialog_set_default_response(@as(*c.AdwAlertDialog, @ptrCast(dialog)), "cancel");
     c.adw_alert_dialog_set_close_response(@as(*c.AdwAlertDialog, @ptrCast(dialog)), "cancel");

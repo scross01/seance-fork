@@ -1226,7 +1226,7 @@ fn initAppMenu(app: *c.AdwApplication) void {
     c.gtk_application_set_accels_for_action(gtkApp(app), "quit", &accels_quit);
     const accels_prefs = [_][*:0]const u8{ "<Control>comma", @ptrCast(@constCast(@as([*:0]const u8, @ptrCast("")))) };
     c.gtk_application_set_accels_for_action(gtkApp(app), "preferences", &accels_prefs);
-    const accels_sc = [_][*:0]const u8{"F1", @ptrCast(@constCast(@as([*:0]const u8, @ptrCast(""))))};
+    const accels_sc = [_][*:0]const u8{ "F1", @ptrCast(@constCast(@as([*:0]const u8, @ptrCast("")))) };
     c.gtk_application_set_accels_for_action(gtkApp(app), "shortcuts", &accels_sc);
 }
 
@@ -1235,14 +1235,16 @@ fn onPreferencesClicked(app: *c.GApplication, _: *anyopaque, data: c.gpointer) c
     if (win_mod.window_manager) |mgr| {
         if (mgr.active_window) |state| state.showSettings();
     }
-    _ = app; _ = data;
+    _ = app;
+    _ = data;
 }
 
 fn onShortcutsClicked(app: *c.GApplication, _: *anyopaque, data: c.gpointer) callconv(.c) void {
     const shortcuts_mod = @import("shortcuts_overlay.zig");
     const win_mod = @import("window.zig");
     if (win_mod.window_manager) |mgr| shortcuts_mod.show(mgr);
-    _ = app; _ = data;
+    _ = app;
+    _ = data;
 }
 
 fn onAboutClicked(app: *c.GApplication, _: *anyopaque, data: c.gpointer) callconv(.c) void {
@@ -1255,7 +1257,8 @@ fn onAboutClicked(app: *c.GApplication, _: *anyopaque, data: c.gpointer) callcon
     if (parent) |p| {
         c.adw_dialog_present(@as(*c.AdwDialog, @ptrCast(about)), p);
     }
-    _ = app; _ = data;
+    _ = app;
+    _ = data;
 }
 
 fn onQuitClicked(app: *c.GApplication, _: *anyopaque, data: c.gpointer) callconv(.c) void {

@@ -127,7 +127,7 @@ pub const Sidebar = struct {
 
         // Left group: primary action
         const add_btn = c.gtk_button_new_from_icon_name("list-add-symbolic");
-        c.gtk_widget_set_tooltip_text(@ptrCast(add_btn), "New Workspace");
+        c.gtk_widget_set_tooltip_text(@ptrCast(add_btn), "New workspace");
         c.gtk_box_append(@ptrCast(footer), @ptrCast(add_btn));
         _ = c.g_signal_connect_data(@ptrCast(add_btn), "clicked", @ptrCast(&onAddClicked), @ptrCast(self), null, 0);
 
@@ -659,11 +659,11 @@ fn showContextMenu(self: *Sidebar, ws_idx: usize, is_pinned: bool, x: f64, y: f6
     const ActionItem = struct { name: [*:0]const u8, label: [*:0]const u8, action: ContextAction };
     const items = [_]ActionItem{
         .{ .name = "pin-toggle", .label = pin_label, .action = .pin_toggle },
-        .{ .name = "rename", .label = "Rename", .action = .rename },
-        .{ .name = "move-up", .label = "Move Up", .action = .move_up },
-        .{ .name = "move-down", .label = "Move Down", .action = .move_down },
-        .{ .name = "move-to-top", .label = "Move to Top", .action = .move_to_top },
-        .{ .name = "mark-read", .label = "Mark as Read", .action = .mark_read },
+        .{ .name = "rename", .label = "Rename…", .action = .rename },
+        .{ .name = "move-up", .label = "Move up", .action = .move_up },
+        .{ .name = "move-down", .label = "Move down", .action = .move_down },
+        .{ .name = "move-to-top", .label = "Move to top", .action = .move_to_top },
+        .{ .name = "mark-read", .label = "Mark as read", .action = .mark_read },
         .{ .name = "close", .label = "Close", .action = .close },
     };
 
@@ -692,7 +692,7 @@ fn showContextMenu(self: *Sidebar, ws_idx: usize, is_pinned: bool, x: f64, y: f6
         c.g_action_map_add_action(@ptrCast(action_group), @ptrCast(simple_action));
     }
 
-    // "Tab Color" submenu
+    // "Tab color" submenu
     {
         const theme_mod = @import("theme.zig");
         const submenu = c.g_menu_new();
@@ -722,11 +722,11 @@ fn showContextMenu(self: *Sidebar, ws_idx: usize, is_pinned: bool, x: f64, y: f6
         }
         c.g_action_map_add_action(@ptrCast(action_group), @ptrCast(none_action));
 
-        c.g_menu_insert_submenu(@as(*c.GMenu, @ptrCast(menu)), 2, "Tab Color", @ptrCast(@alignCast(submenu)));
+        c.g_menu_insert_submenu(@as(*c.GMenu, @ptrCast(menu)), 2, "Tab color", @ptrCast(@alignCast(submenu)));
         c.g_object_unref(@ptrCast(submenu));
     }
 
-    // "Move to Window" items
+    // "Move to window" items
     {
         const Window = @import("window.zig");
         if (Window.window_manager) |wm| {

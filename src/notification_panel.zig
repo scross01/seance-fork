@@ -34,7 +34,7 @@ pub const NotificationPanel = struct {
 
         const clear_btn = c.gtk_button_new_from_icon_name("user-trash-symbolic");
         c.gtk_widget_add_css_class(@ptrCast(clear_btn), "flat");
-        c.gtk_widget_set_tooltip_text(@ptrCast(clear_btn), "Clear All");
+        c.gtk_widget_set_tooltip_text(@ptrCast(clear_btn), "Clear all");
         c.gtk_box_append(@ptrCast(header_box), @ptrCast(clear_btn));
 
         // Content box to hold empty state and scrolled list

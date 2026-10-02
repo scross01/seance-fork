@@ -62,7 +62,6 @@ pub const VerticalTabBar = struct {
     autoscroll_timer: c.guint = 0,
     autoscroll_speed: f64 = 0,
 
-
     // Interaction
     hover_tab_index: ?usize = null,
     alloc: std.mem.Allocator,
@@ -171,7 +170,7 @@ pub const VerticalTabBar = struct {
 
         const close_btn = c.gtk_button_new_from_icon_name("window-close-symbolic");
         c.gtk_widget_add_css_class(close_btn, "vtab-close");
-        c.gtk_widget_set_tooltip_text(close_btn, "Close Tab");
+        c.gtk_widget_set_tooltip_text(close_btn, "Close tab");
         c.gtk_widget_set_halign(close_btn, c.GTK_ALIGN_END);
         c.gtk_widget_set_valign(close_btn, c.GTK_ALIGN_START);
         c.gtk_revealer_set_child(@ptrCast(close_revealer), close_btn);
@@ -1112,5 +1111,4 @@ pub const VerticalTabBar = struct {
             else => return 0,
         }
     }
-
 };

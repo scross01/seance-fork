@@ -106,86 +106,86 @@ const Command = struct {
 /// Static commands derived from the Action enum.
 const static_commands = [_]Command{
     // Global commands
-    .{ .label = "New Workspace", .action = .new_workspace, .keywords = "create new workspace" },
-    .{ .label = "New Window", .action = .new_window, .keywords = "create new window" },
-    .{ .label = "Open Folder...", .action = .open_folder, .keywords = "open folder repository project directory" },
-    .{ .label = "New Tab", .action = .new_tab, .keywords = "new terminal tab create add" },
-    .{ .label = "New Browser Panel", .action = .new_browser_panel, .keywords = "browser web url internet" },
-    .{ .label = "New Browser Tab", .action = .new_browser_tab, .keywords = "browser web tab" },
-    .{ .label = "Developer Tools", .action = .browser_inspector, .keywords = "browser devtools inspector debug console dom" },
-    .{ .label = "Close Tab", .action = .close_tab, .keywords = "close tab remove delete", .visible = .has_tab_focus },
-    .{ .label = "Close Workspace", .action = .close_workspace, .keywords = "close workspace remove delete", .visible = .workspace_exists },
-    .{ .label = "Toggle Sidebar", .action = .toggle_sidebar, .keywords = "toggle sidebar show hide layout" },
-    .{ .label = "Flash Focused Pane", .action = .flash_focused, .keywords = "flash highlight focus pane" },
-    .{ .label = "Toggle Notifications", .action = .toggle_notifications, .keywords = "notifications show hide alerts inbox" },
-    .{ .label = "Jump to Unread", .action = .jump_to_unread, .keywords = "jump unread notification" },
-    .{ .label = "Open Settings", .action = .open_settings, .keywords = "settings preferences config options" },
-    .{ .label = "Reload Configuration", .action = .reload_config, .keywords = "config reload refresh settings" },
-    .{ .label = "Toggle Fullscreen", .action = .toggle_fullscreen, .keywords = "fullscreen toggle window maximize f11" },
-    .{ .label = "Quit Seance", .action = .quit_app, .keywords = "quit exit close application app shutdown" },
+    .{ .label = "New workspace", .action = .new_workspace, .keywords = "create new workspace" },
+    .{ .label = "New window", .action = .new_window, .keywords = "create new window" },
+    .{ .label = "Open folder…", .action = .open_folder, .keywords = "open folder repository project directory" },
+    .{ .label = "New tab", .action = .new_tab, .keywords = "new terminal tab create add" },
+    .{ .label = "New browser panel", .action = .new_browser_panel, .keywords = "browser web url internet" },
+    .{ .label = "New browser tab", .action = .new_browser_tab, .keywords = "browser web tab" },
+    .{ .label = "Developer tools", .action = .browser_inspector, .keywords = "browser devtools inspector debug console dom" },
+    .{ .label = "Close tab", .action = .close_tab, .keywords = "close tab remove delete", .visible = .has_tab_focus },
+    .{ .label = "Close workspace", .action = .close_workspace, .keywords = "close workspace remove delete", .visible = .workspace_exists },
+    .{ .label = "Toggle sidebar", .action = .toggle_sidebar, .keywords = "toggle sidebar show hide layout" },
+    .{ .label = "Flash focused pane", .action = .flash_focused, .keywords = "flash highlight focus pane" },
+    .{ .label = "Toggle notifications", .action = .toggle_notifications, .keywords = "notifications show hide alerts inbox" },
+    .{ .label = "Jump to unread", .action = .jump_to_unread, .keywords = "jump unread notification" },
+    .{ .label = "Open settings", .action = .open_settings, .keywords = "settings preferences config options" },
+    .{ .label = "Reload configuration", .action = .reload_config, .keywords = "config reload refresh settings" },
+    .{ .label = "Toggle fullscreen", .action = .toggle_fullscreen, .keywords = "fullscreen toggle window maximize f11" },
+    .{ .label = "Quit Séance", .action = .quit_app, .keywords = "quit exit close application app shutdown" },
 
     // Workspace commands
-    .{ .label = "Rename Workspace...", .action = .rename_workspace, .keywords = "rename workspace title name", .enters_rename = true, .visible = .workspace_exists },
-    .{ .label = "Toggle Pin", .action = .toggle_pin, .keywords = "pin unpin workspace", .visible = .workspace_exists },
-    .{ .label = "Previous Workspace", .action = .prev_workspace, .keywords = "previous workspace navigate switch back" },
-    .{ .label = "Next Workspace", .action = .next_workspace, .keywords = "next workspace navigate switch forward" },
-    .{ .label = "Workspace Switcher", .action = .workspace_switcher, .keywords = "go switch workspace" },
-    .{ .label = "Last Workspace", .action = .last_workspace, .keywords = "last previous recent workspace switch back" },
-    .{ .label = "Move Workspace Up", .action = .move_workspace_up, .keywords = "move workspace up reorder", .visible = .workspace_exists, .enabled = .has_workspace_above },
-    .{ .label = "Move Workspace Down", .action = .move_workspace_down, .keywords = "move workspace down reorder", .visible = .workspace_exists, .enabled = .has_workspace_below },
-    .{ .label = "Move Workspace to Top", .action = .move_workspace_to_top, .keywords = "move workspace top reorder", .visible = .workspace_exists, .enabled = .has_workspace_above },
-    .{ .label = "Close Other Workspaces", .action = .close_other_workspaces, .keywords = "close other workspaces remove", .visible = .workspace_exists, .enabled = .has_peers },
-    .{ .label = "Close Workspaces Above", .action = .close_workspaces_above, .keywords = "close workspaces above remove", .visible = .workspace_exists, .enabled = .has_workspace_above },
-    .{ .label = "Close Workspaces Below", .action = .close_workspaces_below, .keywords = "close workspaces below remove", .visible = .workspace_exists, .enabled = .has_workspace_below },
-    .{ .label = "Mark Workspace as Read", .action = .mark_workspace_read, .keywords = "mark read notification workspace", .visible = .workspace_exists, .enabled = .has_unread_notifications },
-    .{ .label = "Mark Workspace as Unread", .action = .mark_workspace_unread, .keywords = "mark unread notification workspace", .visible = .workspace_exists, .enabled = .has_no_unread_notifications },
+    .{ .label = "Rename workspace…", .action = .rename_workspace, .keywords = "rename workspace title name", .enters_rename = true, .visible = .workspace_exists },
+    .{ .label = "Toggle pin", .action = .toggle_pin, .keywords = "pin unpin workspace", .visible = .workspace_exists },
+    .{ .label = "Previous workspace", .action = .prev_workspace, .keywords = "previous workspace navigate switch back" },
+    .{ .label = "Next workspace", .action = .next_workspace, .keywords = "next workspace navigate switch forward" },
+    .{ .label = "Workspace switcher", .action = .workspace_switcher, .keywords = "go switch workspace" },
+    .{ .label = "Last workspace", .action = .last_workspace, .keywords = "last previous recent workspace switch back" },
+    .{ .label = "Move workspace up", .action = .move_workspace_up, .keywords = "move workspace up reorder", .visible = .workspace_exists, .enabled = .has_workspace_above },
+    .{ .label = "Move workspace down", .action = .move_workspace_down, .keywords = "move workspace down reorder", .visible = .workspace_exists, .enabled = .has_workspace_below },
+    .{ .label = "Move workspace to top", .action = .move_workspace_to_top, .keywords = "move workspace top reorder", .visible = .workspace_exists, .enabled = .has_workspace_above },
+    .{ .label = "Close other workspaces", .action = .close_other_workspaces, .keywords = "close other workspaces remove", .visible = .workspace_exists, .enabled = .has_peers },
+    .{ .label = "Close workspaces above", .action = .close_workspaces_above, .keywords = "close workspaces above remove", .visible = .workspace_exists, .enabled = .has_workspace_above },
+    .{ .label = "Close workspaces below", .action = .close_workspaces_below, .keywords = "close workspaces below remove", .visible = .workspace_exists, .enabled = .has_workspace_below },
+    .{ .label = "Mark workspace as read", .action = .mark_workspace_read, .keywords = "mark read notification workspace", .visible = .workspace_exists, .enabled = .has_unread_notifications },
+    .{ .label = "Mark workspace as unread", .action = .mark_workspace_unread, .keywords = "mark unread notification workspace", .visible = .workspace_exists, .enabled = .has_no_unread_notifications },
     .{ .label = "Clear Workspace Name", .action = .clear_workspace_name, .keywords = "clear reset workspace name title", .visible = .workspace_exists, .enabled = .has_custom_workspace_name },
 
     // Pane commands
-    .{ .label = "New Column", .action = .new_column, .keywords = "split vertical divide pane column", .visible = .has_tab_focus },
-    .{ .label = "Close Pane", .action = .close_pane, .keywords = "close pane remove delete", .visible = .has_tab_focus },
-    .{ .label = "Toggle Zoom", .action = .maximize_column, .keywords = "zoom toggle maximize pane fullscreen", .visible = .has_splits },
-    .{ .label = "Focus Left", .action = .focus_left, .keywords = "focus left navigate pane", .visible = .has_splits },
-    .{ .label = "Focus Right", .action = .focus_right, .keywords = "focus right navigate pane", .visible = .has_splits },
-    .{ .label = "Focus Up", .action = .focus_up, .keywords = "focus up navigate pane", .visible = .has_splits },
-    .{ .label = "Focus Down", .action = .focus_down, .keywords = "focus down navigate pane", .visible = .has_splits },
-    .{ .label = "Equalize Splits", .action = .equalize_splits, .keywords = "equalize even distribute splits columns", .visible = .workspace_exists, .enabled = .has_splits },
-    .{ .label = "Last Pane", .action = .last_pane, .keywords = "last previous recent pane switch back" },
+    .{ .label = "New column", .action = .new_column, .keywords = "split vertical divide pane column", .visible = .has_tab_focus },
+    .{ .label = "Close pane", .action = .close_pane, .keywords = "close pane remove delete", .visible = .has_tab_focus },
+    .{ .label = "Toggle zoom", .action = .maximize_column, .keywords = "zoom toggle maximize pane fullscreen", .visible = .has_splits },
+    .{ .label = "Focus left", .action = .focus_left, .keywords = "focus left navigate pane", .visible = .has_splits },
+    .{ .label = "Focus right", .action = .focus_right, .keywords = "focus right navigate pane", .visible = .has_splits },
+    .{ .label = "Focus up", .action = .focus_up, .keywords = "focus up navigate pane", .visible = .has_splits },
+    .{ .label = "Focus down", .action = .focus_down, .keywords = "focus down navigate pane", .visible = .has_splits },
+    .{ .label = "Equalize splits", .action = .equalize_splits, .keywords = "equalize even distribute splits columns", .visible = .workspace_exists, .enabled = .has_splits },
+    .{ .label = "Last pane", .action = .last_pane, .keywords = "last previous recent pane switch back" },
 
     // Layout
-    .{ .label = "Toggle Layout Mode", .action = .toggle_layout_mode, .keywords = "layout mode toggle scrolling tiling" },
-    .{ .label = "Move Column Left", .action = .move_column_left, .keywords = "move column left reorder", .visible = .has_splits },
-    .{ .label = "Move Column Right", .action = .move_column_right, .keywords = "move column right reorder", .visible = .has_splits },
-    .{ .label = "Expel Left", .action = .expel_left, .keywords = "expel pane left new column split", .visible = .has_splits },
-    .{ .label = "Expel Right", .action = .expel_right, .keywords = "expel pane right new column split", .visible = .has_splits },
+    .{ .label = "Toggle layout mode", .action = .toggle_layout_mode, .keywords = "layout mode toggle scrolling tiling" },
+    .{ .label = "Move column left", .action = .move_column_left, .keywords = "move column left reorder", .visible = .has_splits },
+    .{ .label = "Move column right", .action = .move_column_right, .keywords = "move column right reorder", .visible = .has_splits },
+    .{ .label = "Expel left", .action = .expel_left, .keywords = "expel pane left new column split", .visible = .has_splits },
+    .{ .label = "Expel right", .action = .expel_right, .keywords = "expel pane right new column split", .visible = .has_splits },
 
     // Resize
-    .{ .label = "Resize Column Wider", .action = .resize_wider, .keywords = "grow expand column width" },
-    .{ .label = "Resize Column Narrower", .action = .resize_narrower, .keywords = "shrink column width" },
-    .{ .label = "Resize Row Taller", .action = .resize_taller, .keywords = "grow expand row height pane" },
-    .{ .label = "Resize Row Shorter", .action = .resize_shorter, .keywords = "shrink row height pane" },
+    .{ .label = "Resize column wider", .action = .resize_wider, .keywords = "grow expand column width" },
+    .{ .label = "Resize column narrower", .action = .resize_narrower, .keywords = "shrink column width" },
+    .{ .label = "Resize row taller", .action = .resize_taller, .keywords = "grow expand row height pane" },
+    .{ .label = "Resize row shorter", .action = .resize_shorter, .keywords = "shrink row height pane" },
 
     // Terminal commands
-    .{ .label = "Find...", .action = .find, .keywords = "terminal find search", .visible = .has_tab_focus },
-    .{ .label = "Find Next", .action = .find_next, .keywords = "terminal find next search", .visible = .has_tab_focus },
-    .{ .label = "Find Previous", .action = .find_previous, .keywords = "terminal find previous search", .visible = .has_tab_focus },
-    .{ .label = "Use Selection for Find", .action = .use_selection_for_find, .keywords = "terminal selection find search", .visible = .has_tab_focus },
+    .{ .label = "Find…", .action = .find, .keywords = "terminal find search", .visible = .has_tab_focus },
+    .{ .label = "Find next", .action = .find_next, .keywords = "terminal find next search", .visible = .has_tab_focus },
+    .{ .label = "Find previous", .action = .find_previous, .keywords = "terminal find previous search", .visible = .has_tab_focus },
+    .{ .label = "Use selection for find", .action = .use_selection_for_find, .keywords = "terminal selection find search", .visible = .has_tab_focus },
     .{ .label = "Copy", .action = .copy, .keywords = "clipboard copy selection", .visible = .has_tab_focus },
     .{ .label = "Clear Scrollback", .action = .clear_scrollback, .keywords = "clear scrollback reset history", .visible = .has_tab_focus },
 
     // Font
-    .{ .label = "Zoom In", .action = .zoom_in, .keywords = "font bigger larger zoom in" },
-    .{ .label = "Zoom Out", .action = .zoom_out, .keywords = "font smaller zoom out" },
-    .{ .label = "Zoom Reset", .action = .zoom_reset, .keywords = "font default zoom reset actual size" },
+    .{ .label = "Zoom in", .action = .zoom_in, .keywords = "font bigger larger zoom in" },
+    .{ .label = "Zoom out", .action = .zoom_out, .keywords = "font smaller zoom out" },
+    .{ .label = "Zoom reset", .action = .zoom_reset, .keywords = "font default zoom reset actual size" },
 
     // Tab management
-    .{ .label = "Rename Tab...", .action = .rename_tab, .keywords = "rename tab title name", .enters_rename = true, .visible = .has_tab_focus },
-    .{ .label = "Close Other Tabs", .action = .close_other_tabs, .keywords = "close other tabs remove", .visible = .has_multiple_tabs },
+    .{ .label = "Rename tab…", .action = .rename_tab, .keywords = "rename tab title name", .enters_rename = true, .visible = .has_tab_focus },
+    .{ .label = "Close other tabs", .action = .close_other_tabs, .keywords = "close other tabs remove", .visible = .has_multiple_tabs },
     .{ .label = "Close Tabs to Right", .action = .close_tabs_to_right, .keywords = "close tabs right remove", .visible = .has_tab_focus, .enabled = .has_tabs_to_right },
     .{ .label = "Clear Tab Name", .action = .clear_tab_name, .keywords = "clear reset tab name title", .visible = .has_tab_focus, .enabled = .has_custom_tab_name },
 
     // Help
-    .{ .label = "Keyboard Shortcuts", .action = .show_shortcuts, .keywords = "help keys bindings cheat sheet F1" },
+    .{ .label = "Keyboard shortcuts", .action = .show_shortcuts, .keywords = "help keys bindings cheat sheet F1" },
 
     // Workspace navigation
     .{ .label = "Workspace 1", .action = .workspace_1, .keywords = "switch select workspace" },
@@ -199,8 +199,8 @@ const static_commands = [_]Command{
     .{ .label = "Workspace 9", .action = .workspace_9, .keywords = "switch select workspace" },
 
     // Tab navigation
-    .{ .label = "Next Tab", .action = .next_tab, .keywords = "next tab switch forward" },
-    .{ .label = "Previous Tab", .action = .prev_tab, .keywords = "previous tab switch back" },
+    .{ .label = "Next tab", .action = .next_tab, .keywords = "next tab switch forward" },
+    .{ .label = "Previous tab", .action = .prev_tab, .keywords = "previous tab switch back" },
     .{ .label = "Tab 1", .action = .tab_1, .keywords = "switch select tab" },
     .{ .label = "Tab 2", .action = .tab_2, .keywords = "switch select tab" },
     .{ .label = "Tab 3", .action = .tab_3, .keywords = "switch select tab" },
@@ -244,7 +244,7 @@ const ScoredResult = struct {
     match_count: usize,
 };
 
-/// External application for "Open Directory In..." commands.
+/// External application for "Open directory in…" commands.
 const ExternalApp = struct {
     name: []const u8,
     binary: [:0]const u8,
@@ -471,7 +471,7 @@ pub const CommandPalette = struct {
         self.showSearchUI();
         c.gtk_widget_set_visible(self.overlay, 1);
         c.gtk_editable_set_text(@ptrCast(self.entry), "");
-        c.gtk_search_entry_set_placeholder_text(@ptrCast(self.entry), "Search workspaces...");
+        c.gtk_search_entry_set_placeholder_text(@ptrCast(self.entry), "Search workspaces…");
         self.updateResults("");
         _ = c.gtk_widget_grab_focus(self.entry);
     }
@@ -510,7 +510,7 @@ pub const CommandPalette = struct {
                 self.mode = .switcher;
                 self.showSearchUI();
                 c.gtk_editable_set_text(@ptrCast(self.entry), "");
-                c.gtk_search_entry_set_placeholder_text(@ptrCast(self.entry), "Search workspaces...");
+                c.gtk_search_entry_set_placeholder_text(@ptrCast(self.entry), "Search workspaces…");
                 self.updateResults("");
                 _ = c.gtk_widget_grab_focus(self.entry);
             }
@@ -1337,7 +1337,7 @@ fn onSearchChanged(_: *c.GtkSearchEntry, user_data: c.gpointer) callconv(.c) voi
         if (new_mode == .commands) {
             c.gtk_search_entry_set_placeholder_text(@ptrCast(palette.entry), "Type a command");
         } else {
-            c.gtk_search_entry_set_placeholder_text(@ptrCast(palette.entry), "Search workspaces...");
+            c.gtk_search_entry_set_placeholder_text(@ptrCast(palette.entry), "Search workspaces…");
         }
     }
 

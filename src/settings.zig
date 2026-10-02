@@ -76,7 +76,7 @@ const Widgets = struct {
     port_base: ?*c.GtkWidget = null,
     port_range: ?*c.GtkWidget = null,
 
-    // Custom sound file entry (shown only when "Custom File" selected)
+    // Custom sound file entry (shown only when "Custom file" selected)
     custom_sound_path: ?*c.GtkWidget = null,
     // Sound preview button
     sound_preview_btn: ?*c.GtkWidget = null,
@@ -189,7 +189,7 @@ fn buildAppearanceSection(page: *c.GtkWidget, cfg: *const config_mod.Config) voi
     }
     {
         const row = c.adw_action_row_new();
-        c.adw_preferences_row_set_title(@as(*c.AdwPreferencesRow, @ptrCast(row)), "Font Family");
+        c.adw_preferences_row_set_title(@as(*c.AdwPreferencesRow, @ptrCast(row)), "Font family");
         c.adw_action_row_set_subtitle(@as(*c.AdwActionRow, @ptrCast(row)), "Terminal font face. Must be a monospace font.");
         const btn = c.gtk_font_dialog_button_new(c.gtk_font_dialog_new());
         if (cfg.font_family_len > 0) {
@@ -212,10 +212,10 @@ fn buildAppearanceSection(page: *c.GtkWidget, cfg: *const config_mod.Config) voi
         c.adw_preferences_group_add(@as(*c.AdwPreferencesGroup, @ptrCast(g1)), @as(*c.GtkWidget, @ptrCast(row)));
         _ = c.g_signal_connect_data(@as(c.gpointer, @ptrCast(btn)), "notify::font-desc", @as(c.GCallback, @ptrCast(&onFontChanged)), null, null, 0);
     }
-    w.font_size = addSpinRow(g1, "Font Size", "Font size in points.", 6.0, 72.0, 0.5, cfg.font_size orelse 11.0);
+    w.font_size = addSpinRow(g1, "Font size", "Font size in points.", 6.0, 72.0, 0.5, cfg.font_size orelse 11.0);
     {
         const row = c.adw_action_row_new();
-        c.adw_preferences_row_set_title(@as(*c.AdwPreferencesRow, @ptrCast(row)), "Background Opacity");
+        c.adw_preferences_row_set_title(@as(*c.AdwPreferencesRow, @ptrCast(row)), "Background opacity");
         c.adw_action_row_set_subtitle(@as(*c.AdwActionRow, @ptrCast(row)), "Terminal background transparency. Requires a compositor.");
         const scale = c.gtk_scale_new_with_range(c.GTK_ORIENTATION_HORIZONTAL, 0.0, 1.0, 0.05);
         c.gtk_range_set_value(@as(*c.GtkRange, @ptrCast(scale)), cfg.background_opacity);
@@ -234,13 +234,13 @@ fn buildAppearanceSection(page: *c.GtkWidget, cfg: *const config_mod.Config) voi
         w.background_opacity = @as(*c.GtkWidget, @ptrCast(scale));
         _ = c.g_signal_connect_data(@as(c.gpointer, @ptrCast(scale)), "value-changed", @as(c.GCallback, @ptrCast(&onScaleChanged)), null, null, 0);
     }
-    w.cursor_shape = addComboRow(g1, "Cursor Shape", &.{ "Block", "I-Beam", "Underline" }, switch (cfg.cursor_shape) {
+    w.cursor_shape = addComboRow(g1, "Cursor shape", &.{ "Block", "I-Beam", "Underline" }, switch (cfg.cursor_shape) {
         .block => 0,
         .ibeam => 1,
         .underline => 2,
     });
-    w.cursor_blink = addSwitchRow(g1, "Cursor Blink", "Animate the terminal cursor.", cfg.cursor_blink);
-    w.dim_unfocused_panes = addSwitchRow(g1, "Dim Unfocused Panes", "Reduce opacity of unfocused terminal panes.", cfg.dim_unfocused_panes);
+    w.cursor_blink = addSwitchRow(g1, "Cursor blink", "Animate the terminal cursor.", cfg.cursor_blink);
+    w.dim_unfocused_panes = addSwitchRow(g1, "Dim unfocused panes", "Reduce opacity of unfocused terminal panes.", cfg.dim_unfocused_panes);
     addToPage(page, g1);
 }
 
@@ -251,26 +251,26 @@ fn buildAppearanceSection(page: *c.GtkWidget, cfg: *const config_mod.Config) voi
 fn buildWindowSection(page: *c.GtkWidget, cfg: *const config_mod.Config) void {
     const g1 = newGroup("Window");
 
-    w.decoration_mode = addComboRow(g1, "Window Decorations", &.{ "Automatic", "Client-Side", "Server-Side" }, switch (cfg.decoration_mode) {
+    w.decoration_mode = addComboRow(g1, "Window decorations", &.{ "Automatic", "Client-side", "Server-side" }, switch (cfg.decoration_mode) {
         .auto => 0,
         .csd => 1,
         .ssd => 2,
     });
 
-    w.confirm_close_window = addSwitchRow(g1, "Confirm Closing Window", "Ask before closing a window with multiple workspaces.", cfg.confirm_close_window);
-    w.sidebar_position = addComboRow(g1, "Sidebar Position", &.{ "Left", "Right" }, if (cfg.sidebar_position == .right) @as(u32, 1) else @as(u32, 0));
-    w.show_button_bar = addSwitchRow(g1, "Show Button Bar", "Show the bottom sidebar buttons when using server-side window decorations.", cfg.sidebar_show_button_bar);
+    w.confirm_close_window = addSwitchRow(g1, "Confirm closing window", "Ask before closing a window with multiple workspaces.", cfg.confirm_close_window);
+    w.sidebar_position = addComboRow(g1, "Sidebar position", &.{ "Left", "Right" }, if (cfg.sidebar_position == .right) @as(u32, 1) else @as(u32, 0));
+    w.show_button_bar = addSwitchRow(g1, "Show button bar", "Show the bottom sidebar buttons when using server-side window decorations.", cfg.sidebar_show_button_bar);
     addToPage(page, g1);
 
     // Sidebar detail visibility
     const g2 = newGroup(null);
     c.adw_preferences_group_set_description(@as(*c.AdwPreferencesGroup, @ptrCast(g2)), "Choose which details to display in the sidebar for each workspace.");
-    w.show_notification_text = addSwitchRow(g2, "Notification Text", "Latest notification message.", cfg.sidebar_show_notification_text);
-    w.show_status = addSwitchRow(g2, "Status Metadata", "Custom status entries from report_meta/set_status.", cfg.sidebar_show_status);
-    w.show_logs = addSwitchRow(g2, "Log Entries", "Most recent log message.", cfg.sidebar_show_logs);
-    w.show_progress = addSwitchRow(g2, "Progress Bar", "Active progress indicator.", cfg.sidebar_show_progress);
-    w.show_branch = addSwitchRow(g2, "Git Branch + Directory", "Git branch and working-directory path.", cfg.sidebar_show_branch);
-    w.show_ports = addSwitchRow(g2, "Listening Ports", "Detected listening ports for the workspace.", cfg.sidebar_show_ports);
+    w.show_notification_text = addSwitchRow(g2, "Notification text", "Latest notification message.", cfg.sidebar_show_notification_text);
+    w.show_status = addSwitchRow(g2, "Status metadata", "Custom status entries from report_meta/set_status.", cfg.sidebar_show_status);
+    w.show_logs = addSwitchRow(g2, "Log entries", "Most recent log message.", cfg.sidebar_show_logs);
+    w.show_progress = addSwitchRow(g2, "Progress bar", "Active progress indicator.", cfg.sidebar_show_progress);
+    w.show_branch = addSwitchRow(g2, "Git branch + directory", "Git branch and working-directory path.", cfg.sidebar_show_branch);
+    w.show_ports = addSwitchRow(g2, "Listening ports", "Detected listening ports for the workspace.", cfg.sidebar_show_ports);
     addToPage(page, g2);
 }
 
@@ -280,8 +280,8 @@ fn buildWindowSection(page: *c.GtkWidget, cfg: *const config_mod.Config) void {
 
 fn buildTerminalSection(page: *c.GtkWidget, cfg: *const config_mod.Config) void {
     const g1 = newGroup("Terminal");
-    w.scrollback_lines = addSpinRow(g1, "Scrollback Lines", "Maximum number of lines kept in scrollback buffer per pane.", 0, 100000, 1000, @floatFromInt(cfg.scrollback_lines));
-    w.focus_follows_mouse = addSwitchRow(g1, "Focus Follows Mouse", "Automatically focus the pane under the mouse cursor.", cfg.focus_follows_mouse);
+    w.scrollback_lines = addSpinRow(g1, "Scrollback lines", "Maximum number of lines kept in scrollback buffer per pane.", 0, 100000, 1000, @floatFromInt(cfg.scrollback_lines));
+    w.focus_follows_mouse = addSwitchRow(g1, "Focus follows mouse", "Automatically focus the pane under the mouse cursor.", cfg.focus_follows_mouse);
     addToPage(page, g1);
 }
 
@@ -291,7 +291,7 @@ fn buildTerminalSection(page: *c.GtkWidget, cfg: *const config_mod.Config) void 
 
 fn buildBrowserSection(page: *c.GtkWidget, cfg: *const config_mod.Config) void {
     const g1 = newGroup("Browser");
-    w.open_url_in_browser = addSwitchRow(g1, "Open URLs in Browser Panel", "When an agent opens a URL, open it in an in-app browser panel instead of the system browser.", cfg.open_url_in_browser);
+    w.open_url_in_browser = addSwitchRow(g1, "Open URLs in browser panel", "When an agent opens a URL, open it in an in-app browser panel instead of the system browser.", cfg.open_url_in_browser);
     addToPage(page, g1);
 }
 
@@ -395,10 +395,10 @@ fn collectThemesFromDir(
 
 fn buildNotificationsSection(page: *c.GtkWidget, cfg: *const config_mod.Config) void {
     const g1 = newGroup("Notifications");
-    w.desktop_notifications = addSwitchRow(g1, "Desktop Notifications", "Send desktop notifications via libnotify when terminal bells or OSC notifications arrive.", cfg.desktop_notifications);
-    w.bell_notification = addSwitchRow(g1, "Bell Notification", "Treat terminal bell (BEL) as a notification.", cfg.bell_notification);
+    w.desktop_notifications = addSwitchRow(g1, "Desktop notifications", "Send desktop notifications when terminal bells or OSC notifications arrive.", cfg.desktop_notifications);
+    w.bell_notification = addSwitchRow(g1, "Bell notification", "Treat terminal bell (BEL) as a notification.", cfg.bell_notification);
 
-    w.notification_sound = addComboRow(g1, "Notification Sound", &.{ "Default", "None", "Bell", "Dialog Warning", "Complete", "Custom File" }, switch (cfg.notification_sound) {
+    w.notification_sound = addComboRow(g1, "Notification sound", &.{ "Default", "None", "Bell", "Dialog warning", "Complete", "Custom file" }, switch (cfg.notification_sound) {
         .default => 0,
         .none => 1,
         .bell => 2,
@@ -407,7 +407,7 @@ fn buildNotificationsSection(page: *c.GtkWidget, cfg: *const config_mod.Config) 
         .custom => 5,
     });
 
-    w.custom_sound_path = addEntryRow(g1, "Custom Sound File", "/path/to/sound.ogg", switch (cfg.notification_sound) {
+    w.custom_sound_path = addEntryRow(g1, "Custom sound file", "/path/to/sound.ogg", switch (cfg.notification_sound) {
         .custom => |cs| cs.path[0..cs.path_len],
         else => "",
     });
@@ -426,7 +426,7 @@ fn buildNotificationsSection(page: *c.GtkWidget, cfg: *const config_mod.Config) 
     // Sound preview button
     {
         const preview_row = c.adw_action_row_new();
-        c.adw_preferences_row_set_title(@as(*c.AdwPreferencesRow, @ptrCast(preview_row)), "Preview Sound");
+        c.adw_preferences_row_set_title(@as(*c.AdwPreferencesRow, @ptrCast(preview_row)), "Preview sound");
         const preview_btn = c.gtk_button_new_from_icon_name("audio-speakers-symbolic");
         c.gtk_widget_set_tooltip_text(@ptrCast(preview_btn), "Play selected sound");
         c.gtk_widget_set_valign(@ptrCast(preview_btn), c.GTK_ALIGN_CENTER);
@@ -440,7 +440,7 @@ fn buildNotificationsSection(page: *c.GtkWidget, cfg: *const config_mod.Config) 
     // Send Test Notification button
     {
         const test_row = c.adw_action_row_new();
-        c.adw_preferences_row_set_title(@as(*c.AdwPreferencesRow, @ptrCast(test_row)), "Send Test Notification");
+        c.adw_preferences_row_set_title(@as(*c.AdwPreferencesRow, @ptrCast(test_row)), "Send test notification");
         c.adw_action_row_set_subtitle(@as(*c.AdwActionRow, @ptrCast(test_row)), "Exercises the full notification pipeline.");
         const test_btn = c.gtk_button_new_from_icon_name("notifications-symbolic");
         c.gtk_widget_set_tooltip_text(@ptrCast(test_btn), "Send a test notification");
@@ -462,31 +462,31 @@ fn buildIntegrationsSection(page: *c.GtkWidget, cfg: *const config_mod.Config) v
     // Card 1: Socket Configuration
     const g1 = newGroup("Integrations");
     c.adw_preferences_group_set_description(@as(*c.AdwPreferencesGroup, @ptrCast(g1)), "The socket allows external tools (e.g. seance notify) to send commands to seance. Created on startup if the path is set.");
-    w.socket_path = addEntryRow(g1, "Socket Path", "~/.seance/seance.sock", cfg.socket_path[0..cfg.socket_path_len]);
+    w.socket_path = addEntryRow(g1, "Socket path", "~/.seance/seance.sock", cfg.socket_path[0..cfg.socket_path_len]);
     addToPage(page, g1);
 
     // Card 2: Agent integrations
     const g2 = newGroup(null);
     c.adw_preferences_group_set_description(@as(*c.AdwPreferencesGroup, @ptrCast(g2)), "Track agent activity and requests for input. Changes apply to new panes.");
-    w.claude_code_hooks = addSwitchRow(g2, "Claude Code Integration", if (cfg.claude_code_hooks) "Sidebar shows Claude session status and notifications." else "Claude Code runs without seance integration.", cfg.claude_code_hooks);
-    w.codex_hooks = addSwitchRow(g2, "Codex Integration", if (cfg.codex_hooks) "Sidebar shows Codex session status and notifications." else "Codex runs without seance integration.", cfg.codex_hooks);
-    w.pi_hooks = addSwitchRow(g2, "Pi Agent Integration", if (cfg.pi_hooks) "Sidebar shows Pi session status and notifications." else "Pi runs without seance integration.", cfg.pi_hooks);
-    w.opencode_hooks = addSwitchRow(g2, "OpenCode Integration", if (cfg.opencode_hooks) "Sidebar shows OpenCode session status and notifications." else "OpenCode runs without seance integration.", cfg.opencode_hooks);
-    w.antigravity_hooks = addSwitchRow(g2, "Antigravity CLI Integration", if (cfg.antigravity_hooks) "Sidebar shows Antigravity session status and notifications." else "Antigravity runs without seance integration.", cfg.antigravity_hooks);
-    w.kilo_hooks = addSwitchRow(g2, "Kilo Code Integration", if (cfg.kilo_hooks) "Sidebar shows Kilo Code session status and notifications." else "Kilo Code runs without seance integration.", cfg.kilo_hooks);
-    w.mimocode_hooks = addSwitchRow(g2, "MiMo Code Integration", if (cfg.mimocode_hooks) "Sidebar shows MiMo Code session status and notifications." else "MiMo Code runs without seance integration.", cfg.mimocode_hooks);
-    w.vibe_hooks = addSwitchRow(g2, "Mistral Vibe Integration", if (cfg.vibe_hooks) "Sidebar shows Vibe session status." else "Vibe runs without seance integration.", cfg.vibe_hooks);
-    w.hermes_hooks = addSwitchRow(g2, "Hermes Agent Integration", if (cfg.hermes_hooks) "Sidebar shows Hermes Agent session status and notifications." else "Hermes Agent runs without seance integration.", cfg.hermes_hooks);
-    w.pool_hooks = addSwitchRow(g2, "Poolside Pool Integration", if (cfg.pool_hooks) "Sidebar shows Poolside pool session status and tool use." else "Poolside pool runs without seance integration.", cfg.pool_hooks);
-    w.codebuff_hooks = addSwitchRow(g2, "Codebuff Integration", if (cfg.codebuff_hooks) "Sidebar shows Codebuff session status and tool use." else "Codebuff runs without seance integration.", cfg.codebuff_hooks);
-    w.freebuff_hooks = addSwitchRow(g2, "Freebuff Integration", if (cfg.freebuff_hooks) "Sidebar shows Freebuff session status and tool use." else "Freebuff runs without seance integration.", cfg.freebuff_hooks);
+    w.claude_code_hooks = addSwitchRow(g2, "Claude Code integration", if (cfg.claude_code_hooks) "Sidebar shows Claude session status and notifications." else "Claude Code runs without seance integration.", cfg.claude_code_hooks);
+    w.codex_hooks = addSwitchRow(g2, "Codex integration", if (cfg.codex_hooks) "Sidebar shows Codex session status and notifications." else "Codex runs without seance integration.", cfg.codex_hooks);
+    w.pi_hooks = addSwitchRow(g2, "Pi Agent integration", if (cfg.pi_hooks) "Sidebar shows Pi session status and notifications." else "Pi runs without seance integration.", cfg.pi_hooks);
+    w.opencode_hooks = addSwitchRow(g2, "OpenCode integration", if (cfg.opencode_hooks) "Sidebar shows OpenCode session status and notifications." else "OpenCode runs without seance integration.", cfg.opencode_hooks);
+    w.antigravity_hooks = addSwitchRow(g2, "Antigravity CLI integration", if (cfg.antigravity_hooks) "Sidebar shows Antigravity session status and notifications." else "Antigravity runs without seance integration.", cfg.antigravity_hooks);
+    w.kilo_hooks = addSwitchRow(g2, "Kilo Code integration", if (cfg.kilo_hooks) "Sidebar shows Kilo Code session status and notifications." else "Kilo Code runs without seance integration.", cfg.kilo_hooks);
+    w.mimocode_hooks = addSwitchRow(g2, "MiMo Code integration", if (cfg.mimocode_hooks) "Sidebar shows MiMo Code session status and notifications." else "MiMo Code runs without seance integration.", cfg.mimocode_hooks);
+    w.vibe_hooks = addSwitchRow(g2, "Mistral Vibe integration", if (cfg.vibe_hooks) "Sidebar shows Vibe session status." else "Vibe runs without seance integration.", cfg.vibe_hooks);
+    w.hermes_hooks = addSwitchRow(g2, "Hermes Agent integration", if (cfg.hermes_hooks) "Sidebar shows Hermes Agent session status and notifications." else "Hermes Agent runs without seance integration.", cfg.hermes_hooks);
+    w.pool_hooks = addSwitchRow(g2, "Poolside pool integration", if (cfg.pool_hooks) "Sidebar shows Poolside pool session status and tool use." else "Poolside pool runs without seance integration.", cfg.pool_hooks);
+    w.codebuff_hooks = addSwitchRow(g2, "Codebuff integration", if (cfg.codebuff_hooks) "Sidebar shows Codebuff session status and tool use." else "Codebuff runs without seance integration.", cfg.codebuff_hooks);
+    w.freebuff_hooks = addSwitchRow(g2, "Freebuff integration", if (cfg.freebuff_hooks) "Sidebar shows Freebuff session status and tool use." else "Freebuff runs without seance integration.", cfg.freebuff_hooks);
     addToPage(page, g2);
 
     // Card 3: Port Configuration
     const g3 = newGroup(null);
     c.adw_preferences_group_set_description(@as(*c.AdwPreferencesGroup, @ptrCast(g3)), "Each workspace gets SEANCE_PORT and SEANCE_PORT_END env vars with a dedicated port range.");
-    w.port_base = addSpinRow(g3, "Port Base", "Starting port for SEANCE_PORT env var.", 1024, 65535, 1, @floatFromInt(cfg.port_base));
-    w.port_range = addSpinRow(g3, "Port Range Size", "Number of ports per workspace.", 1, 100, 1, @floatFromInt(cfg.port_range));
+    w.port_base = addSpinRow(g3, "Port base", "Starting port for SEANCE_PORT env var.", 1024, 65535, 1, @floatFromInt(cfg.port_base));
+    w.port_range = addSpinRow(g3, "Port range size", "Number of ports per workspace.", 1, 100, 1, @floatFromInt(cfg.port_range));
     addToPage(page, g3);
 }
 
@@ -500,21 +500,21 @@ const ShortcutDef = struct {
 };
 
 const shortcut_defs = [_]ShortcutDef{
-    .{ .action = .prev_workspace, .label = "Previous Workspace" },
-    .{ .action = .next_workspace, .label = "Next Workspace" },
-    .{ .action = .last_workspace, .label = "Last Workspace" },
-    .{ .action = .new_workspace, .label = "New Workspace" },
-    .{ .action = .close_workspace, .label = "Close Workspace" },
-    .{ .action = .workspace_switcher, .label = "Workspace Switcher" },
-    .{ .action = .move_workspace_up, .label = "Move Workspace Up" },
-    .{ .action = .move_workspace_down, .label = "Move Workspace Down" },
-    .{ .action = .move_workspace_to_top, .label = "Move Workspace to Top" },
-    .{ .action = .close_other_workspaces, .label = "Close Other Workspaces" },
-    .{ .action = .close_workspaces_above, .label = "Close Workspaces Above" },
-    .{ .action = .close_workspaces_below, .label = "Close Workspaces Below" },
-    .{ .action = .mark_workspace_read, .label = "Mark Workspace Read" },
-    .{ .action = .mark_workspace_unread, .label = "Mark Workspace Unread" },
-    .{ .action = .equalize_splits, .label = "Equalize Split Widths" },
+    .{ .action = .prev_workspace, .label = "Previous workspace" },
+    .{ .action = .next_workspace, .label = "Next workspace" },
+    .{ .action = .last_workspace, .label = "Last workspace" },
+    .{ .action = .new_workspace, .label = "New workspace" },
+    .{ .action = .close_workspace, .label = "Close workspace" },
+    .{ .action = .workspace_switcher, .label = "Workspace switcher" },
+    .{ .action = .move_workspace_up, .label = "Move workspace up" },
+    .{ .action = .move_workspace_down, .label = "Move workspace down" },
+    .{ .action = .move_workspace_to_top, .label = "Move workspace to top" },
+    .{ .action = .close_other_workspaces, .label = "Close other workspaces" },
+    .{ .action = .close_workspaces_above, .label = "Close workspaces above" },
+    .{ .action = .close_workspaces_below, .label = "Close workspaces below" },
+    .{ .action = .mark_workspace_read, .label = "Mark workspace read" },
+    .{ .action = .mark_workspace_unread, .label = "Mark workspace unread" },
+    .{ .action = .equalize_splits, .label = "Equalize split widths" },
     .{ .action = .clear_workspace_name, .label = "Clear Workspace Name" },
     .{ .action = .workspace_1, .label = "Workspace 1" },
     .{ .action = .workspace_2, .label = "Workspace 2" },
@@ -525,10 +525,10 @@ const shortcut_defs = [_]ShortcutDef{
     .{ .action = .workspace_7, .label = "Workspace 7" },
     .{ .action = .workspace_8, .label = "Workspace 8" },
     .{ .action = .workspace_9, .label = "Workspace 9" },
-    .{ .action = .new_tab, .label = "New Tab" },
-    .{ .action = .close_tab, .label = "Close Tab" },
-    .{ .action = .next_tab, .label = "Next Tab" },
-    .{ .action = .prev_tab, .label = "Previous Tab" },
+    .{ .action = .new_tab, .label = "New tab" },
+    .{ .action = .close_tab, .label = "Close tab" },
+    .{ .action = .next_tab, .label = "Next tab" },
+    .{ .action = .prev_tab, .label = "Previous tab" },
     .{ .action = .tab_1, .label = "Tab 1" },
     .{ .action = .tab_2, .label = "Tab 2" },
     .{ .action = .tab_3, .label = "Tab 3" },
@@ -538,64 +538,64 @@ const shortcut_defs = [_]ShortcutDef{
     .{ .action = .tab_7, .label = "Tab 7" },
     .{ .action = .tab_8, .label = "Tab 8" },
     .{ .action = .tab_9, .label = "Tab 9" },
-    .{ .action = .close_other_tabs, .label = "Close Other Tabs" },
-    .{ .action = .rename_tab, .label = "Rename Tab" },
+    .{ .action = .close_other_tabs, .label = "Close other tabs" },
+    .{ .action = .rename_tab, .label = "Rename tab" },
     .{ .action = .clear_tab_name, .label = "Clear Tab Name" },
     .{ .action = .close_tabs_to_right, .label = "Close Tabs to Right" },
-    .{ .action = .new_column, .label = "New Column" },
-    .{ .action = .close_pane, .label = "Close Pane" },
-    .{ .action = .focus_left, .label = "Focus Left" },
-    .{ .action = .focus_right, .label = "Focus Right" },
-    .{ .action = .focus_up, .label = "Focus Up" },
-    .{ .action = .focus_down, .label = "Focus Down" },
-    .{ .action = .last_pane, .label = "Last Pane" },
+    .{ .action = .new_column, .label = "New column" },
+    .{ .action = .close_pane, .label = "Close pane" },
+    .{ .action = .focus_left, .label = "Focus left" },
+    .{ .action = .focus_right, .label = "Focus right" },
+    .{ .action = .focus_up, .label = "Focus up" },
+    .{ .action = .focus_down, .label = "Focus down" },
+    .{ .action = .last_pane, .label = "Last pane" },
     .{ .action = .copy, .label = "Copy" },
     .{ .action = .paste, .label = "Paste" },
     .{ .action = .clear_scrollback, .label = "Clear Scrollback" },
     .{ .action = .find, .label = "Find" },
-    .{ .action = .use_selection_for_find, .label = "Use Selection for Find" },
-    .{ .action = .find_next, .label = "Find Next" },
-    .{ .action = .find_previous, .label = "Find Previous" },
-    .{ .action = .zoom_in, .label = "Zoom In" },
-    .{ .action = .zoom_out, .label = "Zoom Out" },
+    .{ .action = .use_selection_for_find, .label = "Use selection for find" },
+    .{ .action = .find_next, .label = "Find next" },
+    .{ .action = .find_previous, .label = "Find previous" },
+    .{ .action = .zoom_in, .label = "Zoom in" },
+    .{ .action = .zoom_out, .label = "Zoom out" },
     .{ .action = .zoom_reset, .label = "Reset Zoom" },
-    .{ .action = .toggle_sidebar, .label = "Toggle Sidebar" },
-    .{ .action = .toggle_notifications, .label = "Toggle Notifications" },
-    .{ .action = .jump_to_unread, .label = "Jump to Unread" },
-    .{ .action = .flash_focused, .label = "Flash Focused Pane" },
-    .{ .action = .rename_workspace, .label = "Rename Workspace" },
-    .{ .action = .toggle_pin, .label = "Toggle Pin" },
-    .{ .action = .new_window, .label = "New Window" },
-    .{ .action = .quit_app, .label = "Quit App" },
-    .{ .action = .open_command_palette, .label = "Command Palette" },
-    .{ .action = .open_folder, .label = "Open Folder" },
-    .{ .action = .new_browser_panel, .label = "New Browser Panel" },
-    .{ .action = .new_browser_tab, .label = "New Browser Tab" },
-    .{ .action = .browser_back, .label = "Browser Back" },
-    .{ .action = .browser_forward, .label = "Browser Forward" },
-    .{ .action = .browser_reload, .label = "Browser Reload" },
-    .{ .action = .browser_focus_bar, .label = "Focus Browser Address Bar" },
-    .{ .action = .toggle_browser_focus_mode, .label = "Toggle Browser Focus Mode" },
-    .{ .action = .browser_inspector, .label = "Browser Dev Tools" },
-    .{ .action = .reload_config, .label = "Reload Config" },
-    .{ .action = .open_settings, .label = "Open Settings" },
-    .{ .action = .toggle_layout_mode, .label = "Toggle Layout Mode" },
-    .{ .action = .move_column_left, .label = "Move Column Left" },
-    .{ .action = .move_column_right, .label = "Move Column Right" },
-    .{ .action = .expel_left, .label = "Expel Pane Left" },
-    .{ .action = .expel_right, .label = "Expel Pane Right" },
-    .{ .action = .resize_wider, .label = "Resize Column Wider" },
-    .{ .action = .resize_narrower, .label = "Resize Column Narrower" },
-    .{ .action = .maximize_column, .label = "Maximize Column" },
-    .{ .action = .switch_preset_column_width, .label = "Cycle Preset Column Width" },
-    .{ .action = .resize_taller, .label = "Resize Row Taller" },
-    .{ .action = .resize_shorter, .label = "Resize Row Shorter" },
-    .{ .action = .show_shortcuts, .label = "Keyboard Shortcuts" },
+    .{ .action = .toggle_sidebar, .label = "Toggle sidebar" },
+    .{ .action = .toggle_notifications, .label = "Toggle notifications" },
+    .{ .action = .jump_to_unread, .label = "Jump to unread" },
+    .{ .action = .flash_focused, .label = "Flash focused pane" },
+    .{ .action = .rename_workspace, .label = "Rename workspace" },
+    .{ .action = .toggle_pin, .label = "Toggle pin" },
+    .{ .action = .new_window, .label = "New window" },
+    .{ .action = .quit_app, .label = "Quit app" },
+    .{ .action = .open_command_palette, .label = "Command palette" },
+    .{ .action = .open_folder, .label = "Open folder" },
+    .{ .action = .new_browser_panel, .label = "New browser panel" },
+    .{ .action = .new_browser_tab, .label = "New browser tab" },
+    .{ .action = .browser_back, .label = "Browser back" },
+    .{ .action = .browser_forward, .label = "Browser forward" },
+    .{ .action = .browser_reload, .label = "Browser reload" },
+    .{ .action = .browser_focus_bar, .label = "Focus browser address bar" },
+    .{ .action = .toggle_browser_focus_mode, .label = "Toggle browser focus mode" },
+    .{ .action = .browser_inspector, .label = "Browser dev tools" },
+    .{ .action = .reload_config, .label = "Reload config" },
+    .{ .action = .open_settings, .label = "Open settings" },
+    .{ .action = .toggle_layout_mode, .label = "Toggle layout mode" },
+    .{ .action = .move_column_left, .label = "Move column left" },
+    .{ .action = .move_column_right, .label = "Move column right" },
+    .{ .action = .expel_left, .label = "Expel pane left" },
+    .{ .action = .expel_right, .label = "Expel pane right" },
+    .{ .action = .resize_wider, .label = "Resize column wider" },
+    .{ .action = .resize_narrower, .label = "Resize column narrower" },
+    .{ .action = .maximize_column, .label = "Maximize column" },
+    .{ .action = .switch_preset_column_width, .label = "Cycle preset column width" },
+    .{ .action = .resize_taller, .label = "Resize row taller" },
+    .{ .action = .resize_shorter, .label = "Resize row shorter" },
+    .{ .action = .show_shortcuts, .label = "Keyboard shortcuts" },
 };
 
 fn buildKeyboardSection(page: *c.GtkWidget, _: *const config_mod.Config) void {
     // Shortcuts list
-    const g1 = newGroup("Keyboard Shortcuts");
+    const g1 = newGroup("Keyboard shortcuts");
     c.adw_preferences_group_set_description(@as(*c.AdwPreferencesGroup, @ptrCast(g1)), "Click a shortcut value to record a new binding. Set to \xe2\x80\x98unset\xe2\x80\x99 in config to disable. Shortcuts already assigned to another action are flagged before applying.");
 
     for (shortcut_defs) |def| {
@@ -644,7 +644,7 @@ fn buildKeyboardSection(page: *c.GtkWidget, _: *const config_mod.Config) void {
     // Reset to defaults button
     {
         const row = c.adw_action_row_new();
-        const btn = c.gtk_button_new_with_label("Reset to Defaults");
+        const btn = c.gtk_button_new_with_label("Reset to defaults");
         c.gtk_widget_add_css_class(@as(*c.GtkWidget, @ptrCast(btn)), "destructive-action");
         c.gtk_widget_set_halign(@as(*c.GtkWidget, @ptrCast(btn)), c.GTK_ALIGN_CENTER);
         c.gtk_widget_set_valign(@as(*c.GtkWidget, @ptrCast(btn)), c.GTK_ALIGN_CENTER);
@@ -664,7 +664,7 @@ fn buildResetSection(page: *c.GtkWidget) void {
     const g1 = newGroup(null);
     {
         const row = c.adw_action_row_new();
-        const btn = c.gtk_button_new_with_label("Reset All Settings");
+        const btn = c.gtk_button_new_with_label("Reset all settings");
         c.gtk_widget_add_css_class(@as(*c.GtkWidget, @ptrCast(btn)), "destructive-action");
         c.gtk_widget_set_halign(@as(*c.GtkWidget, @ptrCast(btn)), c.GTK_ALIGN_CENTER);
         c.gtk_widget_set_valign(@as(*c.GtkWidget, @ptrCast(btn)), c.GTK_ALIGN_CENTER);
@@ -1009,7 +1009,7 @@ fn onShortcutButtonClicked(button: *c.GtkButton, _: c.gpointer) callconv(.c) voi
             recording_action = def.action;
             recording_button = btn_widget;
             keybinds.recording_shortcut = true;
-            c.gtk_button_set_label(button, "Press shortcut...");
+            c.gtk_button_set_label(button, "Press shortcut…");
             return;
         }
     }
@@ -1084,7 +1084,7 @@ fn onSettingsKeyPress(
     if (!is_ctrl and !is_shift and !is_alt and !is_function_key) {
         // Flash the button label so the user sees why it was rejected
         if (recording_button) |btn| {
-            c.gtk_button_set_label(@as(*c.GtkButton, @ptrCast(btn)), "Need Ctrl/Shift/Alt...");
+            c.gtk_button_set_label(@as(*c.GtkButton, @ptrCast(btn)), "Need Ctrl/Shift/Alt…");
         }
         return 1;
     }
@@ -1159,7 +1159,7 @@ fn showConflictDialog(action: keybinds.Action, conflict: keybinds.Action, kb: ke
     recording_button = null;
     keybinds.recording_shortcut = false;
 
-    const dialog = c.adw_alert_dialog_new("Shortcut Already in Use", &msg_buf);
+    const dialog = c.adw_alert_dialog_new("Shortcut already in use", &msg_buf);
     c.adw_alert_dialog_add_response(@as(*c.AdwAlertDialog, @ptrCast(dialog)), "cancel", "Cancel");
     c.adw_alert_dialog_add_response(@as(*c.AdwAlertDialog, @ptrCast(dialog)), "reassign", "Reassign");
     c.adw_alert_dialog_set_response_appearance(@as(*c.AdwAlertDialog, @ptrCast(dialog)), "reassign", c.ADW_RESPONSE_SUGGESTED);
@@ -1252,7 +1252,7 @@ fn onResetClicked(_: *c.GtkButton, _: c.gpointer) callconv(.c) void {
     // Show confirmation dialog
     const dialog = c.adw_alert_dialog_new("Reset all settings to defaults?", "This will restore every setting to its default value. Your config file will be overwritten.");
     c.adw_alert_dialog_add_response(@as(*c.AdwAlertDialog, @ptrCast(dialog)), "cancel", "Cancel");
-    c.adw_alert_dialog_add_response(@as(*c.AdwAlertDialog, @ptrCast(dialog)), "reset", "Reset All");
+    c.adw_alert_dialog_add_response(@as(*c.AdwAlertDialog, @ptrCast(dialog)), "reset", "Reset all");
     c.adw_alert_dialog_set_response_appearance(@as(*c.AdwAlertDialog, @ptrCast(dialog)), "reset", c.ADW_RESPONSE_DESTRUCTIVE);
     c.adw_alert_dialog_set_default_response(@as(*c.AdwAlertDialog, @ptrCast(dialog)), "cancel");
     c.adw_alert_dialog_set_close_response(@as(*c.AdwAlertDialog, @ptrCast(dialog)), "cancel");
@@ -1308,7 +1308,7 @@ fn onCustomSoundBrowseClicked(_: *c.GtkButton, _: c.gpointer) callconv(.c) void 
 
     // Filter to common audio formats
     const filter = c.gtk_file_filter_new();
-    c.gtk_file_filter_set_name(filter, "Audio Files");
+    c.gtk_file_filter_set_name(filter, "Audio files");
     c.gtk_file_filter_add_pattern(filter, "*.wav");
     c.gtk_file_filter_add_pattern(filter, "*.ogg");
     c.gtk_file_filter_add_pattern(filter, "*.oga");

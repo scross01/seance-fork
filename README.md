@@ -106,7 +106,7 @@ Requires Zig **0.16.x**, GTK4, libadwaita, OpenGL 4.3+, and Linux (X11 or Waylan
 **Install build dependencies (Ubuntu/Debian):**
 
 ```bash
-sudo apt install pkg-config libgtk-4-dev libadwaita-1-dev libnotify-dev libcanberra-dev inotify-tools
+sudo apt install pkg-config libgtk-4-dev libadwaita-1-dev libcanberra-dev inotify-tools
 ```
 
 **Build:**

@@ -762,7 +762,7 @@ pub const WindowState = struct {
     pub fn renameWorkspace(self: *WindowState) void {
         const ws = self.activeWorkspace() orelse return;
 
-        const dialog = c.adw_alert_dialog_new("Rename Workspace", null);
+        const dialog = c.adw_alert_dialog_new("Rename workspace", null);
         c.adw_alert_dialog_add_response(@as(*c.AdwAlertDialog, @ptrCast(dialog)), "cancel", "Cancel");
         c.adw_alert_dialog_add_response(@as(*c.AdwAlertDialog, @ptrCast(dialog)), "clear", "Clear");
         c.adw_alert_dialog_add_response(@as(*c.AdwAlertDialog, @ptrCast(dialog)), "rename", "Rename");
@@ -833,7 +833,7 @@ pub const WindowState = struct {
         const group = ws.focusedGroup() orelse return;
         const pane = group.focusedTerminalPane() orelse return;
 
-        const dialog = c.adw_alert_dialog_new("Rename Tab", null);
+        const dialog = c.adw_alert_dialog_new("Rename tab", null);
         c.adw_alert_dialog_add_response(@as(*c.AdwAlertDialog, @ptrCast(dialog)), "cancel", "Cancel");
         c.adw_alert_dialog_add_response(@as(*c.AdwAlertDialog, @ptrCast(dialog)), "clear", "Clear");
         c.adw_alert_dialog_add_response(@as(*c.AdwAlertDialog, @ptrCast(dialog)), "rename", "Rename");
@@ -1095,7 +1095,7 @@ pub const WindowState = struct {
         const banner = self.banner orelse return;
         c.adw_banner_set_title(@ptrCast(banner), message);
         if (is_config_error) {
-            c.adw_banner_set_button_label(@ptrCast(banner), "Open Settings");
+            c.adw_banner_set_button_label(@ptrCast(banner), "Open settings");
         } else {
             c.adw_banner_set_button_label(@ptrCast(banner), null);
         }
@@ -1110,7 +1110,7 @@ pub const WindowState = struct {
 
     pub fn showOpenFolderDialog(self: *WindowState) void {
         const dialog = c.gtk_file_dialog_new();
-        c.gtk_file_dialog_set_title(dialog, "Open Folder");
+        c.gtk_file_dialog_set_title(dialog, "Open folder");
         c.gtk_file_dialog_select_folder(
             dialog,
             @as(*c.GtkWindow, @ptrCast(self.gtk_window)),
@@ -1151,7 +1151,7 @@ pub const WindowState = struct {
         const header = c.adw_header_bar_new();
 
         const add_btn = c.gtk_button_new_from_icon_name("list-add-symbolic");
-        c.gtk_widget_set_tooltip_text(@ptrCast(add_btn), "New Workspace");
+        c.gtk_widget_set_tooltip_text(@ptrCast(add_btn), "New workspace");
         c.adw_header_bar_pack_start(@ptrCast(header), @ptrCast(add_btn));
 
         const settings_btn = c.gtk_button_new_from_icon_name("emblem-system-symbolic");
@@ -1181,11 +1181,11 @@ pub const WindowState = struct {
         // About, Quit (Ctrl+Shift+Q). Placed after notification bell per HIG.
         const menu_btn = c.gtk_menu_button_new();
         c.gtk_menu_button_set_icon_name(@ptrCast(menu_btn), "open-menu-symbolic");
-        c.gtk_widget_set_tooltip_text(@ptrCast(menu_btn), "Menu");
+        c.gtk_widget_set_tooltip_text(@ptrCast(menu_btn), "Main menu");
         const menu = c.g_menu_new();
         c.g_menu_append(@ptrCast(@alignCast(menu)), "Preferences", "preferences");
-        c.g_menu_append(@ptrCast(@alignCast(menu)), "Keyboard Shortcuts", "shortcuts");
-        c.g_menu_append(@ptrCast(@alignCast(menu)), "About Seance", "about");
+        c.g_menu_append(@ptrCast(@alignCast(menu)), "Keyboard shortcuts", "shortcuts");
+        c.g_menu_append(@ptrCast(@alignCast(menu)), "About Séance", "about");
         c.g_menu_append(@ptrCast(@alignCast(menu)), "Quit", "quit");
         c.gtk_menu_button_set_menu_model(@ptrCast(menu_btn), @ptrCast(@alignCast(menu)));
         c.g_object_unref(@ptrCast(menu));
@@ -1669,8 +1669,8 @@ fn showCloseConfirmation(state: *WindowState) void {
         _ = std.fmt.bufPrint(&msg_buf, "{d} workspaces in this window will be discarded.", .{ws_count}) catch {};
     }
 
-    const title: [*:0]const u8 = if (is_last) "Quit Seance?" else "Close window?";
-    const confirm_label: [*:0]const u8 = if (is_last) "Quit" else "Close Window";
+    const title: [*:0]const u8 = if (is_last) "Quit Séance?" else "Close window?";
+    const confirm_label: [*:0]const u8 = if (is_last) "Quit" else "Close window";
 
     const dialog = c.adw_alert_dialog_new(title, &msg_buf);
     c.adw_alert_dialog_add_response(@as(*c.AdwAlertDialog, @ptrCast(dialog)), "cancel", "Cancel");
@@ -1716,7 +1716,7 @@ fn showQuitConfirmation(state: *WindowState) void {
         _ = std.fmt.bufPrint(&msg_buf, "{d} workspaces will be saved and restored next launch.", .{ws_total}) catch {};
     }
 
-    const dialog = c.adw_alert_dialog_new("Quit Seance?", &msg_buf);
+    const dialog = c.adw_alert_dialog_new("Quit Séance?", &msg_buf);
     c.adw_alert_dialog_add_response(@as(*c.AdwAlertDialog, @ptrCast(dialog)), "cancel", "Cancel");
     c.adw_alert_dialog_add_response(@as(*c.AdwAlertDialog, @ptrCast(dialog)), "quit", "Quit");
     c.adw_alert_dialog_set_response_appearance(@as(*c.AdwAlertDialog, @ptrCast(dialog)), "quit", c.ADW_RESPONSE_DESTRUCTIVE);

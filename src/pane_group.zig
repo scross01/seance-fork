@@ -14,7 +14,6 @@ inline fn asWidget(ptr: anytype) *c.GtkWidget {
     return @ptrCast(@alignCast(ptr));
 }
 
-
 pub const PaneGroup = struct {
     pub const FindPanelResult = struct { panel: Panel, index: usize };
 
@@ -74,10 +73,10 @@ pub const PaneGroup = struct {
         c.gtk_widget_set_vexpand(tv_widget, 1);
 
         const menu = c.g_menu_new();
-        c.g_menu_append(menu, "Rename Tab", "tab.rename");
+        c.g_menu_append(menu, "Rename tab", "tab.rename");
         c.g_menu_append(menu, "Close", "tab.close");
-        c.g_menu_append(menu, "Close Other Tabs", "tab.close-others");
-        c.g_menu_append(menu, "Close Tabs to the Right", "tab.close-right");
+        c.g_menu_append(menu, "Close other tabs", "tab.close-others");
+        c.g_menu_append(menu, "Close tabs to the right", "tab.close-right");
         c.adw_tab_view_set_menu_model(tab_view, @ptrCast(@alignCast(menu)));
         c.g_object_unref(@ptrCast(menu));
 
@@ -88,7 +87,7 @@ pub const PaneGroup = struct {
 
         const add_btn = c.gtk_button_new_from_icon_name("list-add-symbolic");
         c.gtk_widget_add_css_class(@ptrCast(add_btn), "flat");
-        c.gtk_widget_set_tooltip_text(@ptrCast(add_btn), "New Tab");
+        c.gtk_widget_set_tooltip_text(@ptrCast(add_btn), "New tab");
         c.adw_tab_bar_set_end_action_widget(tab_bar, @ptrCast(add_btn));
 
         const tb_widget = asWidget(tab_bar);
@@ -738,7 +737,7 @@ fn onCtxRename(_: *c.GSimpleAction, _: ?*c.GVariant, data: c.gpointer) callconv(
 
     const root = c.gtk_widget_get_root(asWidget(self.tab_view)) orelse return;
 
-    const dialog = c.adw_alert_dialog_new("Rename Tab", null);
+    const dialog = c.adw_alert_dialog_new("Rename tab", null);
     c.adw_alert_dialog_add_response(@as(*c.AdwAlertDialog, @ptrCast(dialog)), "cancel", "Cancel");
     c.adw_alert_dialog_add_response(@as(*c.AdwAlertDialog, @ptrCast(dialog)), "clear", "Clear");
     c.adw_alert_dialog_add_response(@as(*c.AdwAlertDialog, @ptrCast(dialog)), "rename", "Rename");
