@@ -1091,6 +1091,9 @@ fn onActivate(app: *c.AdwApplication) callconv(.c) void {
         // Initialize KDE server-side decoration support — no-op when not on KDE.
         kde_decoration.init();
 
+        // Primary menu and global actions for discoverability
+        initAppMenu(app);
+
         // First activation: create window manager and restore session
         const manager = WindowManager.init(gtkApp(app));
         wm = manager;
@@ -1171,4 +1174,91 @@ pub fn gapp(app: *c.AdwApplication) *c.GApplication {
 
 pub fn gtkApp(app: *c.AdwApplication) *c.GtkApplication {
     return @ptrCast(app);
+}
+
+fn initAppMenu(app: *c.AdwApplication) void {
+    const actions = c.g_simple_action_group_new();
+    const quit_action = c.g_simple_action_new("quit", null);
+    const prefs_action = c.g_simple_action_new("preferences", null);
+    const shortcuts_action = c.g_simple_action_new("shortcuts", null);
+    const about_action = c.g_simple_action_new("about", null);
+
+    _ = c.g_signal_connect_data(
+        @as(c.gpointer, @ptrCast(quit_action)),
+        "activate",
+        @as(c.GCallback, @ptrCast(&onQuitClicked)),
+        @ptrCast(@alignCast(app)),
+        null,
+        0,
+    );
+    _ = c.g_signal_connect_data(
+        @as(c.gpointer, @ptrCast(prefs_action)),
+        "activate",
+        @as(c.GCallback, @ptrCast(&onPreferencesClicked)),
+        @ptrCast(app),
+        null,
+        0,
+    );
+    _ = c.g_signal_connect_data(
+        @as(c.gpointer, @ptrCast(shortcuts_action)),
+        "activate",
+        @as(c.GCallback, @ptrCast(&onShortcutsClicked)),
+        @ptrCast(app),
+        null,
+        0,
+    );
+    _ = c.g_signal_connect_data(
+        @as(c.gpointer, @ptrCast(about_action)),
+        "activate",
+        @as(c.GCallback, @ptrCast(&onAboutClicked)),
+        @ptrCast(app),
+        null,
+        0,
+    );
+
+    c.g_simple_action_group_insert(actions, @as(*c.GAction, @ptrCast(quit_action)));
+    c.g_simple_action_group_insert(actions, @as(*c.GAction, @ptrCast(prefs_action)));
+    c.g_simple_action_group_insert(actions, @as(*c.GAction, @ptrCast(shortcuts_action)));
+    c.g_simple_action_group_insert(actions, @as(*c.GAction, @ptrCast(about_action)));
+    c.g_application_set_action_group(gapp(app), @ptrCast(actions));
+
+    const accels_quit = [_][*:0]const u8{ "<Control>Q", @ptrCast(@constCast(@as([*:0]const u8, @ptrCast("")))) };
+    c.gtk_application_set_accels_for_action(gtkApp(app), "quit", &accels_quit);
+    const accels_prefs = [_][*:0]const u8{ "<Control>comma", @ptrCast(@constCast(@as([*:0]const u8, @ptrCast("")))) };
+    c.gtk_application_set_accels_for_action(gtkApp(app), "preferences", &accels_prefs);
+    const accels_sc = [_][*:0]const u8{"F1", @ptrCast(@constCast(@as([*:0]const u8, @ptrCast(""))))};
+    c.gtk_application_set_accels_for_action(gtkApp(app), "shortcuts", &accels_sc);
+}
+
+fn onPreferencesClicked(app: *c.GApplication, _: *anyopaque, data: c.gpointer) callconv(.c) void {
+    const win_mod = @import("window.zig");
+    if (win_mod.window_manager) |mgr| {
+        if (mgr.active_window) |state| state.showSettings();
+    }
+    _ = app; _ = data;
+}
+
+fn onShortcutsClicked(app: *c.GApplication, _: *anyopaque, data: c.gpointer) callconv(.c) void {
+    const shortcuts_mod = @import("shortcuts_overlay.zig");
+    const win_mod = @import("window.zig");
+    if (win_mod.window_manager) |mgr| shortcuts_mod.show(mgr);
+    _ = app; _ = data;
+}
+
+fn onAboutClicked(app: *c.GApplication, _: *anyopaque, data: c.gpointer) callconv(.c) void {
+    const win_mod = @import("window.zig");
+    const parent: ?*c.GtkWidget = if (win_mod.window_manager) |mgr|
+        (if (mgr.active_window) |state| state.gtk_window else null)
+    else
+        null;
+    const about = c.adw_about_dialog_new_from_appdata("com.seance-fork.app", "0.5.0");
+    if (parent) |p| {
+        c.adw_dialog_present(@as(*c.AdwDialog, @ptrCast(about)), p);
+    }
+    _ = app; _ = data;
+}
+
+fn onQuitClicked(app: *c.GApplication, _: *anyopaque, data: c.gpointer) callconv(.c) void {
+    c.g_application_quit(@as(*c.GApplication, @ptrCast(app)));
+    _ = data;
 }

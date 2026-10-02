@@ -1177,6 +1177,20 @@ pub const WindowState = struct {
         c.gtk_overlay_add_overlay(@ptrCast(notif_overlay), notif_badge);
         c.adw_header_bar_pack_end(@ptrCast(header), @ptrCast(notif_overlay));
 
+        // Primary hamburger menu: Preferences (Ctrl+,), Shortcuts (F1),
+        // About, Quit (Ctrl+Shift+Q). Placed after notification bell per HIG.
+        const menu_btn = c.gtk_menu_button_new();
+        c.gtk_menu_button_set_icon_name(@ptrCast(menu_btn), "open-menu-symbolic");
+        c.gtk_widget_set_tooltip_text(@ptrCast(menu_btn), "Menu");
+        const menu = c.g_menu_new();
+        c.g_menu_append(@ptrCast(@alignCast(menu)), "Preferences", "preferences");
+        c.g_menu_append(@ptrCast(@alignCast(menu)), "Keyboard Shortcuts", "shortcuts");
+        c.g_menu_append(@ptrCast(@alignCast(menu)), "About Seance", "about");
+        c.g_menu_append(@ptrCast(@alignCast(menu)), "Quit", "quit");
+        c.gtk_menu_button_set_menu_model(@ptrCast(menu_btn), @ptrCast(@alignCast(menu)));
+        c.g_object_unref(@ptrCast(menu));
+        c.adw_header_bar_pack_end(@ptrCast(header), @ptrCast(menu_btn));
+
         // Point the sidebar at the header-bar-hosted badge/overlay so refresh()
         // keeps updating the unread count after a runtime chrome rebuild.
         self.sidebar.notif_badge = notif_badge;

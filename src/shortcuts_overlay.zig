@@ -127,6 +127,7 @@ const groups = [_]Group{
             .{ .single = .{ .action = .open_settings, .label = "Settings" } },
             .{ .single = .{ .action = .reload_config, .label = "Reload Config" } },
             .{ .single = .{ .action = .show_shortcuts, .label = "Keyboard Shortcuts" } },
+            .{ .single = .{ .action = .quit_app, .label = "Quit" } },
         },
     },
 };
