@@ -30,6 +30,7 @@ pub const Config = struct {
     theme_len: usize = 0,
     background_opacity: f64 = 1.0,
     dim_unfocused_panes: bool = true,
+    focus_ring_opacity: f64 = 0.30,
 
     // Window
     window_padding_x: ?u32 = null,
@@ -269,6 +270,9 @@ pub fn saveConfig(cfg: *const Config) void {
     writeFloat(w, cfg.background_opacity) catch return;
     w.print("\n", .{}) catch return;
     writeBool(w, "dim-unfocused-panes", cfg.dim_unfocused_panes) catch return;
+    w.print("focus-ring-opacity = ", .{}) catch return;
+    writeFloat(w, cfg.focus_ring_opacity) catch return;
+    w.print("\n", .{}) catch return;
 
     // [window]
     w.print("\n[window]\n", .{}) catch return;
@@ -432,6 +436,9 @@ fn applyValue(config: *Config, section: []const u8, key: []const u8, raw_val: []
             return true;
         } else if (eql(key, "dim-unfocused-panes")) {
             config.dim_unfocused_panes = parseBool(val) orelse config.dim_unfocused_panes;
+            return true;
+        } else if (eql(key, "focus-ring-opacity")) {
+            if (parseFloat(val)) |f| config.focus_ring_opacity = clamp01(f);
             return true;
         }
     } else if (eql(section, "window")) {
@@ -607,6 +614,8 @@ fn applyGhosttyValue(config: *Config, key: []const u8, val: []const u8) void {
         if (parseFloat(val)) |f| config.font_size = f;
     } else if (eql(key, "background-opacity")) {
         config.background_opacity = parseFloat(val) orelse config.background_opacity;
+    } else if (eql(key, "focus-ring-opacity")) {
+        if (parseFloat(val)) |f| config.focus_ring_opacity = clamp01(f);
     } else if (eql(key, "cursor-style")) {
         config.cursor_shape = if (eql(val, "bar") or eql(val, "beam"))
             .ibeam
@@ -653,6 +662,14 @@ fn parseU32(val: []const u8) ?u32 {
 
 fn parseFloat(val: []const u8) ?f64 {
     return std.fmt.parseFloat(f64, val) catch null;
+}
+
+/// Clamp to the unit interval and reject NaN, which would emit invalid CSS.
+/// NaN falls back to 1.0 rather than the default: corrupt input should make the
+/// ring fully visible, not hide it.
+pub fn clamp01(v: f64) f64 {
+    if (std.math.isNan(v)) return 1.0;
+    return std.math.clamp(v, 0.0, 1.0);
 }
 
 fn parseBool(val: []const u8) ?bool {
@@ -752,6 +769,73 @@ test "parseToml: terminal cursor shapes" {
 
     parseToml(&cfg, "[terminal]\ncursor-shape = block\n");
     try std.testing.expectEqual(CursorShape.block, cfg.cursor_shape);
+}
+
+extern "c" fn setenv(name: [*:0]const u8, value: [*:0]const u8, overwrite: c_int) c_int;
+extern "c" fn unsetenv(name: [*:0]const u8) c_int;
+
+fn setEnvForTest(name: []const u8, value: []const u8) !void {
+    var nb: [64]u8 = undefined;
+    var vb: [256]u8 = undefined;
+    const nz = try std.fmt.bufPrintZ(&nb, "{s}", .{name});
+    const vz = try std.fmt.bufPrintZ(&vb, "{s}", .{value});
+    if (setenv(nz.ptr, vz.ptr, 1) != 0) return error.SetEnvFailed;
+}
+
+fn unsetEnvForTest(name: []const u8) void {
+    var nb: [64]u8 = undefined;
+    const nz = std.fmt.bufPrintZ(&nb, "{s}", .{name}) catch return;
+    _ = unsetenv(nz.ptr);
+}
+
+test "saveConfig: focus-ring-opacity persists and round-trips" {
+    const prev = io.getenv("XDG_CONFIG_HOME");
+    defer if (prev) |p| setEnvForTest("XDG_CONFIG_HOME", p) catch {} else unsetEnvForTest("XDG_CONFIG_HOME");
+    const cfgdir = try std.fmt.allocPrint(std.testing.allocator, "/tmp/seance-cfgtest-{d}", .{io.timestamp()});
+    defer std.testing.allocator.free(cfgdir);
+    std.Io.Dir.cwd().deleteTree(io.get(), cfgdir) catch {};
+    defer std.Io.Dir.cwd().deleteTree(io.get(), cfgdir) catch {};
+    try setEnvForTest("XDG_CONFIG_HOME", cfgdir);
+
+    var cfg = Config{};
+    cfg.focus_ring_opacity = 0.45;
+    saveConfig(&cfg);
+
+    const path = try std.fmt.allocPrint(std.testing.allocator, "{s}/seance/config.toml", .{cfgdir});
+    defer std.testing.allocator.free(path);
+    const written = try std.Io.Dir.cwd().readFileAlloc(io.get(), path, std.testing.allocator, .limited(1 << 16));
+    defer std.testing.allocator.free(written);
+    try std.testing.expect(std.mem.indexOf(u8, written, "focus-ring-opacity = 0.45") != null);
+
+    var reloaded = Config{};
+    parseToml(&reloaded, written);
+    try std.testing.expectEqual(@as(f64, 0.45), reloaded.focus_ring_opacity);
+}
+
+test "parseToml: focus-ring-opacity is parsed and clamped" {
+    var cfg = Config{};
+
+    try std.testing.expectEqual(@as(f64, 0.30), cfg.focus_ring_opacity);
+
+    parseToml(&cfg, "[colors]\nfocus-ring-opacity = 0.6\n");
+    try std.testing.expectEqual(@as(f64, 0.6), cfg.focus_ring_opacity);
+
+    parseToml(&cfg, "[colors]\nfocus-ring-opacity = 0\n");
+    try std.testing.expectEqual(@as(f64, 0.0), cfg.focus_ring_opacity);
+
+    // Out-of-range and non-numeric values must not produce invalid CSS.
+    parseToml(&cfg, "[colors]\nfocus-ring-opacity = 4.5\n");
+    try std.testing.expectEqual(@as(f64, 1.0), cfg.focus_ring_opacity);
+
+    parseToml(&cfg, "[colors]\nfocus-ring-opacity = -2\n");
+    try std.testing.expectEqual(@as(f64, 0.0), cfg.focus_ring_opacity);
+
+    // Corrupt input falls back to fully visible, not to the 0.30 default.
+    parseToml(&cfg, "[colors]\nfocus-ring-opacity = nan\n");
+    try std.testing.expectEqual(@as(f64, 1.0), cfg.focus_ring_opacity);
+
+    parseToml(&cfg, "[colors]\nfocus-ring-opacity = not-a-number\n");
+    try std.testing.expectEqual(@as(f64, 1.0), cfg.focus_ring_opacity);
 }
 
 test "parseToml: boolean values in behavior section" {

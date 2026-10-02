@@ -76,9 +76,9 @@
       "name": "Pane Frame (Focused)",
       "kind": "custom",
       "refersTo": "pane-frame",
-      "description": "Focused pane: a uniform 2px warm hairline on all four edges (palette[3] yellow, 12% alpha), inset 2px. State lives in outlines, never shadows.",
+      "description": "Focused pane: a uniform 2px accent stroke on all four edges, inset 2px, in @accent_color (OS accent by default, palette[4] under possession, system HC accent under high contrast). Driven by both .pane-focused and glarea:focus-visible. Strength is user-settable via focus-ring-opacity (0-100%, default 30% — the unfocused-pane dim is the primary focus cue). State lives in outlines, never shadows.",
       "html": "<div class=\"ds-pane\"><div class=\"ds-outline\"></div><div class=\"ds-pane-body\"><span class=\"ds-pane-hint\">$ opencode</span><span class=\"ds-pane-line\">⠋ Compacting session…</span></div></div>",
-      "css": ".ds-pane { position: relative; background: #222226; color: #ffffff; font-family: Monospace; font-size: 0.75em; padding: 8px; min-width: 260px; } .ds-pane-body { display: flex; flex-direction: column; gap: 4px; padding-top: 4px; } .ds-pane-hint { color: #51a1ff; } .ds-pane-line { opacity: 0.8; }"
+      "css": ".ds-pane { position: relative; background: #222226; color: #ffffff; font-family: Monospace; font-size: 0.75em; padding: 8px; min-width: 260px; } .ds-outline { position: absolute; inset: 0; box-sizing: border-box; border: 2px solid #1e78e4; pointer-events: none; } .ds-pane-body { display: flex; flex-direction: column; gap: 4px; padding-top: 4px; } .ds-pane-hint { color: #51a1ff; } .ds-pane-line { opacity: 0.8; }"
     },
     {
       "name": "Pane Frame (Notification)",
@@ -146,6 +146,8 @@
       { "name": "The One Accent Rule", "body": "Agent status never gets its own hue. Working, idle, and needs-input are distinguished by symbolic icon and outline, not by green/yellow/red.", "section": "colors" },
       { "name": "The Dim Label Rule", "body": "Secondary information is the primary ink at reduced opacity, never a second text color. The floor for anything carrying text is 0.7 -- the lowest value clearing WCAG AA (4.5:1) on both appearances, since the light theme measures only 4.21:1 at 0.6.", "section": "typography" },
       { "name": "The Two Fonts Rule", "body": "The app has exactly two fonts: the system UI font for chrome (fixed, unconfigurable) and the terminal font for cell content (user-configurable in Settings). Font settings never cross the boundary in either direction.", "section": "typography" },
+      { "name": "The Focus Rule", "body": "The active pane wears a uniform accent wrap on all four edges, in @accent_color and nothing else — never a hue borrowed from an unrelated ANSI slot. Focus is the one thing the platform already has an opinion about. Its strength is the user's to set (focus-ring-opacity, default 30%), because the unfocused-pane dim carries the signal. .pane-notification stays Knock Blue and remains the only differently hued outline.", "section": "elevation" },
+      { "name": "The OS Owns What It Gives Us Rule", "body": "The stylesheet never hardcodes a colour the platform already publishes. Accent-driven rules reference @accent_bg_color / @accent_fg_color / @accent_color; surfaces reference @window_bg_color. Only the terminal-theme @define-color block may substitute values, and only when a theme is configured. libadwaita resolves @accent_color from the XDG settings portal and offers apps no setter, so redefining the token unconditionally is the only way to defeat the system accent — and the default state must not do it.", "section": "colors" },
       { "name": "The Outline Carries State Rule", "body": "Focus, notification, flash, and drop-target are 2px outlines at −2px offset. Shadows are for overlays and drag physics only — never for resting surfaces.", "section": "elevation" },
       { "name": "The Backdrop Dim Rule", "body": "When the window loses focus, sidebar chrome dims to 50% opacity over 200ms; accent-colored selection stays lit.", "section": "elevation" }
     ],

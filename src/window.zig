@@ -2159,7 +2159,9 @@ fn loadThemeCss() void {
     // let libadwaita track the system preference. With an explicit theme,
     // force based on the terminal background luminance.
     const style_manager = c.adw_style_manager_get_default();
-    if (config_mod.get().theme_len == 0) {
+    const cfg = config_mod.get();
+    const has_theme = cfg.theme_len > 0;
+    if (!has_theme) {
         c.adw_style_manager_set_color_scheme(style_manager, c.ADW_COLOR_SCHEME_DEFAULT);
     } else {
         if (colors.is_light)
@@ -2172,18 +2174,28 @@ fn loadThemeCss() void {
     const fg: []const u8 = &colors.window_fg;
     const accent: []const u8 = &colors.accent_bg;
 
+    // Every palette-derived token below is referenced through a libadwaita
+    // named colour rather than a literal hex, so the @define-color block is
+    // the single place the two states diverge. Under possession it redefines
+    // them from the terminal palette; in the default state they are left
+    // alone, which is what lets libadwaita's own tokens — including the
+    // system accent colour it reads from the XDG settings portal — through.
+    //
     // When background-opacity < 1, pane wrappers must be transparent so the
     // GL renderer's alpha shows through (mirrors ghostty's syncAppearance).
-    const cfg = config_mod.get();
-    const pane_bg: []const u8 = if (cfg.background_opacity < 1.0) "transparent" else bg;
-    const accent_fg: []const u8 = &colors.accent_fg;
+    const pane_bg: []const u8 = if (cfg.background_opacity < 1.0) "transparent" else "@window_bg_color";
+    const accent_bg: []const u8 = "@accent_bg_color";
+    const accent_fg: []const u8 = "@accent_fg_color";
     const notify: []const u8 = &colors.notify_border;
-    // Active-pane cue uses the theme's complementary hue rather than the
-    // accent. Accent blue (hue ~213) against flat chrome read as a
-    // contrasting frame; palette[3] yellow (hue ~47) is its complement and
-    // matches the app icon's warm ring around a blue wave. At wash strength
-    // it never reads as the Yellow workspace colour code.
-    const focus_hue: []const u8 = &colors.tab_colors[2];
+    // The active-pane ring uses @accent_color, not a terminal palette slot.
+    // The previous palette[3] "complementary" hue was an arbitrary ANSI role:
+    // across 150 sampled themes its median saturation was 82% and the 12%
+    // wash averaged only 1.24:1 against its own background (142/150 themes
+    // under 1.35:1), so the ring was simultaneously garish and invisible.
+    // The user-facing `focus-ring-opacity` setting scales it; at 1.0 alpha()
+    // is a no-op on the resulting colour.
+    const focus_ring: []const u8 = "@accent_color";
+    const ring_alpha = config_mod.clamp01(cfg.focus_ring_opacity);
     var css_buf: [10240]u8 = undefined;
     var stream = std.Io.Writer.fixed(&css_buf);
     const w = &stream;
@@ -2191,9 +2203,13 @@ fn loadThemeCss() void {
     // Override libadwaita's named colors with the terminal theme colors
     // so that all UI chrome (@window_bg_color, @window_fg_color refs) matches the terminal.
     // Includes sidebar_* colors added in libadwaita 1.4+ which are separate from window_*.
-    // Skipped under the system high-contrast preference: HC themes ship their
-    // own named colors and the terminal palette must not defeat them.
-    if (!@import("a11y.zig").highContrast()) {
+    // Gated on a theme actually being configured: in the default state the OS
+    // owns these, and redefining them unconditionally would pin the accent to
+    // ghostty's stock palette[4] instead of the system accent colour that
+    // libadwaita reads from the XDG settings portal. Skipped under the system
+    // high-contrast preference: HC themes ship their own named colors and the
+    // terminal palette must not defeat them.
+    if (has_theme and !@import("a11y.zig").highContrast()) {
         w.print(
             \\@define-color window_bg_color {s};
             \\@define-color window_fg_color {s};
@@ -2269,10 +2285,11 @@ fn loadThemeCss() void {
     w.print(
         \\.sidebar-row-dragging {{ opacity: 0.7; }}
         \\.sidebar-row-drag-over {{ background: alpha({s}, 0.15); border-top: 2px solid alpha({s}, 0.6); }}
-        \\.pane-focused {{ outline: 2px solid alpha({s}, 0.12); outline-offset: -2px; background-color: {s}; }}
+        \\.pane-focused {{ outline: 2px solid alpha({s}, {d:.2}); outline-offset: -2px; background-color: {s}; }}
+        \\glarea:focus-visible {{ outline: 2px solid alpha({s}, {d:.2}); outline-offset: -2px; }}
         \\.pane-unfocused {{ outline: 2px solid transparent; outline-offset: -2px; background-color: {s}; }}
         \\
-    , .{ accent, accent, focus_hue, pane_bg, pane_bg }) catch return;
+    , .{ accent_bg, accent_bg, focus_ring, ring_alpha, pane_bg, focus_ring, ring_alpha, pane_bg }) catch return;
 
     // Unfocused-pane dim: overlay composite, not a filter — a CSS filter
     // would force every unfocused terminal/webview offscreen per frame.
@@ -2304,13 +2321,12 @@ fn loadThemeCss() void {
         \\.sidebar-progress-label {{ font-size: 0.68em; opacity: 0.8; }}
         \\.sidebar-col-dots {{ font-size: 0.55em; opacity: 0.7; margin-top: 2px; letter-spacing: 1px; }}
         \\
-    , .{ accent, accent_fg, accent, accent_fg }) catch return;
+    , .{ accent_bg, accent_fg, accent_bg, accent_fg }) catch return;
 
     w.print(
         \\.search-overlay {{ background-color: alpha(@window_bg_color, 0.95); border-radius: 6px; padding: 4px 8px; margin: 8px; border: 1px solid alpha(@window_fg_color, 0.25); }}
         \\.search-overlay button {{ padding: 0; }}
         \\.search-match-label {{ color: alpha(@window_fg_color, 0.7); font-size: 0.85em; min-width: 50px; }}
-        \\.pane-zoomed {{ outline: 2px solid rgba(255, 200, 0, 0.3); outline-offset: -2px; }}
         \\.pane-flash {{ outline: 2px solid alpha({s}, 1.0); outline-offset: -2px; }}
         \\
     , .{notify}) catch return;
@@ -2326,7 +2342,7 @@ fn loadThemeCss() void {
         \\.notif-time {{ font-size: 0.68em; opacity: 0.7; }}
         \\.notif-body {{ font-size: 0.75em; opacity: 0.7; }}
         \\
-    , .{accent}) catch return;
+    , .{accent_bg}) catch return;
 
     w.print(
         \\.sidebar-close-btn {{ min-width: 16px; min-height: 16px; padding: 0; margin: 0; border-radius: 50%; opacity: 0.7; transition: opacity 0.14s ease-in-out; }}
@@ -2337,7 +2353,7 @@ fn loadThemeCss() void {
         \\.sidebar-footer {{ padding: 4px 6px; border-top: 1px solid alpha(@window_fg_color, 0.15); }}
         \\.sidebar-footer button {{ min-width: 28px; min-height: 28px; padding: 4px; border-radius: 6px; }}
         \\
-    , .{accent}) catch return;
+    , .{accent_bg}) catch return;
 
     // Vertical tab bar styles
     w.print(

@@ -533,8 +533,8 @@ fn setupOverlays(overlay: *c.GtkWidget, pane: *Pane) void {
     // pane subtree offscreen every frame. Added first so the search
     // overlay and scrollbar stay above it.
     //
-    // Focus itself is carried by the .pane-focused outline alone, which
-    // wraps the pane uniformly; there is no separate top-edge bar.
+    // Focus is carried by a uniform inset accent ring (`.pane-focused` plus
+    // the glarea's native :focus-visible), not a separate top-edge bar.
     const dim = c.gtk_box_new(c.GTK_ORIENTATION_HORIZONTAL, 0);
     c.gtk_widget_set_can_target(dim, 0);
     c.gtk_widget_set_can_focus(dim, 0);

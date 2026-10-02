@@ -84,6 +84,8 @@ const Widgets = struct {
     // Scale
     background_opacity: ?*c.GtkWidget = null,
     background_opacity_label: ?*c.GtkWidget = null,
+    focus_ring_opacity: ?*c.GtkWidget = null,
+    focus_ring_opacity_label: ?*c.GtkWidget = null,
 };
 
 // ---------------------------------------------------------------------------
@@ -232,6 +234,27 @@ fn buildAppearanceSection(page: *c.GtkWidget, cfg: *const config_mod.Config) voi
         w.background_opacity_label = @as(*c.GtkWidget, @ptrCast(opacity_label));
         c.adw_preferences_group_add(@as(*c.AdwPreferencesGroup, @ptrCast(g1)), @as(*c.GtkWidget, @ptrCast(row)));
         w.background_opacity = @as(*c.GtkWidget, @ptrCast(scale));
+        _ = c.g_signal_connect_data(@as(c.gpointer, @ptrCast(scale)), "value-changed", @as(c.GCallback, @ptrCast(&onScaleChanged)), null, null, 0);
+    }
+    {
+        const row = c.adw_action_row_new();
+        c.adw_preferences_row_set_title(@as(*c.AdwPreferencesRow, @ptrCast(row)), "Active pane outline");
+        c.adw_action_row_set_subtitle(@as(*c.AdwActionRow, @ptrCast(row)), "Strength of the ring marking the focused pane. Dimming unfocused panes is the main focus cue, so this can stay subtle.");
+        const scale = c.gtk_scale_new_with_range(c.GTK_ORIENTATION_HORIZONTAL, 0.0, 1.0, 0.05);
+        c.gtk_range_set_value(@as(*c.GtkRange, @ptrCast(scale)), cfg.focus_ring_opacity);
+        c.gtk_widget_set_size_request(@as(*c.GtkWidget, @ptrCast(scale)), 200, -1);
+        c.gtk_widget_set_valign(@as(*c.GtkWidget, @ptrCast(scale)), c.GTK_ALIGN_CENTER);
+        c.adw_action_row_add_suffix(@as(*c.AdwActionRow, @ptrCast(row)), @as(*c.GtkWidget, @ptrCast(scale)));
+        const ring_label = c.gtk_label_new(null);
+        var buf: [8]u8 = undefined;
+        const label_text = std.fmt.bufPrintZ(&buf, "{d:.0}%", .{cfg.focus_ring_opacity * 100.0}) catch "?";
+        c.gtk_label_set_text(@as(*c.GtkLabel, @ptrCast(ring_label)), label_text.ptr);
+        c.gtk_widget_set_size_request(@as(*c.GtkWidget, @ptrCast(ring_label)), 40, -1);
+        c.gtk_widget_set_valign(@as(*c.GtkWidget, @ptrCast(ring_label)), c.GTK_ALIGN_CENTER);
+        c.adw_action_row_add_suffix(@as(*c.AdwActionRow, @ptrCast(row)), @as(*c.GtkWidget, @ptrCast(ring_label)));
+        w.focus_ring_opacity_label = @as(*c.GtkWidget, @ptrCast(ring_label));
+        c.adw_preferences_group_add(@as(*c.AdwPreferencesGroup, @ptrCast(g1)), @as(*c.GtkWidget, @ptrCast(row)));
+        w.focus_ring_opacity = @as(*c.GtkWidget, @ptrCast(scale));
         _ = c.g_signal_connect_data(@as(c.gpointer, @ptrCast(scale)), "value-changed", @as(c.GCallback, @ptrCast(&onScaleChanged)), null, null, 0);
     }
     w.cursor_shape = addComboRow(g1, "Cursor shape", &.{ "Block", "I-Beam", "Underline" }, switch (cfg.cursor_shape) {
@@ -910,6 +933,16 @@ fn onScaleChanged(obj: *c.GtkRange, _: c.gpointer) callconv(.c) void {
         if (w.background_opacity_label) |label| {
             var buf: [8]u8 = undefined;
             const text = std.fmt.bufPrintZ(&buf, "{d:.0}%", .{cfg.background_opacity * 100.0}) catch "?";
+            c.gtk_label_set_text(@as(*c.GtkLabel, @ptrCast(label)), text.ptr);
+        }
+        saveAndReload();
+    }
+
+    if (widget == w.focus_ring_opacity) {
+        cfg.focus_ring_opacity = c.gtk_range_get_value(obj);
+        if (w.focus_ring_opacity_label) |label| {
+            var buf: [8]u8 = undefined;
+            const text = std.fmt.bufPrintZ(&buf, "{d:.0}%", .{cfg.focus_ring_opacity * 100.0}) catch "?";
             c.gtk_label_set_text(@as(*c.GtkLabel, @ptrCast(label)), text.ptr);
         }
         saveAndReload();

@@ -9,6 +9,7 @@
 # theme = ""                     # ghostty theme name — overrides ghostty's own theme setting
                                  # when empty (default), ghostty's resolved theme is used
 # background-opacity = 1.0
+# focus-ring-opacity = 0.30             # strength of the active-pane outline; 0 = dim only
 
 [window]
 # width = 1200
