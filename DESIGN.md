@@ -183,8 +183,11 @@ Agent state is a 16px symbolic icon at 0.8 opacity, never a color: `camera-flash
 An accent-filled circle (18px, accent-fg text at 9px/600) counting unread notifications per workspace; the header-bar bell wears a 16px version at 8px/700. The single most saturated object in the UI — that is the point.
 
 ### Pane Frame
-- **Outline:** a hairline accent edge (2px at 20% alpha, −2px offset). Focus is carried by the dim on unfocused panes and the top focus bar, so the ring stays quiet — it marks the pane without competing with `.pane-notification`, which is the one loud outline in the system.
-- **Focus bar:** 3px strip at the pane's top edge, accent at 50% mix, fading in over 100ms; only rendered when more than one pane exists (`.multi-pane`).
+- **Outline:** a warm hairline (2px at 12% alpha, −2px offset) in the palette's **complementary hue** — `palette[3]` yellow, ~166° from the accent's ~213°. The accent-blue version read as a contrasting frame bolted onto flat chrome; the complement recedes instead, and it matches the app icon's warm ring around a blue wave. At 12% it measures 1.30:1 against the pane background in both appearances, the same register as the 1px dividers, and never reads as the Yellow workspace colour code.
+- **Focus bar:** 3px strip at the pane's top edge, the same complementary hue at 50% mix with the pane background, fading in over 100ms; only rendered when more than one pane exists (`.multi-pane`). The bar and the ring share one warm cue so active-pane signalling is a single element pair.
+
+### Named Rules
+**The Complement Rule.** The active pane is marked in the theme's complementary hue, never in the accent. Accent means interactive selection; the complement means "this pane is active". Keeping the two apart is what stops the focus ring from competing with `.pane-notification`, which stays the only loud outline in the system.
 - **Notification:** 2px Knock Blue outline when a pane requests attention; `.pane-flash` pulses the same outline once, then removes itself.
 - **Unfocused dim:** children at `brightness(0.8)` when `dim_unfocused_panes` is on.
 

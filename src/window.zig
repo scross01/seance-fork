@@ -2178,6 +2178,12 @@ fn loadThemeCss() void {
     const pane_bg: []const u8 = if (cfg.background_opacity < 1.0) "transparent" else bg;
     const accent_fg: []const u8 = &colors.accent_fg;
     const notify: []const u8 = &colors.notify_border;
+    // Active-pane cue uses the theme's complementary hue rather than the
+    // accent. Accent blue (hue ~213) against flat chrome read as a
+    // contrasting frame; palette[3] yellow (hue ~47) is its complement and
+    // matches the app icon's warm ring around a blue wave. At wash strength
+    // it never reads as the Yellow workspace colour code.
+    const focus_hue: []const u8 = &colors.tab_colors[2];
     var css_buf: [10240]u8 = undefined;
     var stream = std.Io.Writer.fixed(&css_buf);
     const w = &stream;
@@ -2263,10 +2269,10 @@ fn loadThemeCss() void {
     w.print(
         \\.sidebar-row-dragging {{ opacity: 0.7; }}
         \\.sidebar-row-drag-over {{ background: alpha({s}, 0.15); border-top: 2px solid alpha({s}, 0.6); }}
-        \\.pane-focused {{ outline: 2px solid alpha({s}, 0.20); outline-offset: -2px; background-color: {s}; }}
+        \\.pane-focused {{ outline: 2px solid alpha({s}, 0.12); outline-offset: -2px; background-color: {s}; }}
         \\.pane-unfocused {{ outline: 2px solid transparent; outline-offset: -2px; background-color: {s}; }}
         \\
-    , .{ accent, accent, accent, pane_bg, pane_bg }) catch return;
+    , .{ accent, accent, focus_hue, pane_bg, pane_bg }) catch return;
 
     // Unfocused-pane dim: overlay composite, not a filter — a CSS filter
     // would force every unfocused terminal/webview offscreen per frame.
@@ -2288,7 +2294,7 @@ fn loadThemeCss() void {
         \\.pane-notification {{ outline: 2px solid {s}; outline-offset: -2px; background-color: {s}; }}
         \\.pane-drop-target {{ outline: 2px dashed alpha({s}, 0.6); outline-offset: -2px; background-color: {s}; }}
         \\
-    , .{ pane_bg, accent, notify, pane_bg, notify, pane_bg }) catch return;
+    , .{ pane_bg, focus_hue, notify, pane_bg, notify, pane_bg }) catch return;
 
     w.print(
         \\.sidebar-badge {{ background-color: {s}; color: {s}; border-radius: 50%; min-width: 1.25em; min-height: 1.25em; font-size: 0.62em; font-weight: 600; padding: 0; }}
