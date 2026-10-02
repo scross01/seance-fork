@@ -1154,6 +1154,20 @@ pub const WindowState = struct {
         c.gtk_widget_set_tooltip_text(@ptrCast(add_btn), "New workspace");
         c.adw_header_bar_pack_start(@ptrCast(header), @ptrCast(add_btn));
 
+        // Primary hamburger menu, packed first so it lands rightmost where
+        // GNOME puts the primary menu: Preferences, Shortcuts, About, Quit.
+        const menu_btn = c.gtk_menu_button_new();
+        c.gtk_menu_button_set_icon_name(@ptrCast(menu_btn), "open-menu-symbolic");
+        c.gtk_widget_set_tooltip_text(@ptrCast(menu_btn), "Main menu");
+        const menu = c.g_menu_new();
+        c.g_menu_append(@ptrCast(@alignCast(menu)), "Preferences", "preferences");
+        c.g_menu_append(@ptrCast(@alignCast(menu)), "Keyboard shortcuts", "shortcuts");
+        c.g_menu_append(@ptrCast(@alignCast(menu)), "About Séance", "about");
+        c.g_menu_append(@ptrCast(@alignCast(menu)), "Quit", "quit");
+        c.gtk_menu_button_set_menu_model(@ptrCast(menu_btn), @ptrCast(@alignCast(menu)));
+        c.g_object_unref(@ptrCast(menu));
+        c.adw_header_bar_pack_end(@ptrCast(header), @ptrCast(menu_btn));
+
         const settings_btn = c.gtk_button_new_from_icon_name("emblem-system-symbolic");
         c.gtk_widget_set_tooltip_text(@ptrCast(settings_btn), "Settings");
         c.adw_header_bar_pack_end(@ptrCast(header), @ptrCast(settings_btn));
@@ -1176,20 +1190,6 @@ pub const WindowState = struct {
         c.gtk_widget_set_visible(notif_badge, 0);
         c.gtk_overlay_add_overlay(@ptrCast(notif_overlay), notif_badge);
         c.adw_header_bar_pack_end(@ptrCast(header), @ptrCast(notif_overlay));
-
-        // Primary hamburger menu: Preferences (Ctrl+,), Shortcuts (F1),
-        // About, Quit (Ctrl+Shift+Q). Placed after notification bell per HIG.
-        const menu_btn = c.gtk_menu_button_new();
-        c.gtk_menu_button_set_icon_name(@ptrCast(menu_btn), "open-menu-symbolic");
-        c.gtk_widget_set_tooltip_text(@ptrCast(menu_btn), "Main menu");
-        const menu = c.g_menu_new();
-        c.g_menu_append(@ptrCast(@alignCast(menu)), "Preferences", "preferences");
-        c.g_menu_append(@ptrCast(@alignCast(menu)), "Keyboard shortcuts", "shortcuts");
-        c.g_menu_append(@ptrCast(@alignCast(menu)), "About Séance", "about");
-        c.g_menu_append(@ptrCast(@alignCast(menu)), "Quit", "quit");
-        c.gtk_menu_button_set_menu_model(@ptrCast(menu_btn), @ptrCast(@alignCast(menu)));
-        c.g_object_unref(@ptrCast(menu));
-        c.adw_header_bar_pack_end(@ptrCast(header), @ptrCast(menu_btn));
 
         // Point the sidebar at the header-bar-hosted badge/overlay so refresh()
         // keeps updating the unread count after a runtime chrome rebuild.
@@ -1394,7 +1394,7 @@ pub fn create(wm: *WindowManager) !*WindowState {
     const config = config_mod.load();
 
     const window = c.adw_application_window_new(wm.app);
-    c.gtk_window_set_title(@as(*c.GtkWindow, @ptrCast(window)), "seance");
+    c.gtk_window_set_title(@as(*c.GtkWindow, @ptrCast(window)), "Séance");
     c.gtk_window_set_default_size(@as(*c.GtkWindow, @ptrCast(window)), 1200, 800);
     // Enforce the minimum declared in the AppStream metainfo (360px) so a
     // window shrunk below the supported floor can't collapse the pane strip.
@@ -1766,6 +1766,11 @@ fn onWindowFocusChanged(_: *c.GObject, _: ?*anyopaque, data: c.gpointer) callcon
 fn onFullscreenChanged(_: *c.GObject, _: ?*anyopaque, data: c.gpointer) callconv(.c) void {
     const state: *WindowState = @ptrCast(@alignCast(data));
     state.syncFullscreenChrome();
+    // Entering fullscreen hides the header bar, which leaves no pointer path
+    // back out. Name the way out once, on entry only.
+    if (c.gtk_window_is_fullscreen(@as(*c.GtkWindow, @ptrCast(state.gtk_window))) != 0) {
+        state.showToast("Fullscreen — press F11 to exit");
+    }
 }
 
 fn onWorkspaceSelect(index: usize) void {
@@ -2344,10 +2349,10 @@ fn loadThemeCss() void {
         \\.vtab-close:hover {{ opacity: 1.0; background-color: alpha(@window_fg_color, 0.1); }}
         \\.vtab-close:focus-visible {{ opacity: 1.0; }}
         \\.vtab-dragging {{ box-shadow: 0 2px 8px alpha(black, 0.3); }}
-        \\.vtab-attention {{ }}
+        \\.vtab-attention {{ box-shadow: inset 3px 0 0 {s}; }}
         \\.vtab-color-bar {{ min-width: 3px; border-radius: 2px; margin-left: 5px; margin-top: 5px; margin-bottom: 6px; }}
         \\
-    , .{}) catch return;
+    , .{notify}) catch return;
 
     // Backdrop (window unfocused): dim sidebar to match libadwaita tab bar behavior.
     // libadwaita applies filter: opacity(0.5) to the entire tab content area,

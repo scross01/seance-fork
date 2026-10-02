@@ -442,7 +442,7 @@ fn buildNotificationsSection(page: *c.GtkWidget, cfg: *const config_mod.Config) 
         const test_row = c.adw_action_row_new();
         c.adw_preferences_row_set_title(@as(*c.AdwPreferencesRow, @ptrCast(test_row)), "Send test notification");
         c.adw_action_row_set_subtitle(@as(*c.AdwActionRow, @ptrCast(test_row)), "Exercises the full notification pipeline.");
-        const test_btn = c.gtk_button_new_from_icon_name("notifications-symbolic");
+        const test_btn = c.gtk_button_new_from_icon_name("bell-outline-symbolic");
         c.gtk_widget_set_tooltip_text(@ptrCast(test_btn), "Send a test notification");
         c.gtk_widget_set_valign(@ptrCast(test_btn), c.GTK_ALIGN_CENTER);
         c.adw_action_row_add_suffix(@as(*c.AdwActionRow, @ptrCast(test_row)), @ptrCast(test_btn));

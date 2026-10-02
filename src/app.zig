@@ -1028,6 +1028,8 @@ pub var shutting_down: bool = false;
 
 pub fn create() *c.AdwApplication {
     const app = c.adw_application_new("com.seance-fork.app", c.G_APPLICATION_DEFAULT_FLAGS);
+    // Register the primary-menu actions before the app is registered.
+    initAppMenu(app);
     _ = c.g_signal_connect_data(
         @as(c.gpointer, @ptrCast(app)),
         "activate",
@@ -1090,9 +1092,6 @@ fn onActivate(app: *c.AdwApplication) callconv(.c) void {
 
         // Initialize KDE server-side decoration support — no-op when not on KDE.
         kde_decoration.init();
-
-        // Primary menu and global actions for discoverability
-        initAppMenu(app);
 
         // First activation: create window manager and restore session
         const manager = WindowManager.init(gtkApp(app));
@@ -1176,53 +1175,54 @@ pub fn gtkApp(app: *c.AdwApplication) *c.GtkApplication {
     return @ptrCast(app);
 }
 
+/// Register the primary-menu actions on the application itself.
+///
+/// Uses g_action_map_add_action_entries rather than the deprecated
+/// g_application_set_action_group, which also asserts if the app is already
+/// registered — so this must run from create(), before activate().
 fn initAppMenu(app: *c.AdwApplication) void {
-    const actions = c.g_simple_action_group_new();
-    const quit_action = c.g_simple_action_new("quit", null);
-    const prefs_action = c.g_simple_action_new("preferences", null);
-    const shortcuts_action = c.g_simple_action_new("shortcuts", null);
-    const about_action = c.g_simple_action_new("about", null);
-
-    _ = c.g_signal_connect_data(
-        @as(c.gpointer, @ptrCast(quit_action)),
-        "activate",
-        @as(c.GCallback, @ptrCast(&onQuitClicked)),
+    const entries = [_]c.GActionEntry{
+        .{
+            .name = "quit",
+            .activate = onQuitAction,
+            .parameter_type = null,
+            .state = null,
+            .change_state = null,
+            .padding = .{ 0, 0, 0 },
+        },
+        .{
+            .name = "preferences",
+            .activate = onPreferencesAction,
+            .parameter_type = null,
+            .state = null,
+            .change_state = null,
+            .padding = .{ 0, 0, 0 },
+        },
+        .{
+            .name = "shortcuts",
+            .activate = onShortcutsAction,
+            .parameter_type = null,
+            .state = null,
+            .change_state = null,
+            .padding = .{ 0, 0, 0 },
+        },
+        .{
+            .name = "about",
+            .activate = onAboutAction,
+            .parameter_type = null,
+            .state = null,
+            .change_state = null,
+            .padding = .{ 0, 0, 0 },
+        },
+    };
+    c.g_action_map_add_action_entries(
+        @as(*c.GActionMap, @ptrCast(app)),
+        &entries,
+        @intCast(entries.len),
         @ptrCast(@alignCast(app)),
-        null,
-        0,
-    );
-    _ = c.g_signal_connect_data(
-        @as(c.gpointer, @ptrCast(prefs_action)),
-        "activate",
-        @as(c.GCallback, @ptrCast(&onPreferencesClicked)),
-        @ptrCast(app),
-        null,
-        0,
-    );
-    _ = c.g_signal_connect_data(
-        @as(c.gpointer, @ptrCast(shortcuts_action)),
-        "activate",
-        @as(c.GCallback, @ptrCast(&onShortcutsClicked)),
-        @ptrCast(app),
-        null,
-        0,
-    );
-    _ = c.g_signal_connect_data(
-        @as(c.gpointer, @ptrCast(about_action)),
-        "activate",
-        @as(c.GCallback, @ptrCast(&onAboutClicked)),
-        @ptrCast(app),
-        null,
-        0,
     );
 
-    c.g_simple_action_group_insert(actions, @as(*c.GAction, @ptrCast(quit_action)));
-    c.g_simple_action_group_insert(actions, @as(*c.GAction, @ptrCast(prefs_action)));
-    c.g_simple_action_group_insert(actions, @as(*c.GAction, @ptrCast(shortcuts_action)));
-    c.g_simple_action_group_insert(actions, @as(*c.GAction, @ptrCast(about_action)));
-    c.g_application_set_action_group(gapp(app), @ptrCast(actions));
-
-// gtk_application_set_accels_for_action walks a sentinel-terminated array. An
+    // gtk_application_set_accels_for_action walks a sentinel-terminated array. An
     // earlier attempt used an empty string as the terminator and GTK read past
     // the end of the array into stack garbage, so the terminator must be a real
     // null element -- hence the optional element type.
@@ -1234,38 +1234,56 @@ fn initAppMenu(app: *c.AdwApplication) void {
     c.gtk_application_set_accels_for_action(gtkApp(app), "shortcuts", @ptrCast(&accels_sc));
 }
 
-fn onPreferencesClicked(app: *c.GApplication, _: *anyopaque, data: c.gpointer) callconv(.c) void {
+fn onPreferencesAction(_: ?*c.GSimpleAction, _: ?*c.GVariant, data: c.gpointer) callconv(.c) void {
     const win_mod = @import("window.zig");
     if (win_mod.window_manager) |mgr| {
         if (mgr.active_window) |state| state.showSettings();
     }
-    _ = app;
     _ = data;
 }
 
-fn onShortcutsClicked(app: *c.GApplication, _: *anyopaque, data: c.gpointer) callconv(.c) void {
+fn onShortcutsAction(_: ?*c.GSimpleAction, _: ?*c.GVariant, data: c.gpointer) callconv(.c) void {
     const shortcuts_mod = @import("shortcuts_overlay.zig");
     const win_mod = @import("window.zig");
     if (win_mod.window_manager) |mgr| shortcuts_mod.show(mgr);
-    _ = app;
     _ = data;
 }
 
-fn onAboutClicked(app: *c.GApplication, _: *anyopaque, data: c.gpointer) callconv(.c) void {
+fn onAboutAction(_: ?*c.GSimpleAction, _: ?*c.GVariant, data: c.gpointer) callconv(.c) void {
     const win_mod = @import("window.zig");
     const parent: ?*c.GtkWidget = if (win_mod.window_manager) |mgr|
         (if (mgr.active_window) |state| state.gtk_window else null)
     else
         null;
-    const about = c.adw_about_dialog_new_from_appdata("com.seance-fork.app", "0.5.0");
+
+    // appdata is resolved through XDG_DATA_DIRS, so it can be missing in dev
+    // runs and unusual prefixes; fall back to explicit fields so About always
+    // says something.
+    var about = c.adw_about_dialog_new_from_appdata("com.seance-fork.app", "0.5.0");
+    if (@intFromPtr(about) == 0) {
+        about = c.adw_about_dialog_new();
+        const d: *c.AdwAboutDialog = @ptrCast(about);
+        c.adw_about_dialog_set_application_name(d, "Séance-fork");
+        c.adw_about_dialog_set_application_icon(d, "com.seance-fork.app");
+        c.adw_about_dialog_set_version(d, "0.5.0");
+        c.adw_about_dialog_set_developer_name(d, "Stephen Cross");
+        c.adw_about_dialog_set_license_type(d, c.GTK_LICENSE_MIT_X11);
+        c.adw_about_dialog_set_website(d, "https://github.com/scross01/seance-fork");
+        c.adw_about_dialog_set_issue_url(d, "https://github.com/scross01/seance-fork/issues");
+        c.adw_about_dialog_set_comments(
+            d,
+            "A scrolling terminal multiplexer that tracks your AI coding agents.\n\n" ++
+                "Community fork of Séance by no1msd.",
+        );
+    }
+
     if (parent) |p| {
         c.adw_dialog_present(@as(*c.AdwDialog, @ptrCast(about)), p);
     }
-    _ = app;
     _ = data;
 }
 
-fn onQuitClicked(app: *c.GApplication, _: *anyopaque, data: c.gpointer) callconv(.c) void {
-    c.g_application_quit(@as(*c.GApplication, @ptrCast(app)));
-    _ = data;
+fn onQuitAction(_: ?*c.GSimpleAction, _: ?*c.GVariant, data: c.gpointer) callconv(.c) void {
+    const app: *c.GApplication = @ptrCast(@alignCast(data));
+    c.g_application_quit(app);
 }
