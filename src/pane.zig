@@ -46,8 +46,6 @@ pub const Pane = struct {
     shell_git_branch_len: usize = 0,
     shell_git_dirty: bool = false,
     shell_state: ShellState = .unknown,
-    // Vim detection (updated by periodic check)
-    is_vim_active: bool = false,
     // Scrollbar overlay state (updated via ghostty SCROLLBAR action)
     scrollbar_widget: ?*c.GtkWidget = null,
     scrollbar_total: u64 = 0,
