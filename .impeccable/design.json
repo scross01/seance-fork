@@ -24,7 +24,7 @@
       "headline": { "displayName": "Headline", "purpose": "Sidebar section headers only." },
       "title": { "displayName": "Title", "purpose": "Workspace row titles in the sidebar." },
       "body": { "displayName": "Body", "purpose": "Command-palette input and results; dialogs otherwise inherit the GTK default." },
-      "label": { "displayName": "Label", "purpose": "Metadata: branch lines, ports, status entries, notification previews. Always at 0.8 opacity." },
+      "label": { "displayName": "Label", "purpose": "Metadata: branch lines, ports, status entries, notification previews. Floor of 0.7 (AA on both appearances); 0.8 is the default secondary step." },
       "micro": { "displayName": "Micro", "purpose": "Unread and bell badges on accent circles." },
       "terminal": { "displayName": "Terminal", "purpose": "Terminal cells only, user-configurable in Settings → Font. Never touches app chrome, which is always the system UI font." }
     },
@@ -94,7 +94,7 @@
       "refersTo": "command-palette",
       "description": "The one elevated surface: 8px radius, palette shadow, centered over a 24% black scrim.",
       "html": "<div class=\"ds-scrim\"><div class=\"ds-palette\"><input class=\"ds-palette-entry\" value=\"switch workspace\" readonly/><div class=\"ds-palette-result ds-active\"><span>Switch to workspace: seance-fork</span><span class=\"ds-chip\">Ctrl+1</span></div><div class=\"ds-palette-result\"><span>Switch to workspace: dotfiles</span><span class=\"ds-chip\">Ctrl+2</span></div><div class=\"ds-palette-hint\">↑↓ to navigate · ↵ to run · esc to dismiss</div></div></div>",
-      "css": ".ds-scrim { background: rgba(0,0,0,0.24); padding: 24px; display: flex; justify-content: center; } .ds-palette { background: #222226; border-radius: 8px; border: 1px solid rgba(255,255,255,0.18); box-shadow: 0 5px 10px rgba(0,0,0,0.24); min-width: 340px; padding: 4px; font-family: Cantarell, system-ui, sans-serif; color: #ffffff; } .ds-palette-entry { width: 100%; font-size: 13px; padding: 7px 9px; border: none; background: transparent; color: #ffffff; outline: none; } .ds-palette-result { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 3px 12px; min-height: 24px; font-size: 13px; border-radius: 4px; cursor: pointer; } .ds-palette-result:hover { background: rgba(255,255,255,0.04); } .ds-palette-result.ds-active { background: #214069; } .ds-chip { font-size: 11px; font-weight: 500; color: rgba(255,255,255,0.6); background: rgba(255,255,255,0.08); border-radius: 4px; padding: 1px 6px; } .ds-palette-hint { font-size: 11px; color: rgba(255,255,255,0.5); padding: 6px 9px; }"
+      "css": ".ds-scrim { background: rgba(0,0,0,0.24); padding: 24px; display: flex; justify-content: center; } .ds-palette { background: #222226; border-radius: 8px; border: 1px solid rgba(255,255,255,0.18); box-shadow: 0 5px 10px rgba(0,0,0,0.24); min-width: 340px; padding: 4px; font-family: Cantarell, system-ui, sans-serif; color: #ffffff; } .ds-palette-entry { width: 100%; font-size: 13px; padding: 7px 9px; border: none; background: transparent; color: #ffffff; outline: none; } .ds-palette-result { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 3px 12px; min-height: 24px; font-size: 13px; border-radius: 4px; cursor: pointer; } .ds-palette-result:hover { background: rgba(255,255,255,0.04); } .ds-palette-result.ds-active { background: #214069; } .ds-chip { font-size: 11px; font-weight: 500; color: rgba(255,255,255,0.7); background: rgba(255,255,255,0.08); border-radius: 4px; padding: 1px 6px; } .ds-palette-hint { font-size: 11px; color: rgba(255,255,255,0.7); padding: 6px 9px; }"
     },
     {
       "name": "Notification Row",
@@ -102,7 +102,7 @@
       "refersTo": "notif-row",
       "description": "One knock from the familiar: unread dot, bold title, dimmed body and timestamp.",
       "html": "<div class=\"ds-notif-row\"><span class=\"ds-unread-dot\"></span><div class=\"ds-notif-main\"><span class=\"ds-notif-title\">OpenCode needs input — seance-fork</span><span class=\"ds-notif-body\">Permission requested: bash git push</span><span class=\"ds-notif-time\">2 min ago</span></div></div>",
-      "css": ".ds-notif-row { display: flex; align-items: flex-start; gap: 8px; padding: 10px 8px; border-radius: 6px; background: transparent; color: #ffffff; font-family: Cantarell, system-ui, sans-serif; cursor: pointer; transition: background-color 150ms ease-in-out; } .ds-notif-row:hover { background: rgba(255,255,255,0.05); } .ds-unread-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: #1e78e4; margin-top: 5px; } .ds-notif-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; } .ds-notif-title { font-size: 12px; font-weight: 700; } .ds-notif-body { font-size: 11px; opacity: 0.6; } .ds-notif-time { font-size: 10px; opacity: 0.5; }"
+      "css": ".ds-notif-row { display: flex; align-items: flex-start; gap: 8px; padding: 10px 8px; border-radius: 6px; background: transparent; color: #ffffff; font-family: Cantarell, system-ui, sans-serif; cursor: pointer; transition: background-color 150ms ease-in-out; } .ds-notif-row:hover { background: rgba(255,255,255,0.05); } .ds-unread-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: #1e78e4; margin-top: 5px; } .ds-notif-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; } .ds-notif-title { font-size: 12px; font-weight: 700; } .ds-notif-body { font-size: 11px; opacity: 0.7; } .ds-notif-time { font-size: 10px; opacity: 0.7; }"
     },
     {
       "name": "Chrome Icon Button",
@@ -144,7 +144,7 @@
     "rules": [
       { "name": "The Palette Is the Chrome Rule", "body": "Never hardcode a chrome color. In the default state, reference libadwaita's named colors and let the OS theme resolve them; in the possessed state, the same named colors resolve from the terminal palette.", "section": "colors" },
       { "name": "The One Accent Rule", "body": "Agent status never gets its own hue. Working, idle, and needs-input are distinguished by symbolic icon and outline, not by green/yellow/red.", "section": "colors" },
-      { "name": "The Dim Label Rule", "body": "Secondary information is the primary ink at reduced opacity (0.8 / 0.6 / 0.5), never a second text color and never smaller than 8px.", "section": "typography" },
+      { "name": "The Dim Label Rule", "body": "Secondary information is the primary ink at reduced opacity, never a second text color. The floor for anything carrying text is 0.7 -- the lowest value clearing WCAG AA (4.5:1) on both appearances, since the light theme measures only 4.21:1 at 0.6.", "section": "typography" },
       { "name": "The Two Fonts Rule", "body": "The app has exactly two fonts: the system UI font for chrome (fixed, unconfigurable) and the terminal font for cell content (user-configurable in Settings). Font settings never cross the boundary in either direction.", "section": "typography" },
       { "name": "The Outline Carries State Rule", "body": "Focus, notification, flash, and drop-target are 2px outlines at −2px offset. Shadows are for overlays and drag physics only — never for resting surfaces.", "section": "elevation" },
       { "name": "The Backdrop Dim Rule", "body": "When the window loses focus, sidebar chrome dims to 50% opacity over 200ms; accent-colored selection stays lit.", "section": "elevation" }
@@ -153,7 +153,7 @@
       "Do resolve every new chrome color from @window_bg_color / @window_fg_color (or a documented 4–15% mix), the accent, or the notify token",
       "Do use symbolic (*-symbolic) icons exclusively; tint with color, size via icon-size or px",
       "Do express state as 2px outlines at −2px offset and symbolic-icon swaps, keeping layout stable",
-      "Do keep secondary text as the primary ink at 0.8/0.6/0.5 opacity",
+      "Do keep secondary text as the primary ink at 0.8, and never below 0.7 for anything carrying text",
       "Do use stock libadwaita patterns (AdwDialog, AdwPreferencesPage, .boxed-list, .dim-label, .title-4) for dialogs",
       "Do swap theme CSS atomically: attach the new provider before detaching the old"
     ],

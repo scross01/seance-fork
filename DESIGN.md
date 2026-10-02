@@ -129,11 +129,11 @@ The ANSI ramp `palette[1..7]` — **tab-red** (#c01c28), **tab-green** (#2ec27e)
 - **Headline** (700, 14px): Sidebar section headers (`.sidebar-header`) only.
 - **Title** (600, 12.5px): Workspace row titles (`.sidebar-ws-title`).
 - **Body** (400, 13px): Command-palette input and result text; dialogs otherwise inherit the GTK default (~11pt).
-- **Label** (400, 10px, opacity 0.8): Metadata — branch lines, ports, status entries, notification previews (`.sidebar-ws-meta` et al).
+- **Label** (400, 10px, opacity 0.8): Metadata — branch lines, ports, status entries, notification previews (`.sidebar-ws-meta` et al). The floor for dimmed text is 0.7; 0.8 is the default secondary step.
 - **Micro** (600–700, 8–9px): Unread badges and bell badges, always on accent circles.
 
 ### Named Rules
-**The Dim Label Rule.** Secondary information is the primary ink at reduced opacity (0.8 / 0.6 / 0.5), never a second text color and never smaller than 8px.
+**The Dim Label Rule.** Secondary information is the primary ink at reduced opacity, never a second text color. The floor for anything that carries text is **0.7** — that is the lowest value that clears WCAG AA (4.5:1) on *both* appearances; the light theme is the binding case, where 0.6 measures only 4.21:1. Below 0.7 (down to 0.55) is decoration only: disabled rows, borders, hover washes. Disabled controls are the one WCAG exemption and may sit below the floor.
 
 **The Two Fonts Rule.** The app has exactly two fonts: the system UI font for chrome (fixed, unconfigurable) and the terminal font for cell content (user-configurable). Font settings never cross the boundary in either direction.
 
@@ -158,7 +158,7 @@ State is outlined, not elevated: focused panes, notifying panes, and drop target
 ### Named Rules
 **The Outline Carries State Rule.** Focus, notification, flash, and drop-target are 2px outlines at −2px offset. Shadows are for overlays and drag physics only — never for resting surfaces.
 
-**The Backdrop Dim Rule.** When the window loses focus, sidebar chrome dims to 50% opacity over 200ms (`filter: opacity(0.5)`); accent-colored selection stays lit so you can find your place at a glance.
+**The Backdrop Dim Rule.** When the window loses focus, sidebar chrome dims to 50% opacity over 200ms (`filter: opacity(0.5)`); accent-colored selection stays lit so you can find your place at a glance. This matches GNOME's own unfocused-window convention and is exempt from the contrast floor.
 
 ## Shapes
 

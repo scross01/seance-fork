@@ -2256,7 +2256,7 @@ fn loadThemeCss() void {
     , .{}) catch return;
 
     w.print(
-        \\.sidebar-row-dragging {{ opacity: 0.6; }}
+        \\.sidebar-row-dragging {{ opacity: 0.7; }}
         \\.sidebar-row-drag-over {{ background: alpha({s}, 0.15); border-top: 2px solid alpha({s}, 0.6); }}
         \\.pane-focused {{ outline: 2px solid alpha({s}, 0.45); outline-offset: -2px; background-color: {s}; }}
         \\.pane-unfocused {{ outline: 2px solid transparent; outline-offset: -2px; background-color: {s}; }}
@@ -2293,14 +2293,14 @@ fn loadThemeCss() void {
         \\.sidebar-show-more-btn {{ font-size: 10px; padding: 0; min-height: 24px; opacity: 0.8; margin-top: 2px; margin-bottom: 2px; }}
         \\.sidebar-show-more-btn:hover {{ opacity: 1.0; }}
         \\.sidebar-progress-label {{ font-size: 10px; opacity: 0.8; }}
-        \\.sidebar-col-dots {{ font-size: 8px; opacity: 0.5; margin-top: 2px; letter-spacing: 1px; }}
+        \\.sidebar-col-dots {{ font-size: 8px; opacity: 0.7; margin-top: 2px; letter-spacing: 1px; }}
         \\
     , .{ accent, accent_fg, accent, accent_fg }) catch return;
 
     w.print(
         \\.search-overlay {{ background-color: alpha(@window_bg_color, 0.95); border-radius: 6px; padding: 4px 8px; margin: 8px; border: 1px solid alpha(@window_fg_color, 0.25); }}
         \\.search-overlay button {{ padding: 0; }}
-        \\.search-match-label {{ color: alpha(@window_fg_color, 0.6); font-size: 0.85em; min-width: 50px; }}
+        \\.search-match-label {{ color: alpha(@window_fg_color, 0.7); font-size: 0.85em; min-width: 50px; }}
         \\.pane-zoomed {{ outline: 2px solid rgba(255, 200, 0, 0.3); outline-offset: -2px; }}
         \\.pane-flash {{ outline: 2px solid alpha({s}, 1.0); outline-offset: -2px; }}
         \\
@@ -2314,8 +2314,8 @@ fn loadThemeCss() void {
         \\.notif-row:hover {{ background-color: alpha(@window_fg_color, 0.05); }}
         \\.notif-unread-dot {{ color: {s}; font-size: 8px; min-width: 12px; }}
         \\.notif-title {{ font-weight: bold; font-size: 12px; }}
-        \\.notif-time {{ font-size: 10px; opacity: 0.5; }}
-        \\.notif-body {{ font-size: 11px; opacity: 0.6; }}
+        \\.notif-time {{ font-size: 10px; opacity: 0.7; }}
+        \\.notif-body {{ font-size: 11px; opacity: 0.7; }}
         \\
     , .{accent}) catch return;
 
@@ -2367,12 +2367,12 @@ fn loadThemeCss() void {
         \\.command-palette {{ background-color: @window_bg_color; border-radius: 8px; border: 1px solid alpha(@window_fg_color, 0.18); box-shadow: 0 5px 10px alpha(black, 0.24); min-width: 340px; }}
         \\.command-palette-entry {{ font-size: 13px; padding: 7px 9px; border: none; background: transparent; }}
         \\.command-palette-result {{ padding: 3px 12px; min-height: 24px; }}
-        \\.command-palette-shortcut {{ font-size: 11px; font-weight: 500; color: alpha(@window_fg_color, 0.6); background-color: alpha(@window_fg_color, 0.08); border-radius: 4px; padding: 1px 6px; }}
-        \\.command-palette-kind {{ font-size: 11px; color: alpha(@window_fg_color, 0.5); }}
-        \\.command-palette-empty {{ font-size: 13px; color: alpha(@window_fg_color, 0.5); padding: 8px 12px; }}
-        \\.command-palette-hint {{ font-size: 11px; color: alpha(@window_fg_color, 0.5); padding: 6px 9px; }}
-        \\.command-palette-disabled {{ opacity: 0.4; }}
-        \\.command-palette-subtitle {{ font-size: 11px; color: alpha(@window_fg_color, 0.5); }}
+        \\.command-palette-shortcut {{ font-size: 11px; font-weight: 500; color: alpha(@window_fg_color, 0.7); background-color: alpha(@window_fg_color, 0.08); border-radius: 4px; padding: 1px 6px; }}
+        \\.command-palette-kind {{ font-size: 11px; color: alpha(@window_fg_color, 0.7); }}
+        \\.command-palette-empty {{ font-size: 13px; color: alpha(@window_fg_color, 0.7); padding: 8px 12px; }}
+        \\.command-palette-hint {{ font-size: 11px; color: alpha(@window_fg_color, 0.7); padding: 6px 9px; }}
+        \\.command-palette-disabled {{ opacity: 0.55; }}
+        \\.command-palette-subtitle {{ font-size: 11px; color: alpha(@window_fg_color, 0.7); }}
         \\
     , .{}) catch return;
 
