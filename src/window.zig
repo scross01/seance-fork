@@ -2263,7 +2263,7 @@ fn loadThemeCss() void {
     w.print(
         \\.sidebar-row-dragging {{ opacity: 0.7; }}
         \\.sidebar-row-drag-over {{ background: alpha({s}, 0.15); border-top: 2px solid alpha({s}, 0.6); }}
-        \\.pane-focused {{ outline: 2px solid alpha({s}, 0.45); outline-offset: -2px; background-color: {s}; }}
+        \\.pane-focused {{ outline: 2px solid alpha({s}, 0.20); outline-offset: -2px; background-color: {s}; }}
         \\.pane-unfocused {{ outline: 2px solid transparent; outline-offset: -2px; background-color: {s}; }}
         \\
     , .{ accent, accent, accent, pane_bg, pane_bg }) catch return;
