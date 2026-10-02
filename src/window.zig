@@ -1396,6 +1396,9 @@ pub fn create(wm: *WindowManager) !*WindowState {
     const window = c.adw_application_window_new(wm.app);
     c.gtk_window_set_title(@as(*c.GtkWindow, @ptrCast(window)), "seance");
     c.gtk_window_set_default_size(@as(*c.GtkWindow, @ptrCast(window)), 1200, 800);
+    // Enforce the minimum declared in the AppStream metainfo (360px) so a
+    // window shrunk below the supported floor can't collapse the pane strip.
+    c.gtk_widget_set_size_request(window, 360, 240);
 
     // Main layout: sidebar | content
     const hbox = c.gtk_box_new(c.GTK_ORIENTATION_HORIZONTAL, 0);
@@ -1469,8 +1472,19 @@ pub fn create(wm: *WindowManager) !*WindowState {
     );
 
     // Apply sidebar config
-    c.gtk_widget_set_size_request(state.sidebar.widget, @intCast(config.sidebar_width), -1);
+    applySidebarWidth(state);
     c.gtk_widget_set_hexpand(state.sidebar.widget, 0);
+    // On narrow windows the fixed sidebar would swallow the pane strip, so
+    // cap it to a share of the window and restore the configured width as
+    // soon as there is room again.
+    _ = c.g_signal_connect_data(
+        @as(c.gpointer, @ptrCast(window)),
+        "notify::default-width",
+        @as(c.GCallback, @ptrCast(&onWindowResized)),
+        @ptrCast(state),
+        null,
+        0,
+    );
     if (!config.sidebar_visible) {
         state.sidebar_visible = false;
     }
@@ -2496,6 +2510,31 @@ var reloading_theme: bool = false;
 /// be re-rendered against the HC theme whenever the preference flips.
 fn onHighContrastChanged(_: *c.GObject, _: *c.GParamSpec, _: c.gpointer) callconv(.c) void {
     reloadTheme();
+}
+
+/// Sidebar width floor when the window is too narrow for the configured width.
+const SIDEBAR_MIN_WIDTH: c_int = 160;
+/// Largest share of a narrow window the sidebar may occupy.
+const SIDEBAR_MAX_FRACTION: f64 = 0.4;
+
+/// Apply the sidebar's size request, capping it on narrow windows so the
+/// pane strip always keeps the majority of the window.
+fn applySidebarWidth(state: *WindowState) void {
+    const configured: c_int = @intCast(state.config.sidebar_width);
+    const window_width = c.gtk_widget_get_width(state.gtk_window);
+    var width = configured;
+    if (window_width > 0) {
+        const capped: c_int = @intFromFloat(@as(f64, @floatFromInt(window_width)) * SIDEBAR_MAX_FRACTION);
+        if (capped < configured) {
+            width = @max(SIDEBAR_MIN_WIDTH, capped);
+        }
+    }
+    c.gtk_widget_set_size_request(state.sidebar.widget, width, -1);
+}
+
+fn onWindowResized(_: *c.GObject, _: *c.GParamSpec, data: c.gpointer) callconv(.c) void {
+    const state: *WindowState = @ptrCast(@alignCast(data));
+    applySidebarWidth(state);
 }
 
 /// Connect to AdwStyleManager's notify::dark signal to track system dark/light changes.

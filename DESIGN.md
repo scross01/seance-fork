@@ -139,7 +139,7 @@ The ANSI ramp `palette[1..7]` — **tab-red** (#c01c28), **tab-green** (#2ec27e)
 
 ## Layout
 
-The window is an `AdwApplicationWindow` → `AdwToastOverlay` → `GtkOverlay` (command palette floats above) → horizontal box: a 200px sidebar in a `GtkRevealer` (slide-left/right, 150ms) plus the workspace stack. CSD builds get an `AdwToolbarView` (flat) with an `AdwHeaderBar`; the header bar is painted manually because libadwaita strips it inside a toolbar view.
+The window is an `AdwApplicationWindow` → `AdwToastOverlay` → `GtkOverlay` (command palette floats above) → horizontal box: a 240px sidebar in a `GtkRevealer` (slide-left/right, 150ms) plus the workspace stack. On narrow windows the sidebar is capped at 40% of the window width (floor 160px) so the pane strip always keeps the majority of the space. CSD builds get an `AdwToolbarView` (flat) with an `AdwHeaderBar`; the header bar is painted manually because libadwaita strips it inside a toolbar view.
 
 The workspace is a horizontal scrolling strip of columns on a `GtkFixed` inside a `GtkScrolledWindow` — the niri model. Columns hold tab groups (`AdwTabView`/`AdwTabBar`, or a vertical tab bar). A `multi-pane` class on the container arms the focus-bar indicator.
 

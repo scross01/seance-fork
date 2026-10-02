@@ -17,7 +17,7 @@
 
 [sidebar]
 # position = "left"              # "left" or "right"
-# width = 200
+# width = 240
 # visible = true
 # show-button-bar = true         # bottom button row with server-side window decorations
 # show-notification-text = true  # latest notification text below workspace title
