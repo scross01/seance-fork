@@ -1,11 +1,9 @@
 zig-out/
 .zig-cache/
-plans
 campaign/
 zig-pkg/
 AppDir/
 *.AppImage
-.plans/
 Makefile
 LOCAL.md
 .mimocode
