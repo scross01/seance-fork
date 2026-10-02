@@ -2227,7 +2227,7 @@ fn loadThemeCss() void {
     // terminals/headerbar so transparency tracks background-opacity.
     w.print(
         \\.sidebar {{ background-color: alpha(mix(@window_bg_color, @window_fg_color, 0.10), {d:.3}); color: @window_fg_color; border: none; }}
-        \\.sidebar-header {{ font-weight: bold; font-size: 14px; }}
+        \\.sidebar-header {{ font-weight: bold; font-size: 0.95em; }}
         \\tabbar {{ border-bottom: none; box-shadow: none; }}
         \\tabbar .box {{ background-color: mix(@window_bg_color, @window_fg_color, 0.05); border-bottom: none; box-shadow: none; }}
         \\tabbar tab:selected {{ background-color: mix(@window_bg_color, @window_fg_color, 0.15); }}
@@ -2240,12 +2240,12 @@ fn loadThemeCss() void {
         \\.sidebar row:selected {{ background-color: mix(@window_bg_color, @accent_bg_color, 0.35); }}
         \\.sidebar row:selected:hover {{ background-color: mix(@window_bg_color, @accent_bg_color, 0.45); }}
         \\.sidebar-row {{ padding: 10px 12px 10px 15px; }}
-        \\.sidebar-ws-title {{ font-weight: 600; font-size: 12.5px; }}
-        \\.sidebar-ws-meta {{ font-size: 10px; opacity: 0.8; }}
+        \\.sidebar-ws-title {{ font-weight: 600; font-size: 0.85em; }}
+        \\.sidebar-ws-meta {{ font-size: 0.68em; opacity: 0.8; }}
         \\.sidebar-add {{ border-radius: 6px; padding: 6px 12px; }}
         \\.sidebar-branch-icon {{ opacity: 0.8; }}
-        \\.sidebar-branch-text {{ font-size: 10px; opacity: 0.8; }}
-        \\.sidebar-branch-sep {{ font-size: 10px; opacity: 0.8; padding: 0 1px; }}
+        \\.sidebar-branch-text {{ font-size: 0.68em; opacity: 0.8; }}
+        \\.sidebar-branch-sep {{ font-size: 0.68em; opacity: 0.8; padding: 0 1px; }}
         \\.sidebar-status-icon {{ opacity: 0.8; }}
         \\
     , .{cfg.background_opacity}) catch return;
@@ -2286,14 +2286,14 @@ fn loadThemeCss() void {
     , .{ pane_bg, accent, notify, pane_bg, notify, pane_bg }) catch return;
 
     w.print(
-        \\.sidebar-badge {{ background-color: {s}; color: {s}; border-radius: 50%; min-width: 18px; min-height: 18px; font-size: 9px; font-weight: 600; padding: 0; }}
-        \\.notif-bell-badge {{ background-color: {s}; color: {s}; border-radius: 50%; min-width: 16px; min-height: 16px; font-size: 8px; font-weight: 700; padding: 0; margin-top: 2px; margin-right: 2px; }}
-        \\.sidebar-notif-preview {{ font-size: 10px; opacity: 0.8; }}
-        \\.sidebar-status-entry {{ font-size: 10px; opacity: 0.8; }}
-        \\.sidebar-show-more-btn {{ font-size: 10px; padding: 0; min-height: 24px; opacity: 0.8; margin-top: 2px; margin-bottom: 2px; }}
+        \\.sidebar-badge {{ background-color: {s}; color: {s}; border-radius: 50%; min-width: 1.25em; min-height: 1.25em; font-size: 0.62em; font-weight: 600; padding: 0; }}
+        \\.notif-bell-badge {{ background-color: {s}; color: {s}; border-radius: 50%; min-width: 1.1em; min-height: 1.1em; font-size: 0.55em; font-weight: 700; padding: 0; margin-top: 2px; margin-right: 2px; }}
+        \\.sidebar-notif-preview {{ font-size: 0.68em; opacity: 0.8; }}
+        \\.sidebar-status-entry {{ font-size: 0.68em; opacity: 0.8; }}
+        \\.sidebar-show-more-btn {{ font-size: 0.68em; padding: 0; min-height: 24px; opacity: 0.8; margin-top: 2px; margin-bottom: 2px; }}
         \\.sidebar-show-more-btn:hover {{ opacity: 1.0; }}
-        \\.sidebar-progress-label {{ font-size: 10px; opacity: 0.8; }}
-        \\.sidebar-col-dots {{ font-size: 8px; opacity: 0.7; margin-top: 2px; letter-spacing: 1px; }}
+        \\.sidebar-progress-label {{ font-size: 0.68em; opacity: 0.8; }}
+        \\.sidebar-col-dots {{ font-size: 0.55em; opacity: 0.7; margin-top: 2px; letter-spacing: 1px; }}
         \\
     , .{ accent, accent_fg, accent, accent_fg }) catch return;
 
@@ -2312,17 +2312,17 @@ fn loadThemeCss() void {
         \\.notif-list {{ background-color: transparent; }}
         \\.notif-row {{ padding: 10px 8px; border-radius: 6px; }}
         \\.notif-row:hover {{ background-color: alpha(@window_fg_color, 0.05); }}
-        \\.notif-unread-dot {{ color: {s}; font-size: 8px; min-width: 12px; }}
-        \\.notif-title {{ font-weight: bold; font-size: 12px; }}
-        \\.notif-time {{ font-size: 10px; opacity: 0.7; }}
-        \\.notif-body {{ font-size: 11px; opacity: 0.7; }}
+        \\.notif-unread-dot {{ color: {s}; font-size: 0.55em; min-width: 0.8em; }}
+        \\.notif-title {{ font-weight: bold; font-size: 0.82em; }}
+        \\.notif-time {{ font-size: 0.68em; opacity: 0.7; }}
+        \\.notif-body {{ font-size: 0.75em; opacity: 0.7; }}
         \\
     , .{accent}) catch return;
 
     w.print(
         \\.sidebar-close-btn {{ min-width: 16px; min-height: 16px; padding: 0; margin: 0; border-radius: 50%; opacity: 0.7; transition: opacity 0.14s ease-in-out; }}
         \\.sidebar-close-btn:hover {{ opacity: 1.0; background-color: alpha(@window_fg_color, 0.1); }}
-        \\.sidebar-ws-ports {{ font-size: 10px; opacity: 0.8; }}
+        \\.sidebar-ws-ports {{ font-size: 0.68em; opacity: 0.8; }}
         \\.sidebar-progress trough {{ min-height: 3px; border-radius: 1.5px; background-color: alpha(@window_fg_color, 0.2); }}
         \\.sidebar-progress progress {{ min-height: 3px; border-radius: 1.5px; background-color: {s}; }}
         \\.sidebar-footer {{ padding: 4px 6px; border-top: 1px solid alpha(@window_fg_color, 0.15); }}
@@ -2365,14 +2365,14 @@ fn loadThemeCss() void {
         \\.resize-handle {{ background: none; }}
         \\.command-palette-overlay {{ background-color: rgba(0, 0, 0, 0.24); }}
         \\.command-palette {{ background-color: @window_bg_color; border-radius: 8px; border: 1px solid alpha(@window_fg_color, 0.18); box-shadow: 0 5px 10px alpha(black, 0.24); min-width: 340px; }}
-        \\.command-palette-entry {{ font-size: 13px; padding: 7px 9px; border: none; background: transparent; }}
+        \\.command-palette-entry {{ font-size: 0.88em; padding: 7px 9px; border: none; background: transparent; }}
         \\.command-palette-result {{ padding: 3px 12px; min-height: 24px; }}
-        \\.command-palette-shortcut {{ font-size: 11px; font-weight: 500; color: alpha(@window_fg_color, 0.7); background-color: alpha(@window_fg_color, 0.08); border-radius: 4px; padding: 1px 6px; }}
-        \\.command-palette-kind {{ font-size: 11px; color: alpha(@window_fg_color, 0.7); }}
-        \\.command-palette-empty {{ font-size: 13px; color: alpha(@window_fg_color, 0.7); padding: 8px 12px; }}
-        \\.command-palette-hint {{ font-size: 11px; color: alpha(@window_fg_color, 0.7); padding: 6px 9px; }}
+        \\.command-palette-shortcut {{ font-size: 0.75em; font-weight: 500; color: alpha(@window_fg_color, 0.7); background-color: alpha(@window_fg_color, 0.08); border-radius: 4px; padding: 1px 6px; }}
+        \\.command-palette-kind {{ font-size: 0.75em; color: alpha(@window_fg_color, 0.7); }}
+        \\.command-palette-empty {{ font-size: 0.88em; color: alpha(@window_fg_color, 0.7); padding: 8px 12px; }}
+        \\.command-palette-hint {{ font-size: 0.75em; color: alpha(@window_fg_color, 0.7); padding: 6px 9px; }}
         \\.command-palette-disabled {{ opacity: 0.55; }}
-        \\.command-palette-subtitle {{ font-size: 11px; color: alpha(@window_fg_color, 0.7); }}
+        \\.command-palette-subtitle {{ font-size: 0.75em; color: alpha(@window_fg_color, 0.7); }}
         \\
     , .{}) catch return;
 

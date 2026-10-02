@@ -20,23 +20,23 @@ colors:
 typography:
   headline:
     fontFamily: "Cantarell, system-ui, sans-serif"
-    fontSize: "14px"
+    fontSize: "0.95em"
     fontWeight: 700
   title:
     fontFamily: "Cantarell, system-ui, sans-serif"
-    fontSize: "12.5px"
+    fontSize: "0.85em"
     fontWeight: 600
   body:
     fontFamily: "Cantarell, system-ui, sans-serif"
-    fontSize: "13px"
+    fontSize: "0.88em"
     fontWeight: 400
   label:
     fontFamily: "Cantarell, system-ui, sans-serif"
-    fontSize: "10px"
+    fontSize: "0.68em"
     fontWeight: 400
   micro:
     fontFamily: "Cantarell, system-ui, sans-serif"
-    fontSize: "9px"
+    fontSize: "0.62em"
     fontWeight: 600
   terminal:
     fontFamily: "Monospace"
@@ -123,17 +123,21 @@ The ANSI ramp `palette[1..7]` — **tab-red** (#c01c28), **tab-green** (#2ec27e)
 **App Font:** the OS system UI font (Cantarell on GNOME) — inherited, never overridden, and not configurable. Séance-fork has no app-font setting.
 **Terminal Font:** Monospace (11px default) — user-configurable in Settings → Font (family, size, style). This selection applies **only to terminal cells**; it never touches app chrome.
 
-**Character:** The UI speaks entirely in the system font at small sizes. Hierarchy comes from weight and opacity, not size jumps; nothing in chrome exceeds 14px.
+**Character:** The UI speaks entirely in the system font at small sizes. Hierarchy comes from weight and opacity, not size jumps; nothing in chrome exceeds ~1em. All chrome sizes are **em-relative to the theme font**, never absolute px: GTK's px is DPI-aware but ignores the GNOME text-scaling-factor, so a px-locked sidebar is unreadable for someone running large text. The terminal font is the user's own setting and scales independently.
 
 ### Hierarchy
-- **Headline** (700, 14px): Sidebar section headers (`.sidebar-header`) only.
-- **Title** (600, 12.5px): Workspace row titles (`.sidebar-ws-title`).
-- **Body** (400, 13px): Command-palette input and result text; dialogs otherwise inherit the GTK default (~11pt).
-- **Label** (400, 10px, opacity 0.8): Metadata — branch lines, ports, status entries, notification previews (`.sidebar-ws-meta` et al). The floor for dimmed text is 0.7; 0.8 is the default secondary step.
-- **Micro** (600–700, 8–9px): Unread badges and bell badges, always on accent circles.
+Ratios below are relative to the theme font (em), which is what the CSS actually ships.
+
+- **Headline** (700, 0.95em): Sidebar section headers (`.sidebar-header`) only.
+- **Title** (600, 0.85em): Workspace row titles (`.sidebar-ws-title`).
+- **Body** (400, 0.88em): Command-palette input and result text; dialogs otherwise inherit the GTK default.
+- **Label** (400, 0.68em, opacity 0.8): Metadata — branch lines, ports, status entries, notification previews (`.sidebar-ws-meta` et al). The floor for dimmed text is 0.7 opacity; 0.8 is the default secondary step.
+- **Micro** (600–700, 0.55–0.62em): Unread badges and bell badges, always on accent circles sized in em (1.1–1.25em) so the circle grows with its glyph.
 
 ### Named Rules
 **The Dim Label Rule.** Secondary information is the primary ink at reduced opacity, never a second text color. The floor for anything that carries text is **0.7** — that is the lowest value that clears WCAG AA (4.5:1) on *both* appearances; the light theme is the binding case, where 0.6 measures only 4.21:1. Below 0.7 (down to 0.55) is decoration only: disabled rows, borders, hover washes. Disabled controls are the one WCAG exemption and may sit below the floor.
+
+**The Scaling Rule.** Chrome type is expressed in em against the theme font so it follows the system text-scaling-factor. Never reintroduce a px font-size; px silently opts that user out of scaling, and the terminal is the only place a user chooses a size.
 
 **The Two Fonts Rule.** The app has exactly two fonts: the system UI font for chrome (fixed, unconfigurable) and the terminal font for cell content (user-configurable). Font settings never cross the boundary in either direction.
 
