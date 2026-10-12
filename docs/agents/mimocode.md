@@ -60,7 +60,7 @@ MiMo Code uses a **TypeScript plugin** (`plugins/seance-mimocode/index.ts`) auto
 
 A wrapper script (`resources/bin/mimo`) intercepts launches for PID tracking and `session-end` on exit.
 
-**Version:** `@seance-version 37` (higher than OpenCode/Kilo due to subagent extensions)
+**Version:** `@seance-version 38` (higher than OpenCode/Kilo due to subagent extensions)
 
 ### Event Mapping
 

@@ -10,8 +10,8 @@ Comparison of Séance's agent integration capabilities across all supported agen
 | Auto-install | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
 | Notification support | Custom | Yes | No | No | No | Custom | Yes | Yes | No | Yes | No | No |
 | AskUser / permission detection | Yes | Yes | No | No | No | Yes | Yes | Yes | No | Yes | No | No |
-| Session directory tracking | No | No | No | No | No | No | Yes | Yes | No | Yes | No | No |
-| Subagent tracking | No | No | No | No | No | No | No | Yes | No | No | No | No |
+| Session directory tracking | No | No | No | No | No | No | Yes | Yes | No | No | No | No |
+| Subagent tracking | No | No | No | No | No | No | No | Yes | No | Yes | No | No |
 | Status key mode | surface | session | surface | surface | surface | surface | surface | surface | surface | surface | surface | surface |
 | clear\_status\_on\_end | Yes | Yes | Yes | Yes | Yes | No | Yes | Yes | Yes | Yes | Yes | Yes |
 

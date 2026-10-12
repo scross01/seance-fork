@@ -24,7 +24,7 @@ For detailed documentation on each integration approach, see:
 ### TypeScript Plugins
 
 1. **Check if agent is installed** — verify config directory exists (e.g., `~/.config/opencode/`)
-2. **Read bundled plugin** — from `{prefix}/share/seance/{name}-plugin.ts`
+2. **Read bundled plugin** — from `{prefix}/share/seance/{name}-plugin.ts` (OpenCode installs both `{name}-plugin.ts` and `{name}-plugin-v2.ts`; the detected major version selects which is installed to the same target filename)
 3. **Compare version and content** — extract `@seance-version` from bundled and installed plugins
 4. **Write atomically** — if outdated or missing, write to a `.tmp` file then rename
 
@@ -54,7 +54,7 @@ For detailed documentation on each integration approach, see:
 Each TypeScript plugin embeds a version as a comment:
 
 ```typescript
-// @seance-version 13
+// @seance-version 14
 ```
 
 This version is extracted by `extractVersion()` in `src/app.zig` and compared against the installed version. If the bundled version is newer, the plugin is reinstalled.
@@ -63,9 +63,9 @@ Current plugin versions:
 
 | Agent | Plugin Version |
 |-------|----------------|
-| OpenCode | `@seance-version 13` |
-| Kilo Code | `@seance-version 13` |
-| MiMo Code | `@seance-version 37` |
+| OpenCode | `@seance-version 14` (V1), `@seance-version 16` (V2) |
+| Kilo Code | `@seance-version 14` |
+| MiMo Code | `@seance-version 38` |
 
 ## Wrapper Scripts
 

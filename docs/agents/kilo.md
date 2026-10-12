@@ -51,7 +51,7 @@ Kilo Code uses a **TypeScript plugin** (`plugins/seance-kilo/index.ts`) auto-ins
 
 A wrapper script (`resources/bin/kilo`) intercepts launches for PID tracking and `session-end` on exit.
 
-**Version:** `@seance-version 13` (same as OpenCode)
+**Version:** `@seance-version 14` (same as OpenCode's V1 port)
 
 ### Event Mapping
 
@@ -76,7 +76,7 @@ Identical to OpenCode:
 - `has_notification_hook` is `true`.
 - **Auto-install target:** `~/.config/kilo/plugins/seance-kilo.ts`
 - **Disabled check:** `SEANCE_KILO_HOOKS_DISABLED=1`.
-- **Subagent detection:** Same heuristic as OpenCode — detects children via `sessionID` mismatch on session events. Uses `completedSessions` to avoid re-tracking. Has `trackChildSession()` / `untrackChildSession()` helper functions.
+- **Subagent detection:** Same heuristic as OpenCode's V1 port — detects children via `sessionID` mismatch on session events. Uses `completedSessions` to avoid re-tracking. Has `trackChildSession()` / `untrackChildSession()` helper functions. (OpenCode's V2 port instead matches on `parentID` in `session.created`, because V2 sessions are first-class.)
 
 ### Upstream Framework Events
 

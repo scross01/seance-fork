@@ -7,6 +7,13 @@ Séance integrates with [OpenCode](https://opencode.ai) through TypeScript plugi
 1. **Plugin auto-installs** on Séance startup (if `~/.config/opencode` exists)
 2. **Plugin hooks into** OpenCode's event system, forwarding lifecycle events to Séance
 3. **Wrapper script** intercepts `opencode` launches, tracks PID, and fires `session-end` on exit
+4. **Wrapper injects a second, inline plugin** — `resources/opencode/seance.mjs` (V1) or
+   `resources/opencode/seance-v2.mjs` (V2) — into that launch only, via
+   `seance ctl opencode-config [--v2] <path>` exported as `OPENCODE_CONFIG_CONTENT`.
+   The inline plugin aggregates every session in the window into the pane's
+   Running/Needs input/Idle state (including completion notices), while the
+   auto-installed plugin drives the lifecycle hooks, `session-end`, and the
+   subagent badge.
 
 Both plugin formats ship: `plugins/seance-opencode/index.ts` for OpenCode V1 and
 `plugins/seance-opencode/index-v2.ts` for V2 (installed as
@@ -60,7 +67,7 @@ wrapper and the GUI auto-installer detect the installed major version via
 - **Per-surface status** — each terminal pane tracks its own agent status independently
 - **Permission detection** — shows "Waiting for permission" when OpenCode asks to run a command
 - **Desktop notifications** — notifies on completion and permission requests
-- **Session directory tracking** — OpenCode exposes session directory via `SEANCE_OPENCODE_SESSION_DIR` environment variable
+- **Multi-session aggregation** — one status per pane even when a V2 window runs several concurrent sessions (see the V2 notes above)
 
 ## Configuration
 
@@ -81,7 +88,7 @@ opencode-hooks = true
 
 ### Integration Approach
 
-OpenCode uses a **TypeScript plugin** (`plugins/seance-opencode/index.ts`) auto-installed to `~/.config/opencode/plugins/`. A wrapper script (`resources/bin/opencode`) intercepts launches for PID tracking and `session-end` on exit.
+OpenCode uses a **TypeScript plugin** (`plugins/seance-opencode/index.ts`) auto-installed to `~/.config/opencode/plugins/seance-opencode.ts`. A wrapper script (`resources/bin/opencode`) intercepts launches for PID tracking, `session-end` on exit, and injects the inline plugin for the launch.
 
 The plugin exports a `SeancePlugin` async function receiving `$` (shell executor). It subscribes to OpenCode's event system and sends hooks via `seance ctl opencode-hook <event>` subprocess with JSON payload piped via stdin.
 
@@ -92,9 +99,15 @@ uses V2's plugin API: it exports `Plugin.define({...})`, streams lifecycle
 events with `ctx.event.subscribe(...)`, observes tool execution with
 `ctx.tool.hook("execute.before"/"execute.after", ...)`, and forwards payloads
 to Séance through an `execFile` bridge (`seance ctl opencode-hook <event>`).
-The wrapper injects it via `seance ctl opencode-config --v2 <path>`, which
-merges into the V2-native `plugins` config key; V1 launches keep using
-`seance ctl opencode-config <path>` with the `plugin` key.
+The wrapper injects the **inline** plugin — `resources/opencode/seance.mjs` for V1,
+`resources/opencode/seance-v2.mjs` for V2 — into the launch with
+`seance ctl opencode-config <path>` (merged into the `plugin` config key) or
+`seance ctl opencode-config --v2 <path>` (merged into the V2-native `plugins`
+config key), exported through `OPENCODE_CONFIG_CONTENT`. This is a different file
+from the auto-installed `~/.config/opencode/plugins/seance-opencode.ts` above:
+the inline plugin aggregates the window's sessions into the pane state, while
+the installed one carries the lifecycle hooks, `session-end`, and the
+subagent-count badge for both majors.
 
 ### Event Mapping
 
