@@ -216,6 +216,7 @@ pub fn build(b: *std.Build) void {
     });
 
     b.installFile("resources/opencode/seance.mjs", "share/seance/opencode/seance.mjs");
+    b.installFile("resources/opencode/seance-v2.mjs", "share/seance/opencode/seance-v2.mjs");
 
     // Install bundled icons (from GNOME Icon Library) into hicolor theme
     b.installDirectory(.{
@@ -291,6 +292,13 @@ pub fn build(b: *std.Build) void {
         b.path("plugins/seance-opencode/index.ts"),
         .prefix,
         "share/seance/opencode-plugin.ts",
+    ).step);
+
+    // Install OpenCode V2 plugin for agent integration
+    b.getInstallStep().dependOn(&b.addInstallFileWithDir(
+        b.path("plugins/seance-opencode/index-v2.ts"),
+        .prefix,
+        "share/seance/opencode-plugin-v2.ts",
     ).step);
 
     // Install Kilo Code plugin for agent integration

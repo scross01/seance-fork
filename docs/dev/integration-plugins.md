@@ -22,7 +22,7 @@ TypeScript plugins are the most common approach. The plugin is a `.ts` file that
 
 | Agent | Install Target | Source |
 |-------|----------------|--------|
-| OpenCode | `~/.config/opencode/plugins/seance-opencode.ts` | `plugins/seance-opencode/index.ts` |
+| OpenCode | `~/.config/opencode/plugins/seance-opencode.ts` | `plugins/seance-opencode/index.ts` (V1), `plugins/seance-opencode/index-v2.ts` (V2) |
 | Kilo Code | `~/.config/kilo/plugins/seance-kilo.ts` | `plugins/seance-kilo/index.ts` |
 | MiMo Code | `~/.config/mimocode/plugins/seance-mimocode.ts` | `plugins/seance-mimocode/index.ts` |
 

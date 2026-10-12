@@ -32,6 +32,8 @@ class OpenCodeWrapperTests(unittest.TestCase):
         plugin = self.wrappers.parent / 'opencode/seance.mjs'
         plugin.parent.mkdir()
         shutil.copy2(ROOT / 'resources/opencode/seance.mjs', plugin)
+        shutil.copy2(ROOT / 'resources/opencode/seance-v2.mjs',
+                     self.wrappers.parent / 'opencode/seance-v2.mjs')
         (self.prefix / 'bin').mkdir()
         self.capture = self.root / 'capture.json'
         self.events = self.root / 'events'
@@ -44,6 +46,8 @@ class OpenCodeWrapperTests(unittest.TestCase):
 import json, os, sys
 from pathlib import Path
 Path(os.environ['TEST_CAPTURE']).write_text(json.dumps({'args': sys.argv[1:], 'env': dict(os.environ)}))
+if '--version' in sys.argv[1:]:
+    print(os.environ.get('TEST_OPENCODE_VERSION', 'v1.1.45'))
 print('agent output')
 sys.exit(int(os.environ.get('TEST_EXIT', '0')))
 ''')
@@ -54,8 +58,10 @@ if sys.argv[-1] == 'ping':
     sys.exit(int(os.environ.get('TEST_PING_EXIT', '0')))
 if sys.argv[2] == 'opencode-config':
     if os.environ.get('TEST_CONFIG_FAIL'): sys.exit(1)
+    v2 = len(sys.argv) > 3 and sys.argv[3] == '--v2'
+    path = sys.argv[4] if v2 else sys.argv[3]
     config = json.loads(os.environ.get('OPENCODE_CONFIG_CONTENT', '{}'))
-    config.setdefault('plugin', []).append(sys.argv[3])
+    config.setdefault('plugins' if v2 else 'plugin', []).append(path)
     print(json.dumps(config))
     sys.exit(0)
 with Path(os.environ['TEST_EVENTS']).open('a') as out:
@@ -71,7 +77,7 @@ sys.exit(int(os.environ.get('TEST_CLEANUP_EXIT', '0')))
     def invoke(self, *args):
         result = subprocess.run([str(self.wrapper), *args], env=self.env, cwd=self.root,
                                 text=True, capture_output=True, timeout=10)
-        self.assertEqual(result.stdout, 'agent output\n')
+        self.assertTrue(result.stdout.endswith('agent output\n'))
         self.assertEqual(result.stderr, '')
         return result, json.loads(self.capture.read_text())
 
@@ -135,6 +141,57 @@ sys.exit(int(os.environ.get('TEST_CLEANUP_EXIT', '0')))
         self.env['PATH'] = f'{links}:{self.wrappers}:{self.bin}:/usr/bin:/bin'
         result, _ = self.invoke('run', 'hello')
         self.assertEqual(result.returncode, 0)
+
+    def test_v2_detection_injects_v2_plugin_under_plugins_key(self):
+        self.env.update(TEST_OPENCODE_VERSION='v2.0.26')
+        result, call = self.invoke('run', 'hello')
+        self.assertEqual(result.returncode, 0)
+        config = json.loads(call['env']['OPENCODE_CONFIG_CONTENT'])
+        self.assertNotIn('plugin', config)
+        self.assertEqual(len(config['plugins']), 1)
+        self.assertTrue(config['plugins'][0].endswith('/opencode/seance-v2.mjs'))
+        self.assertTrue(Path(config['plugins'][0]).is_file())
+        self.assertEqual(call['args'], ['--standalone', 'run', 'hello'])
+        self.assertEqual(json.loads(self.events.read_text())['args'], ['ctl', 'opencode-hook', 'session-end'])
+
+    def test_v2_user_supplied_standalone_is_not_duplicated(self):
+        self.env.update(TEST_OPENCODE_VERSION='v2.0.26')
+        _, call = self.invoke('--standalone', 'run', 'hello')
+        self.assertEqual(call['args'], ['--standalone', 'run', 'hello'])
+        config = json.loads(call['env']['OPENCODE_CONFIG_CONTENT'])
+        self.assertEqual(len(config['plugins']), 1)
+        self.assertTrue(config['plugins'][0].endswith('/opencode/seance-v2.mjs'))
+
+    def test_v2_standalone_opt_out_passes_through(self):
+        self.env.update(TEST_OPENCODE_VERSION='v2.0.26', SEANCE_OPENCODE_V2_STANDALONE='0')
+        _, call = self.invoke('run', 'hello')
+        self.assertEqual(call['args'], ['run', 'hello'])
+        self.assertNotIn('OPENCODE_CONFIG_CONTENT', call['env'])
+        self.assertNotIn('SEANCE_OPENCODE_PID', call['env'])
+        self.assertFalse(self.events.exists())
+
+    def test_server_flag_passes_through(self):
+        args = ('--server', 'http://127.0.0.1:1234', 'run', 'hello')
+        _, call = self.invoke(*args)
+        self.assertEqual(call['args'], list(args))
+        self.assertNotIn('OPENCODE_CONFIG_CONTENT', call['env'])
+        self.assertFalse(self.events.exists())
+
+    def test_unparseable_version_falls_back_to_v1(self):
+        self.env.update(TEST_OPENCODE_VERSION='not-a-version')
+        _, call = self.invoke('run', 'hello')
+        config = json.loads(call['env']['OPENCODE_CONFIG_CONTENT'])
+        self.assertNotIn('plugins', config)
+        self.assertEqual(len(config['plugin']), 1)
+        self.assertTrue(config['plugin'][0].endswith('/opencode/seance.mjs'))
+        self.assertEqual(call['args'], ['run', 'hello'])
+
+    def test_v2_missing_bundle_passes_through(self):
+        self.env.update(TEST_OPENCODE_VERSION='v2.0.26')
+        (self.wrappers.parent / 'opencode/seance-v2.mjs').unlink()
+        _, call = self.invoke('run', 'hello')
+        self.assertNotIn('OPENCODE_CONFIG_CONTENT', call['env'])
+        self.assertFalse(self.events.exists())
 
     def test_plugin_behavior(self):
         node = shutil.which('node')

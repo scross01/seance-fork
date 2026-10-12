@@ -28,23 +28,56 @@ fi
 # not create agent status. --pure deliberately disables external plugins.
 for arg in "$@"; do
     case "$arg" in
-        -h|--help|-v|--version|--pure|--pure=true|--attach|--attach=*) exec "$REAL_OPENCODE" "$@" ;;
+        -h|--help|-v|--version|--pure|--pure=true|--attach|--attach=*|--server|--server=*) exec "$REAL_OPENCODE" "$@" ;;
     esac
 done
 case "${1:-}" in
-    completion|acp|mcp|attach|debug|providers|auth|agent|upgrade|uninstall|serve|web|models|stats|export|import|github|session|plugin|plug|db|help)
+    completion|acp|mcp|attach|debug|providers|auth|agent|upgrade|uninstall|serve|web|models|stats|export|import|github|session|plugin|plug|db|help|api|service|reload|pair|update)
         exec "$REAL_OPENCODE" "$@" ;;
 esac
 
 # Resolve the matching binary from our install prefix (also inside AppImages).
 # Do not accidentally call an older seance found on PATH.
 SEANCE_OPENCODE_BIN="$WRAPPER_DIR/../../../bin/seance"
-PLUGIN="$WRAPPER_DIR/../opencode/seance.mjs"
-if [[ ! -x "$SEANCE_OPENCODE_BIN" || ! -r "$PLUGIN" ]] ||
+if [[ ! -x "$SEANCE_OPENCODE_BIN" ]] ||
    ! timeout 0.75 "$SEANCE_OPENCODE_BIN" ctl ping >/dev/null 2>&1; then
     exec "$REAL_OPENCODE" "$@"
 fi
-if ! CONTENT=$("$SEANCE_OPENCODE_BIN" ctl opencode-config "$PLUGIN"); then
+
+# V1 and V2 share the `opencode` binary name but need different plugin
+# formats. Ask the binary; unparseable output or a failed probe keeps V1.
+OC_MAJOR=1
+version_output="$(timeout 1.5 "$REAL_OPENCODE" --version 2>/dev/null || true)"
+if [[ "$version_output" =~ v?([0-9]+)\. ]]; then
+    OC_MAJOR="${BASH_REMATCH[1]}"
+fi
+OC_STANDALONE=0
+if (( OC_MAJOR >= 2 )); then
+    # Deliberate opt-out: keep the shared service, inject nothing (tracking
+    # cannot work against a service that lacks the SEANCE_* env).
+    if [[ "${SEANCE_OPENCODE_V2_STANDALONE:-1}" == 0 ]]; then
+        exec "$REAL_OPENCODE" "$@"
+    fi
+    # A V2 background service owns plugins and keeps the env of whichever
+    # launch started it, so per-surface attribution is only correct when each
+    # launch runs its own private server. Don't stack a second flag when the
+    # user already asked for one.
+    PLUGIN="$WRAPPER_DIR/../opencode/seance-v2.mjs"
+    CONFIG_ARGS=(--v2 "$PLUGIN")
+    OC_STANDALONE=1
+    for arg in "$@"; do
+        case "$arg" in
+            --standalone) OC_STANDALONE=0 ;;
+        esac
+    done
+else
+    PLUGIN="$WRAPPER_DIR/../opencode/seance.mjs"
+    CONFIG_ARGS=("$PLUGIN")
+fi
+if [[ ! -r "$PLUGIN" ]]; then
+    exec "$REAL_OPENCODE" "$@"
+fi
+if ! CONTENT=$("$SEANCE_OPENCODE_BIN" ctl opencode-config "${CONFIG_ARGS[@]}"); then
     exec "$REAL_OPENCODE" "$@"
 fi
 export OPENCODE_CONFIG_CONTENT="$CONTENT"
@@ -58,5 +91,9 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 trap 'exit 129' HUP
 rc=0
-"$REAL_OPENCODE" "$@" || rc=$?
+if (( OC_STANDALONE )); then
+    "$REAL_OPENCODE" --standalone "$@" || rc=$?
+else
+    "$REAL_OPENCODE" "$@" || rc=$?
+fi
 exit "$rc"

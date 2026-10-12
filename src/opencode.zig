@@ -1,8 +1,24 @@
 const std = @import("std");
 
+/// V1 uses the `plugin` config key, V2 the native `plugins` key.
+pub const PluginKey = enum { v1, v2 };
+
 /// OpenCode's inline config is JSONC. Add our plugin in that final config layer
 /// so global/project config, custom paths, and existing plugins keep their origin.
 pub fn withPlugin(alloc: std.mem.Allocator, input: []const u8, plugin: []const u8) ![]const u8 {
+    return withPluginKey(alloc, input, plugin, .v1);
+}
+
+/// Same as `withPlugin`, but for OpenCode V2's native `plugins` config key.
+pub fn withPluginV2(alloc: std.mem.Allocator, input: []const u8, plugin: []const u8) ![]const u8 {
+    return withPluginKey(alloc, input, plugin, .v2);
+}
+
+fn withPluginKey(alloc: std.mem.Allocator, input: []const u8, plugin: []const u8, key: PluginKey) ![]const u8 {
+    const field: []const u8 = switch (key) {
+        .v1 => "plugin",
+        .v2 => "plugins",
+    };
     const source = if (std.mem.trim(u8, input, " \t\r\n").len == 0) "{}" else input;
     const json = try stripJsonc(alloc, source);
     defer alloc.free(json);
@@ -11,16 +27,32 @@ pub fn withPlugin(alloc: std.mem.Allocator, input: []const u8, plugin: []const u
     const parse_alloc = parsed.arena.allocator();
     var config = parsed.value;
     if (config != .object) return error.InvalidConfig;
-    if (!config.object.contains("plugin")) try config.object.put(parse_alloc, "plugin", .{ .array = std.array_list.Managed(std.json.Value).init(parse_alloc) });
-    const plugins = config.object.getPtr("plugin").?;
+    if (!config.object.contains(field)) try config.object.put(parse_alloc, field, .{ .array = std.array_list.Managed(std.json.Value).init(parse_alloc) });
+    const plugins = config.object.getPtr(field).?;
     if (plugins.* != .array) return error.InvalidPlugins;
     for (plugins.array.items) |item| {
-        const spec = if (item == .array and item.array.items.len > 0) item.array.items[0] else item;
-        if (spec == .string and std.mem.eql(u8, spec.string, plugin))
+        if (entryMatches(item, plugin, key))
             return std.json.Stringify.valueAlloc(alloc, config, .{});
     }
     try plugins.array.append(.{ .string = plugin });
     return std.json.Stringify.valueAlloc(alloc, config, .{});
+}
+
+fn entryMatches(item: std.json.Value, plugin: []const u8, key: PluginKey) bool {
+    switch (key) {
+        .v1 => {
+            const spec = if (item == .array and item.array.items.len > 0) item.array.items[0] else item;
+            return spec == .string and std.mem.eql(u8, spec.string, plugin);
+        },
+        .v2 => switch (item) {
+            .string => |s| return std.mem.eql(u8, s, plugin),
+            .object => |obj| {
+                const pkg = obj.get("package") orelse return false;
+                return pkg == .string and std.mem.eql(u8, pkg.string, plugin);
+            },
+            else => return false,
+        },
+    }
 }
 
 fn stripJsonc(alloc: std.mem.Allocator, source: []const u8) ![]u8 {
@@ -109,4 +141,34 @@ test "plugin injection is idempotent" {
     const alloc = arena.allocator();
     const once = try withPlugin(alloc, "", "/plugin.mjs");
     try std.testing.expectEqualStrings(once, try withPlugin(alloc, once, "/plugin.mjs"));
+}
+
+test "v2 plugin injection uses plugins key, preserves object entries, and is idempotent" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+    const once = try withPluginV2(alloc,
+        \\{"model":"m","plugins":["user-plugin",{"package":"./p.ts","options":{"a":1}}]}
+    , "/opt/seance.mjs");
+    const parsed = try std.json.parseFromSlice(std.json.Value, alloc, once, .{});
+    const config = parsed.value.object;
+    try std.testing.expect(config.get("plugin") == null);
+    const plugins = config.get("plugins").?.array.items;
+    try std.testing.expectEqual(@as(usize, 3), plugins.len);
+    try std.testing.expectEqualStrings("user-plugin", plugins[0].string);
+    try std.testing.expectEqualStrings("./p.ts", plugins[1].object.get("package").?.string);
+    try std.testing.expectEqual(@as(i64, 1), plugins[1].object.get("options").?.object.get("a").?.integer);
+    try std.testing.expectEqualStrings("/opt/seance.mjs", plugins[2].string);
+    try std.testing.expectEqualStrings(once, try withPluginV2(alloc, once, "/opt/seance.mjs"));
+    try std.testing.expectEqualStrings(once, try withPluginV2(alloc, once, "./p.ts"));
+}
+
+test "v2 plugin injection fails without replacing user settings" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+    try std.testing.expectError(error.InvalidConfig, withPluginV2(alloc, "[]", "/plugin.mjs"));
+    try std.testing.expectError(error.InvalidPlugins, withPluginV2(alloc, "{\"plugins\":null}", "/plugin.mjs"));
+    try std.testing.expectError(error.UnterminatedComment, withPluginV2(alloc, "{/* unfinished", "/plugin.mjs"));
+    try std.testing.expectError(error.SyntaxError, withPluginV2(alloc, "{\"plugins\":[,]}", "/plugin.mjs"));
 }

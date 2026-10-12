@@ -28,7 +28,7 @@ Comparison of Séance's agent integration capabilities across all supported agen
 | Kilo Code | TS plugin | `~/.config/kilo/plugins/` | `kilo-plugin.ts` |
 | MiMo Code | TS plugin | `~/.config/mimocode/plugins/` | `mimocode-plugin.ts` |
 | Mistral Vibe | TOML config | `~/.vibe/hooks.toml` | `vibe-hooks.toml` |
-| OpenCode | TS plugin | `~/.config/opencode/plugins/` | `opencode-plugin.ts` |
+| OpenCode | TS plugin | `~/.config/opencode/plugins/` | `opencode-plugin.ts` (V1), `opencode-plugin-v2.ts` (V2) |
 | Pi Agent | Built-in wrapper | *(native)* | *(none)* |
 | Poolside Agent CLI | Session log monitoring | *(inotifywait)* | Wrapper script |
 

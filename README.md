@@ -130,7 +130,7 @@ git submodule update --init --recursive
 Claude Code, Codex, Pi, OpenCode, Kilo Code, MiMo Code, Mistral Vibe, and Antigravity CLI are all tracked automatically — no setup required.
 
 - **Claude Code, Codex, Pi**: Séance installs wrapper scripts that intercept calls to these agents and inject lifecycle hooks transparently.
-- **OpenCode**: On first launch, Séance auto-installs a plugin to `~/.config/opencode/plugins/` if the OpenCode config directory exists.
+- **OpenCode**: On first launch, Séance auto-installs a plugin to `~/.config/opencode/plugins/` if the OpenCode config directory exists. Séance detects the installed OpenCode major version with `opencode --version` and installs the matching plugin for V1 or V2 (V1 on any detection failure).
 - **Kilo Code**: On first launch, Séance auto-installs a plugin to `~/.config/kilo/plugins/` if the Kilo config directory exists.
 - **MiMo Code**: On first launch, Séance auto-installs a plugin to the MiMo Code config directory if it exists.
 - **Mistral Vibe**: Tracked through TOML config hooks appended to `~/.vibe/hooks.toml` by the wrapper on first launch.

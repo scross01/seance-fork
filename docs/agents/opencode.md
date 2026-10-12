@@ -8,6 +8,24 @@ Séance integrates with [OpenCode](https://opencode.ai) through a TypeScript plu
 2. **Plugin hooks into** OpenCode's event system, forwarding lifecycle events to Séance
 3. **Wrapper script** intercepts `opencode` launches, tracks PID, and fires `session-end` on exit
 
+Both plugin formats ship: `plugins/seance-opencode/index.ts` for OpenCode V1 and
+`plugins/seance-opencode/index-v2.ts` for V2 (installed as
+`share/seance/opencode-plugin.ts` / `share/seance/opencode-plugin-v2.ts`). The
+wrapper and the GUI auto-installer detect the installed major version via
+`opencode --version` and select the matching artifact; any detection failure
+(not installed, unparseable output, timeout) keeps the V1 artifacts.
+
+### OpenCode V2 notes
+
+- Wrapper-launched V2 TUI/`run` invocations run `opencode --standalone`
+  (a private server per launch), because a shared V2 background service keeps
+  the environment of whichever launch started it — the bridge would then
+  misattribute per-surface status to that one pane.
+- `SEANCE_OPENCODE_V2_STANDALONE=0` opts out back to the shared service, with
+  tracking disabled (no plugin is injected).
+- `--server` launches pass through untouched: an explicit remote server cannot
+  carry this pane's plugin.
+
 ## Events Handled
 
 | OpenCode Event | Séance Hook | What It Shows |
@@ -51,7 +69,16 @@ OpenCode uses a **TypeScript plugin** (`plugins/seance-opencode/index.ts`) auto-
 
 The plugin exports a `SeancePlugin` async function receiving `$` (shell executor). It subscribes to OpenCode's event system and sends hooks via `seance ctl opencode-hook <event>` subprocess with JSON payload piped via stdin.
 
-**Version:** `@seance-version 13`
+**Version:** `@seance-version 14` (V1) / `@seance-version 15` (V2)
+
+For OpenCode V2 the plugin lives in `plugins/seance-opencode/index-v2.ts` and
+uses V2's plugin API: it exports `Plugin.define({...})`, streams lifecycle
+events with `ctx.event.subscribe(...)`, observes tool execution with
+`ctx.tool.hook("execute.before"/"execute.after", ...)`, and forwards payloads
+to Séance through an `execFile` bridge (`seance ctl opencode-hook <event>`).
+The wrapper injects it via `seance ctl opencode-config --v2 <path>`, which
+merges into the V2-native `plugins` config key; V1 launches keep using
+`seance ctl opencode-config <path>` with the `plugin` key.
 
 ### Event Mapping
 

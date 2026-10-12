@@ -18,6 +18,51 @@ const SEANCE_VIBE_VERSION: u32 = 1;
 const SEANCE_HERMES_PLUGIN_VERSION: u32 = 1;
 pub const SEANCE_POOL_VERSION: u32 = 1;
 
+const OpenCodeMajor = enum(u8) { v1 = 1, v2 = 2 };
+
+/// Ask the installed `opencode` binary which major it is. Any failure — not
+/// installed, unparseable output, timeout — keeps V1 artifacts, which preserves
+/// pre-detection behavior.
+fn detectOpenCodeMajor() OpenCodeMajor {
+    const alloc = std.heap.page_allocator;
+    if (majorFromVersionFlag(alloc, "opencode")) |m| return m;
+    // GUI sessions often run with a minimal PATH; also try the curl installer's default location.
+    const home = io.getenv("HOME") orelse return .v1;
+    const alt = std.fmt.allocPrint(alloc, "{s}/.local/bin/opencode", .{home}) catch return .v1;
+    defer alloc.free(alt);
+    if (majorFromVersionFlag(alloc, alt)) |m| return m;
+    return .v1;
+}
+
+fn majorFromVersionFlag(alloc: std.mem.Allocator, exe: []const u8) ?OpenCodeMajor {
+    const result = std.process.run(alloc, io.get(), .{
+        .argv = &.{ exe, "--version" },
+        .stdout_limit = .limited(64),
+        .stderr_limit = .nothing,
+        .timeout = .{ .duration = .{ .raw = .fromMilliseconds(1500), .clock = .awake } },
+    }) catch return null;
+    defer alloc.free(result.stdout);
+    defer alloc.free(result.stderr);
+    switch (result.term) {
+        .exited => |code| if (code != 0) return null,
+        else => return null,
+    }
+    const major = parseMajor(result.stdout) orelse return null;
+    return if (major >= 2) .v2 else .v1;
+}
+
+/// First ASCII digit run in the first line is the major ("v2.0.26" → 2).
+fn parseMajor(output: []const u8) ?u32 {
+    const line = output[0..(std.mem.indexOfScalar(u8, output, '\n') orelse output.len)];
+    for (line, 0..) |ch, i| {
+        if (ch < '0' or ch > '9') continue;
+        var end = i;
+        while (end < line.len and line[end] >= '0' and line[end] <= '9') : (end += 1) {}
+        return std.fmt.parseInt(u32, line[i..end], 10) catch null;
+    }
+    return null;
+}
+
 /// Auto-install OpenCode plugin if OpenCode config dir exists but plugin is missing.
 pub fn installOpenCodePlugin() void {
     const home = io.getenv("HOME") orelse return;
@@ -26,13 +71,20 @@ pub fn installOpenCodePlugin() void {
     defer alloc.free(config_dir_path);
     _ = std.Io.Dir.openDirAbsolute(io.get(), config_dir_path, .{}) catch return; // no opencode config dir → not installed
 
+    const major = detectOpenCodeMajor();
+    std.log.info("opencode: detected OpenCode v{}", .{@intFromEnum(major)});
+    const bundled_name: []const u8 = switch (major) {
+        .v1 => "opencode-plugin.ts",
+        .v2 => "opencode-plugin-v2.ts",
+    };
+
     // Read bundled plugin
     const bundled_path = blk: {
         var exe_buf: [std.fs.max_path_bytes]u8 = undefined;
         const exe_path = io.executablePath(&exe_buf) catch return;
         const exe_dir = std.fs.path.dirname(exe_path) orelse return;
         const prefix = std.fs.path.dirname(exe_dir) orelse return;
-        break :blk std.fmt.allocPrint(alloc, "{s}/share/seance/opencode-plugin.ts", .{prefix}) catch return;
+        break :blk std.fmt.allocPrint(alloc, "{s}/share/seance/{s}", .{ prefix, bundled_name }) catch return;
     };
     defer alloc.free(bundled_path);
 

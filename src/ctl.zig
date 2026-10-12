@@ -1333,8 +1333,12 @@ fn cmdAntigravityHook(ctx: Ctx) u8 {
 }
 
 fn cmdOpencodeConfig(ctx: Ctx) u8 {
-    if (ctx.rest.len != 1) return 1;
-    const content = @import("opencode.zig").withPlugin(ctx.alloc, io.getenv("OPENCODE_CONFIG_CONTENT") orelse "", ctx.rest[0]) catch {
+    const v2 = ctx.rest.len == 2 and eql(ctx.rest[0], "--v2");
+    if (!v2 and ctx.rest.len != 1) return 1;
+    const plugin = ctx.rest[if (v2) 1 else 0];
+    const input = io.getenv("OPENCODE_CONFIG_CONTENT") orelse "";
+    const oc = @import("opencode.zig");
+    const content = (if (v2) oc.withPluginV2(ctx.alloc, input, plugin) else oc.withPlugin(ctx.alloc, input, plugin)) catch {
         werr("seance: could not add OpenCode plugin to inline config\n");
         return 1;
     };
@@ -2953,6 +2957,8 @@ fn printUsage() void {
         \\  opencode-hook <event>   Handle OpenCode lifecycle event
         \\    Events: session-start, session-end, prompt-submit,
         \\            pre-tool-use, post-tool-use, stop, notification
+        \\  opencode-config [--v2] PATH
+        \\                          Add PATH to the inline OpenCode config
         \\
         \\Kilo Code Hooks:
         \\  kilo-hook <event>       Handle Kilo Code lifecycle event
