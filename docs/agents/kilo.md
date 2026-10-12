@@ -26,7 +26,7 @@ Séance integrates with [Kilo Code](https://kilo.ai) through a TypeScript plugin
 - **Per-surface status** — each terminal pane tracks its own agent status independently
 - **Permission detection** — shows "Waiting for permission" when Kilo asks to run a command
 - **Desktop notifications** — notifies on completion and permission requests
-- **Session directory tracking** — Kilo exposes session directory via `SEANCE_KILO_SESSION_DIR` environment variable
+- **No session directory tracking** — hook payloads carry no working directory, so sessions are plugin-in-memory state (same as OpenCode and MiMo Code)
 
 ## Configuration
 

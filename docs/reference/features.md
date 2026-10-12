@@ -10,8 +10,8 @@ Comparison of Séance's agent integration capabilities across all supported agen
 | Auto-install | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
 | Notification support | Custom | Yes | No | No | No | Custom | Yes | Yes | No | Yes | No | No |
 | AskUser / permission detection | Yes | Yes | No | No | No | Yes | Yes | Yes | No | Yes | No | No |
-| Session directory tracking | No | No | No | No | No | No | Yes | Yes | No | No | No | No |
-| Subagent tracking | No | No | No | No | No | No | No | Yes | No | Yes | No | No |
+| Session directory tracking | Yes | Yes | No | No | No | No | No | No | No | No | Yes | No |
+| Subagent tracking | No | No | No | No | No | No | Yes | Yes | No | Yes | No | No |
 | Status key mode | surface | session | surface | surface | surface | surface | surface | surface | surface | surface | surface | surface |
 | clear\_status\_on\_end | Yes | Yes | Yes | Yes | Yes | No | Yes | Yes | Yes | Yes | Yes | Yes |
 
@@ -53,3 +53,7 @@ Antigravity CLI emits its own notifications (permission requests and idle transi
 ## clear\_status\_on\_end
 
 When `true`, agent status is removed from the sidebar when the session ends. When `false` (Hermes Agent only), status persists after the session ends because the TUI session may outlive individual agent processes.
+
+## Session Directory Tracking
+
+Whether the integration captures the agent session's working directory and uses it in Séance: the directory is stored with the session record (`ctl session list`) and completion notifications read "Completed in `<project>`". It works when a hook payload carries `cwd` — today that is Claude Code's native hook JSON, Pi's injected hook extension, and Antigravity's status snapshot. The plugin-based agents (OpenCode, Kilo, MiMo Code) and the TOML-hook agents (Codex, Mistral Vibe, Hermes Agent) do not send `cwd`; the inotifywait monitors have no payload channel.

@@ -48,7 +48,7 @@ mimocode-hooks = true
 
 ## Limitations
 
-- **No session directory** — MiMo Code manages sessions entirely through plugin in-memory state (unlike OpenCode/Kilo which expose session directories via environment variables)
+- **No session directory** — MiMo Code manages sessions entirely through plugin in-memory state; hook payloads carry no working directory (same as OpenCode and Kilo Code)
 
 ---
 
