@@ -140,8 +140,9 @@ sys.exit(int(os.environ.get('TEST_CLEANUP_EXIT', '0')))
         node = shutil.which('node')
         if not node:
             self.skipTest('Node is required to run plugin regression tests')
-        result = subprocess.run([node, '--test', str(ROOT / 'tests/opencode_plugin.test.mjs')],
-                                text=True, capture_output=True, timeout=30)
+        result = subprocess.run([node, '--test', str(ROOT / 'tests/opencode_plugin.test.mjs'),
+                                 str(ROOT / 'tests/opencode_plugin_v2.test.mjs')],
+                                text=True, capture_output=True, timeout=60)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
 
