@@ -1297,26 +1297,24 @@ fn onAboutAction(_: ?*c.GSimpleAction, _: ?*c.GVariant, data: c.gpointer) callco
     else
         null;
 
-    // appdata is resolved through XDG_DATA_DIRS, so it can be missing in dev
-    // runs and unusual prefixes; fall back to explicit fields so About always
-    // says something.
-    var about = c.adw_about_dialog_new_from_appdata("com.seance-fork.app", "0.5.0");
-    if (@intFromPtr(about) == 0) {
-        about = c.adw_about_dialog_new();
-        const d: *c.AdwAboutDialog = @ptrCast(about);
-        c.adw_about_dialog_set_application_name(d, "Séance-fork");
-        c.adw_about_dialog_set_application_icon(d, "com.seance-fork.app");
-        c.adw_about_dialog_set_version(d, "0.5.0");
-        c.adw_about_dialog_set_developer_name(d, "Stephen Cross");
-        c.adw_about_dialog_set_license_type(d, c.GTK_LICENSE_MIT_X11);
-        c.adw_about_dialog_set_website(d, "https://github.com/scross01/seance-fork");
-        c.adw_about_dialog_set_issue_url(d, "https://github.com/scross01/seance-fork/issues");
-        c.adw_about_dialog_set_comments(
-            d,
-            "A scrolling terminal multiplexer that tracks your AI coding agents.\n\n" ++
-                "Community fork of Séance by no1msd.",
-        );
-    }
+    // AdwAboutDialog's appdata constructor takes a *GResource* path, not an app
+    // id, and aborts via g_error when that resource is missing. This app
+    // registers no GResource (the installed share/metainfo file is an AppStream
+    // catalog entry, not a resource), so set the fields explicitly instead.
+    const about = c.adw_about_dialog_new();
+    const d: *c.AdwAboutDialog = @ptrCast(about);
+    c.adw_about_dialog_set_application_name(d, "Séance-fork");
+    c.adw_about_dialog_set_application_icon(d, "com.seance-fork.app");
+    c.adw_about_dialog_set_version(d, "0.5.1");
+    c.adw_about_dialog_set_developer_name(d, "Stephen Cross");
+    c.adw_about_dialog_set_license_type(d, c.GTK_LICENSE_MIT_X11);
+    c.adw_about_dialog_set_website(d, "https://github.com/scross01/seance-fork");
+    c.adw_about_dialog_set_issue_url(d, "https://github.com/scross01/seance-fork/issues");
+    c.adw_about_dialog_set_comments(
+        d,
+        "A scrolling terminal multiplexer that tracks your AI coding agents.\n\n" ++
+            "Community fork of Séance by no1msd.",
+    );
 
     if (parent) |p| {
         c.adw_dialog_present(@as(*c.AdwDialog, @ptrCast(about)), p);
