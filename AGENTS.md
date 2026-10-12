@@ -18,7 +18,26 @@ make appimage
 
 **Do not use `zig-out/bin/seance` directly** — it lacks installed assets (icons, shell integration, themes). Always use `make run` which installs to `AppDir/usr` first.
 
-Requires: Zig 0.16.0+, GTK4, libadwaita, pkg-config, OpenGL 4.3+.
+Requires: Zig **0.16.0** (pinned), GTK4, libadwaita, pkg-config, OpenGL 4.3+.
+
+### Zig toolchain — pinned to 0.16.0
+
+Zig 0.17.0 may be installed and even be the default `zig` on PATH, but it is
+**not supported for this project yet** — do not build or test with it. The
+`Makefile` pins 0.16.0 and `make build`/`run`/`appimage` abort via a `check-zig`
+target if the resolved toolchain is not exactly 0.16.0.
+
+Resolution order in the Makefile:
+
+1. `make ZIG=/path/to/zig-0.16.0/zig build` — explicit override wins
+2. a `zig` on PATH reporting exactly 0.16.0
+3. the keg-only Homebrew install `/home/linuxbrew/.linuxbrew/opt/zig@0.16/bin/zig`
+   (`brew install zig@0.16`; keg-only, so it is intentionally not on PATH)
+
+For direct `zig build test` invocations (no Makefile target), either use the
+same toolchain explicitly —
+`/home/linuxbrew/.linuxbrew/opt/zig@0.16/bin/zig build test` — or make sure the
+PATH `zig` is 0.16.0. Verify with `make check-zig`.
 
 ## Worktrees
 
