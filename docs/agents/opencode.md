@@ -32,11 +32,20 @@ wrapper and the GUI auto-installer detect the installed major version via
   tracking disabled (no plugin is injected).
 - `--server` launches pass through untouched: an explicit remote server cannot
   carry this pane's plugin.
+- **Shared session storage.** All OpenCode launches — any pane, any
+  workspace, even bare non-séance invocations — read the same on-disk
+  session database (`~/.local/share/opencode/opencode.db`), so the session
+  picker in one pane lists sessions started from any other. `--standalone`
+  isolates the serve process and plugin environment (séance's per-pane
+  status attribution), never session data. Keep each *live* session in one
+  pane: resuming the same session in two tracked panes at once makes both
+  plugins adopt it, and the session-store record flips to the last writer.
 - A V2 window can run several sessions at once (session picker, background
   tasks). Séance shows one status per pane: it is **Running** while any
-  session in the window is executing, and **Needs input** while any session
-  waits on a permission or form. The subagent badge counts only real
+  session in the window is executing. The subagent badge counts only real
   subagents — sessions created with a `parentID` — not independent sessions.
+  **Needs input** status and question/form alerts depend on the inline
+  plugin, which does not currently load on V2 (see Limitations).
 
 ## Events Handled
 
@@ -81,6 +90,7 @@ opencode-hooks = true
 
 - **Subagent counting is session-based** — subagent counts come from child sessions (`session.created` with `parentID`); independent sessions in the same window share the pane's status instead of being counted
 - **No session directory** — session is managed through plugin in-memory state
+- **V2 inline plugin does not load (known bug, plan 066)** — OpenCode 2.x requires `plugins` config entries to be *directories*, and séance's per-launch injection passes a file path, so the inline plugin (`resources/opencode/seance-v2.mjs`) is rejected at serve startup (`configured plugin path must be a directory` in `~/.local/share/opencode/log/opencode.log`). Until fixed, V2 has no question/form alerts and no **Needs input** status; tool-permission notifications still work through the global plugin. The fix points the injection at a plugin directory — no plugin-logic changes
 
 ---
 
