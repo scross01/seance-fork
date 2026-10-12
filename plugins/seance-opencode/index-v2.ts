@@ -1,6 +1,6 @@
 // Séance plugin for OpenCode V2
 // Copy to ~/.config/opencode/plugins/seance-opencode.ts
-// @seance-version 15
+// @seance-version 16
 
 import { Plugin } from "@opencode/plugin";
 import { execFile } from "node:child_process";
@@ -21,7 +21,9 @@ export default Plugin.define({
     let sessionIdle = false;
     let permissionPending = false;
     let childSessions = new Set();
+    let peerSessions = new Set();
     let completedSessions = new Set();
+    let executing = new Set();
     let subagentCount = 0;
 
     function send(args, payload) {
@@ -87,61 +89,85 @@ export default Plugin.define({
             currentSessionId = eventSessionId;
             sessionIdle = false;
             childSessions.clear();
+            peerSessions.clear();
             completedSessions.clear();
+            executing.clear();
             subagentCount = 0;
             await hook("session-start");
             await hook("prompt-submit");
           } else if (eventSessionId && eventSessionId !== currentSessionId) {
-            await trackChildSession(eventSessionId);
+            // V2 subagents carry parentID; any other session is an independent
+            // session sharing this window's single status (V1 counted every
+            // second session as a subagent).
+            if (payload.parentID) await trackChildSession(eventSessionId);
+            else peerSessions.add(eventSessionId);
           }
           break;
 
-        case "session.execution.started":
+        case "session.execution.started": {
+          let adopted = false;
           if (!currentSessionId && eventSessionId) {
             currentSessionId = eventSessionId;
             sessionIdle = false;
             childSessions.clear();
+            peerSessions.clear();
             completedSessions.clear();
+            executing.clear();
             subagentCount = 0;
             await hook("session-start");
             await hook("prompt-submit");
-          } else if (!eventSessionId || eventSessionId === currentSessionId) {
+            adopted = true;
+          }
+          const execId = eventSessionId ?? currentSessionId;
+          if (!execId || childSessions.has(execId)) break;
+          if (executing.size === 0) {
             sessionIdle = false;
             permissionPending = false;
-            await hook("prompt-submit");
+            if (!adopted) await hook("prompt-submit");
           }
+          executing.add(execId);
           break;
+        }
 
         case "session.execution.succeeded":
         case "session.execution.failed":
         case "session.execution.interrupted":
-          if (!eventSessionId || eventSessionId === currentSessionId) {
-            if (permissionPending) {
-              permissionPending = false;
-            } else {
-              sessionIdle = true;
-              await hook("stop");
-            }
-          } else {
+          if (eventSessionId && childSessions.has(eventSessionId)) {
             await untrackChildSession(eventSessionId);
+            break;
           }
+          if (eventSessionId) executing.delete(eventSessionId);
+          if (executing.size > 0) break;
+          if (permissionPending) {
+            permissionPending = false;
+            break;
+          }
+          sessionIdle = true;
+          await hook("stop");
           break;
 
         case "session.deleted":
           if (!eventSessionId || eventSessionId === currentSessionId) {
             childSessions.clear();
+            peerSessions.clear();
             completedSessions.clear();
+            executing.clear();
             subagentCount = 0;
             await updateCounts();
             await hook("session-end");
             currentSessionId = undefined;
           } else {
+            const wasExecuting = peerSessions.delete(eventSessionId) && executing.delete(eventSessionId);
             await untrackChildSession(eventSessionId);
+            if (wasExecuting && executing.size === 0) {
+              sessionIdle = true;
+              await hook("stop");
+            }
           }
           break;
 
         case "permission.asked":
-          if (!sessionIdle && (!eventSessionId || eventSessionId === currentSessionId)) {
+          if (!sessionIdle) {
             permissionPending = true;
             const permType = payload.action ?? "unknown";
             const resources = payload.resources;
@@ -173,12 +199,12 @@ export default Plugin.define({
     })().catch(() => {});
 
     await ctx.tool.hook("execute.before", async (event) => {
-      if (!event.sessionID || event.sessionID === currentSessionId) {
+      if (!event.sessionID || event.sessionID === currentSessionId || peerSessions.has(event.sessionID)) {
         await hook("pre-tool-use", { tool_name: event.tool });
       }
     });
     await ctx.tool.hook("execute.after", async (event) => {
-      if (!event.sessionID || event.sessionID === currentSessionId) {
+      if (!event.sessionID || event.sessionID === currentSessionId || peerSessions.has(event.sessionID)) {
         await hook("post-tool-use", { tool_name: event.tool });
       }
     });

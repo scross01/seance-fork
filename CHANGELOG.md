@@ -8,6 +8,10 @@
   fallback) and per-launch `--standalone` private servers so each pane's
   status stays correctly attributed (`SEANCE_OPENCODE_V2_STANDALONE=0` opts
   out; explicit `--server` targets pass through untracked).
+- Multi-session awareness for OpenCode V2 windows: the pane is **Running**
+  while any session in the window executes and the subagent badge counts only
+  sessions with a `parentID`, so independent concurrent sessions no longer
+  inflate the count or leave a working pane marked idle.
 
 ## [0.5.1]
 

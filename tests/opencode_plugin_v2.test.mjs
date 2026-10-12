@@ -326,3 +326,35 @@ test('global: resumed session adopts on execution.started, failure stops, deleti
   assert.equal(f.stream.signal.aborted, true);
   assert.deepEqual(rejections, []);
 });
+
+test('global: independent sessions are not subagents and share the pane status', async (t) => {
+  const f = await fixture(t, { source: GLOBAL_SRC });
+  await f.feed('session.created', { sessionID: 'ses_1' });
+  await f.feed('session.created', { sessionID: 'ses_2' });
+  assert.deepEqual(await f.commands(), ['session-start', 'prompt-submit']);
+  assert.equal((await f.events()).some((e) => e.args.at(-1) === 'subagent-update'), false);
+  await f.feed('session.execution.started', { sessionID: 'ses_2' });
+  await f.feed('session.execution.started', { sessionID: 'ses_1' });
+  assert.equal((await f.commands()).filter((c) => c === 'prompt-submit').length, 2);
+  await f.feed('permission.asked', { sessionID: 'ses_2', id: 'p1', action: 'bash', resources: ['ls'] });
+  await f.feed('permission.replied', { sessionID: 'ses_2', requestID: 'p1' });
+  await f.feed('session.execution.succeeded', { sessionID: 'ses_2' });
+  assert.equal((await f.commands()).at(-1), 'notification'); // ses_1 still executing: no stop
+  await f.feed('session.execution.succeeded', { sessionID: 'ses_1' });
+  assert.deepEqual(await f.commands(),
+    ['session-start', 'prompt-submit', 'prompt-submit', 'notification', 'stop']);
+});
+
+test('global: subagent count only counts sessions with a parentID', async (t) => {
+  const f = await fixture(t, { source: GLOBAL_SRC });
+  await f.feed('session.created', { sessionID: 'ses_1' });
+  await f.feed('session.created', { sessionID: 'ses_2', parentID: 'ses_1' });
+  await f.feed('session.created', { sessionID: 'ses_3' });
+  await f.feed('session.created', { sessionID: 'ses_4', parentID: 'ses_2' });
+  const counts = (await f.events()).filter((e) => e.args.at(-1) === 'subagent-update');
+  assert.deepEqual(counts.at(-1).payload, { workspace_id: '1', subagent_count: 2, background_count: 0 });
+  await f.feed('session.deleted', { sessionID: 'ses_3' });
+  const after = (await f.events()).filter((e) => e.args.at(-1) === 'subagent-update');
+  assert.equal(after.length, counts.length);
+  assert.equal(after.at(-1).payload.subagent_count, 2);
+});

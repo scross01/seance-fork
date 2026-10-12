@@ -30,7 +30,7 @@ TypeScript plugins are the most common approach. The plugin is a `.ts` file that
 ```typescript
 // @seance-version 14
 ```
-(OpenCode currently ships `14` for its V1 plugin and `15` for the V2 port.)
+(OpenCode currently ships `14` for its V1 plugin and `16` for the V2 port.)
 
 This version is extracted by `extractVersion()` in `src/app.zig` and compared against the installed version. If the bundled version is newer, the plugin is reinstalled.
 
