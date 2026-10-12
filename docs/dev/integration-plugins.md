@@ -16,7 +16,7 @@ Plugin-based integrations use the agent's native plugin system to subscribe to l
 
 Used by: **OpenCode**, **Kilo Code**, **MiMo Code**
 
-TypeScript plugins are the most common approach. The plugin is a `.ts` file that exports a `SeancePlugin` async function receiving `$` (shell executor). It subscribes to the agent's event system and sends hooks via subprocess calls.
+TypeScript plugins are the most common approach. The plugin is a `.ts` file that exports a `SeancePlugin` async function receiving `$` (shell executor). It subscribes to the agent's event system and sends hooks via subprocess calls. OpenCode V2 broke that API, so its port instead exports `Plugin.define({...})` from `@opencode/plugin` and subscribes via `ctx.event.subscribe(...)`/`ctx.tool.hook(...)` — both formats speak the same `seance ctl` wire protocol.
 
 **Install locations:**
 
@@ -28,8 +28,9 @@ TypeScript plugins are the most common approach. The plugin is a `.ts` file that
 
 **Version tracking:** Each plugin embeds a version comment:
 ```typescript
-// @seance-version 13
+// @seance-version 14
 ```
+(OpenCode currently ships `14` for its V1 plugin and `15` for the V2 port.)
 
 This version is extracted by `extractVersion()` in `src/app.zig` and compared against the installed version. If the bundled version is newer, the plugin is reinstalled.
 
@@ -62,7 +63,7 @@ Agent Framework → Plugin → seance ctl <agent>-hook → Socket API → Worksp
 Plugins are auto-installed on Séance startup:
 
 1. **Check if agent is installed** — verify the config directory exists
-2. **Read bundled plugin** — from `{prefix}/share/seance/{name}-plugin.ts`
+2. **Read bundled plugin** — from `{prefix}/share/seance/{name}-plugin.ts` (OpenCode installs both `{name}-plugin.ts` and `{name}-plugin-v2.ts`; the detected major version selects which is installed to the same target filename)
 3. **Compare version and content** — extract `@seance-version` from bundled and installed plugins
 4. **Write atomically** — if outdated or missing, write to a `.tmp` file then rename (atomic replace)
 

@@ -1,5 +1,14 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- OpenCode V2 support: both Séance plugins ported to the V2 plugin API, with
+  version-aware launch/install selection via `opencode --version` (V1-safe
+  fallback) and per-launch `--standalone` private servers so each pane's
+  status stays correctly attributed (`SEANCE_OPENCODE_V2_STANDALONE=0` opts
+  out; explicit `--server` targets pass through untracked).
+
 ## [0.5.1]
 
 ### Changed

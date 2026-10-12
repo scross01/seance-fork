@@ -1,6 +1,6 @@
 # OpenCode Integration
 
-Séance integrates with [OpenCode](https://opencode.ai) through a TypeScript plugin that auto-installs to `~/.config/opencode/plugins/`.
+Séance integrates with [OpenCode](https://opencode.ai) through TypeScript plugins that auto-install to `~/.config/opencode/plugins/` (V1 and V2 formats — Séance selects the one matching the installed major version).
 
 ## How It Works
 
@@ -38,6 +38,17 @@ wrapper and the GUI auto-installer detect the installed major version via
 | `session.idle` | `stop` | Idle |
 | `session.error` | `session-end` | (cleared) |
 | `session.updated` | `session-start` | Running |
+
+> **V1 vs V2 vocabulary:** the table above uses OpenCode V1 event names. The V2
+> plugin receives V2's renamed lifecycle events instead —
+> `session.execution.started` (busy → `prompt-submit`),
+> `session.execution.succeeded`/`session.execution.interrupted` (idle → `stop`),
+> `session.execution.failed` (error notice + `stop`), and `session.deleted`
+> (`session-end`). V1's `question.*` events were replaced by
+> `form.created`/`form.replied`/`form.cancelled` (**Needs input**), and
+> `permission.asked`/`permission.replied` keep their names but their payload
+> fields became `action`/`resources` (V1: `permission`/`patterns`). The
+> Séance-side hooks and JSON payloads are identical for both formats.
 
 ## Features
 
@@ -94,7 +105,7 @@ merges into the V2-native `plugins` config key; V1 launches keep using
 | `permission.asked` | `notification` | Needs input |
 | `permission.replied` | (no-op) | — |
 
-**Unhandled events:** `session.deleted`, `session.compacted`, `session.diff`, all message events, all file events, all LSP events, `command.executed`, `shell.env`, `todo.updated`.
+**Unhandled events:** `session.deleted` (V1; the V2 port does handle it — `session-end`), `session.compacted`, `session.diff`, all message events, all file events, all LSP events, `command.executed`, `shell.env`, `todo.updated`.
 
 ### Key Implementation Details
 
@@ -109,7 +120,7 @@ merges into the V2-native `plugins` config key; V1 launches keep using
 
 ### Upstream Framework Events
 
-**Source:** [opencode.ai/docs/plugins](https://opencode.ai/docs/plugins)
+**Source (V1):** [opencode.ai/docs/plugins](https://opencode.ai/docs/plugins) — the V2 event registry is documented at [opencode.ai/v2/docs/plugins](https://opencode.ai/v2/docs/plugins)
 
 OpenCode's full event system includes:
 
@@ -120,7 +131,7 @@ OpenCode's full event system includes:
 | `session.idle` | Session became idle | Yes |
 | `session.error` | Session error occurred | Yes |
 | `session.status` | Session status changed (busy/idle) | Yes |
-| `session.deleted` | Session was deleted | **No** |
+| `session.deleted` | Session was deleted | **V1: No · V2: Yes** |
 | `session.compacted` | Session context was compacted | **No** |
 | `session.diff` | Session diff available | **No** |
 | `message.updated` | Message content updated | **No** |
@@ -147,7 +158,7 @@ Events that OpenCode can emit but Séance does not currently handle:
 
 | Event | Potential Use for Séance |
 |-------|--------------------------|
-| `session.deleted` | Clear status when session is explicitly deleted |
+| `session.deleted` | Clear status when session is explicitly deleted (done by the V2 port; not on V1) |
 | `session.compacted` | Show compaction indicator in status |
 | `message.updated` | Track conversation progress |
 | `file.edited` | Show file modification activity |

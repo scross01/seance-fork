@@ -44,11 +44,16 @@ across panes and restarts; changes to the hook definitions require a new review.
 Séance adds its hooks for the current invocation and keeps your Codex home,
 existing hooks, authentication, and history in place.
 
-OpenCode's bundled plugin is added for each local launch through its inline
-configuration. Existing configuration, plugins, authentication, and history stay
-in place. Resumed sessions and subagents contribute to the pane's status;
-permission requests and questions show **Needs input** until answered.
-Remote `opencode attach` sessions and `--pure` launches are not tracked.
+Séance supports both OpenCode majors: it detects the installed version with
+`opencode --version` and adds the matching bundled plugin (V1 or V2) for each
+local launch through its inline configuration. Existing configuration, plugins,
+authentication, and history stay in place. Resumed sessions and subagents
+contribute to the pane's status; permission requests and questions show
+**Needs input** until answered. V2 launches run `opencode --standalone` (a
+private server per launch) so each pane's status stays attributed to its own
+surface; set `SEANCE_OPENCODE_V2_STANDALONE=0` to opt out. Remote
+`opencode attach` sessions, explicit `--server` targets, and `--pure` launches
+are not tracked.
 Disable tracking in **Settings → Integrations → OpenCode Integration**, or set
 `opencode-hooks = false` under `[behavior]` in Séance's configuration, then open a new pane.
 
