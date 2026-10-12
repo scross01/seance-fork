@@ -1160,17 +1160,13 @@ pub const WindowState = struct {
         c.gtk_menu_button_set_icon_name(@ptrCast(menu_btn), "open-menu-symbolic");
         c.gtk_widget_set_tooltip_text(@ptrCast(menu_btn), "Main menu");
         const menu = c.g_menu_new();
-        c.g_menu_append(@ptrCast(@alignCast(menu)), "Preferences", "preferences");
-        c.g_menu_append(@ptrCast(@alignCast(menu)), "Keyboard shortcuts", "shortcuts");
-        c.g_menu_append(@ptrCast(@alignCast(menu)), "About Séance", "about");
-        c.g_menu_append(@ptrCast(@alignCast(menu)), "Quit", "quit");
+        c.g_menu_append(@ptrCast(@alignCast(menu)), "Preferences", "app.preferences");
+        c.g_menu_append(@ptrCast(@alignCast(menu)), "Keyboard shortcuts", "app.shortcuts");
+        c.g_menu_append(@ptrCast(@alignCast(menu)), "About Séance", "app.about");
+        c.g_menu_append(@ptrCast(@alignCast(menu)), "Quit", "app.quit");
         c.gtk_menu_button_set_menu_model(@ptrCast(menu_btn), @ptrCast(@alignCast(menu)));
         c.g_object_unref(@ptrCast(menu));
         c.adw_header_bar_pack_end(@ptrCast(header), @ptrCast(menu_btn));
-
-        const settings_btn = c.gtk_button_new_from_icon_name("emblem-system-symbolic");
-        c.gtk_widget_set_tooltip_text(@ptrCast(settings_btn), "Settings");
-        c.adw_header_bar_pack_end(@ptrCast(header), @ptrCast(settings_btn));
 
         const hide_icon: [*:0]const u8 = if (self.config.sidebar_position == .right) "sidebar-show-right-symbolic" else "sidebar-show-symbolic";
         const hide_btn = c.gtk_button_new_from_icon_name(hide_icon);
@@ -1200,7 +1196,6 @@ pub const WindowState = struct {
         _ = c.g_signal_connect_data(@ptrCast(add_btn), "clicked", @ptrCast(&sidebar_mod.onAddClicked), @ptrCast(sidebar_ptr), null, 0);
         _ = c.g_signal_connect_data(@ptrCast(notif_btn), "clicked", @ptrCast(&sidebar_mod.onNotifToggleClicked), @ptrCast(sidebar_ptr), null, 0);
         _ = c.g_signal_connect_data(@ptrCast(hide_btn), "clicked", @ptrCast(&sidebar_mod.onSidebarHideClicked), @ptrCast(sidebar_ptr), null, 0);
-        _ = c.g_signal_connect_data(@ptrCast(settings_btn), "clicked", @ptrCast(&sidebar_mod.onSettingsClicked), @ptrCast(sidebar_ptr), null, 0);
 
         const toolbar_view = c.adw_toolbar_view_new();
         c.adw_toolbar_view_add_top_bar(@as(*c.AdwToolbarView, @ptrCast(toolbar_view)), @ptrCast(header));

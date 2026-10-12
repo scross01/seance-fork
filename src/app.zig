@@ -1273,17 +1273,6 @@ fn initAppMenu(app: *c.AdwApplication) void {
         @intCast(entries.len),
         @ptrCast(@alignCast(app)),
     );
-
-    // gtk_application_set_accels_for_action walks a sentinel-terminated array. An
-    // earlier attempt used an empty string as the terminator and GTK read past
-    // the end of the array into stack garbage, so the terminator must be a real
-    // null element -- hence the optional element type.
-    const accels_quit = [_]?[*:0]const u8{ "<Control>Q", null };
-    c.gtk_application_set_accels_for_action(gtkApp(app), "quit", @ptrCast(&accels_quit));
-    const accels_prefs = [_]?[*:0]const u8{ "<Control>comma", null };
-    c.gtk_application_set_accels_for_action(gtkApp(app), "preferences", @ptrCast(&accels_prefs));
-    const accels_sc = [_]?[*:0]const u8{ "F1", null };
-    c.gtk_application_set_accels_for_action(gtkApp(app), "shortcuts", @ptrCast(&accels_sc));
 }
 
 fn onPreferencesAction(_: ?*c.GSimpleAction, _: ?*c.GVariant, data: c.gpointer) callconv(.c) void {
