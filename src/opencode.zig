@@ -163,6 +163,20 @@ test "v2 plugin injection uses plugins key, preserves object entries, and is ide
     try std.testing.expectEqualStrings(once, try withPluginV2(alloc, once, "./p.ts"));
 }
 
+test "v2 plugin injection is idempotent for a directory entry" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+    // OpenCode 2.x `plugins` entries are DIRECTORIES, not file paths.
+    const dir = "/usr/share/seance/opencode/inline";
+    const once = try withPluginV2(alloc, "{}", dir);
+    try std.testing.expectEqualStrings(once, try withPluginV2(alloc, once, dir));
+    const parsed = try std.json.parseFromSlice(std.json.Value, alloc, once, .{});
+    const plugins = parsed.value.object.get("plugins").?.array.items;
+    try std.testing.expectEqual(@as(usize, 1), plugins.len);
+    try std.testing.expectEqualStrings(dir, plugins[0].string);
+}
+
 test "v2 plugin injection fails without replacing user settings" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();

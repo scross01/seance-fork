@@ -62,8 +62,10 @@ if (( OC_MAJOR >= 2 )); then
     # launch started it, so per-surface attribution is only correct when each
     # launch runs its own private server. Don't stack a second flag when the
     # user already asked for one.
-    PLUGIN="$WRAPPER_DIR/../opencode/seance-v2.mjs"
-    CONFIG_ARGS=(--v2 "$PLUGIN")
+    # V2 rejects file paths in `plugins`; it loads a DIRECTORY and only its
+    # index.mjs/index.ts entrypoint. V1 keeps the file path below.
+    PLUGIN="$WRAPPER_DIR/../opencode/inline/index.mjs"
+    CONFIG_ARGS=(--v2 "$WRAPPER_DIR/../opencode/inline")
     OC_STANDALONE=1
     for arg in "$@"; do
         case "$arg" in

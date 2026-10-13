@@ -27,6 +27,15 @@
   pane is Idle. Single-session windows render no suffix (OpenCode V2 plugin
   version 19).
 
+### Fixed
+- OpenCode V2: the per-launch inline plugin now loads. OpenCode 2.x requires
+  `plugins` config entries to be *directories* whose entrypoint is named
+  `index.mjs`/`index.ts`, and séance injected a file path, so the inline was
+  rejected (`configured plugin path must be a directory`) and question/form
+  alerts plus the **Needs input** sidebar status never fired on V2. The inline
+  is installed as `share/seance/opencode/inline/index.mjs` and the wrapper
+  injects that directory; V1 keeps its file-path injection.
+
 ### Changed
 - OpenCode-family tool names (`shell`, `read`, `edit`, `patch`, `glob`,
   `grep`, `list`, `subagent`, `webfetch`, `websearch`, …) now map to readable

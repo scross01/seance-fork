@@ -32,8 +32,9 @@ class OpenCodeWrapperTests(unittest.TestCase):
         plugin = self.wrappers.parent / 'opencode/seance.mjs'
         plugin.parent.mkdir()
         shutil.copy2(ROOT / 'resources/opencode/seance.mjs', plugin)
-        shutil.copy2(ROOT / 'resources/opencode/seance-v2.mjs',
-                     self.wrappers.parent / 'opencode/seance-v2.mjs')
+        inline = self.wrappers.parent / 'opencode/inline'
+        inline.mkdir()
+        shutil.copy2(ROOT / 'resources/opencode/seance-v2.mjs', inline / 'index.mjs')
         (self.prefix / 'bin').mkdir()
         self.capture = self.root / 'capture.json'
         self.events = self.root / 'events'
@@ -149,8 +150,12 @@ sys.exit(int(os.environ.get('TEST_CLEANUP_EXIT', '0')))
         config = json.loads(call['env']['OPENCODE_CONFIG_CONTENT'])
         self.assertNotIn('plugin', config)
         self.assertEqual(len(config['plugins']), 1)
-        self.assertTrue(config['plugins'][0].endswith('/opencode/seance-v2.mjs'))
-        self.assertTrue(Path(config['plugins'][0]).is_file())
+        # OpenCode 2.x loads a plugins DIRECTORY and only its index.mjs entrypoint.
+        entry = Path(config['plugins'][0])
+        self.assertEqual(entry.name, 'inline')
+        self.assertTrue(entry.is_dir())
+        self.assertTrue((entry / 'index.mjs').is_file())
+        self.assertTrue((self.wrappers.parent / 'opencode/inline/index.mjs').is_file())
         self.assertEqual(call['args'], ['--standalone', 'run', 'hello'])
         self.assertEqual(json.loads(self.events.read_text())['args'], ['ctl', 'opencode-hook', 'session-end'])
 
@@ -160,7 +165,7 @@ sys.exit(int(os.environ.get('TEST_CLEANUP_EXIT', '0')))
         self.assertEqual(call['args'], ['--standalone', 'run', 'hello'])
         config = json.loads(call['env']['OPENCODE_CONFIG_CONTENT'])
         self.assertEqual(len(config['plugins']), 1)
-        self.assertTrue(config['plugins'][0].endswith('/opencode/seance-v2.mjs'))
+        self.assertTrue(config['plugins'][0].endswith('/opencode/inline'))
 
     def test_v2_standalone_opt_out_passes_through(self):
         self.env.update(TEST_OPENCODE_VERSION='v2.0.26', SEANCE_OPENCODE_V2_STANDALONE='0')
@@ -188,7 +193,7 @@ sys.exit(int(os.environ.get('TEST_CLEANUP_EXIT', '0')))
 
     def test_v2_missing_bundle_passes_through(self):
         self.env.update(TEST_OPENCODE_VERSION='v2.0.26')
-        (self.wrappers.parent / 'opencode/seance-v2.mjs').unlink()
+        (self.wrappers.parent / 'opencode/inline/index.mjs').unlink()
         _, call = self.invoke('run', 'hello')
         self.assertNotIn('OPENCODE_CONFIG_CONTENT', call['env'])
         self.assertFalse(self.events.exists())

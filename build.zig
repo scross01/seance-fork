@@ -216,7 +216,9 @@ pub fn build(b: *std.Build) void {
     });
 
     b.installFile("resources/opencode/seance.mjs", "share/seance/opencode/seance.mjs");
-    b.installFile("resources/opencode/seance-v2.mjs", "share/seance/opencode/seance-v2.mjs");
+    // OpenCode V2 `plugins` entries must be DIRECTORIES and only an entrypoint
+    // named index.mjs/index.ts inside them is loaded (plan 066).
+    b.installFile("resources/opencode/seance-v2.mjs", "share/seance/opencode/inline/index.mjs");
 
     // Install bundled icons (from GNOME Icon Library) into hicolor theme
     b.installDirectory(.{

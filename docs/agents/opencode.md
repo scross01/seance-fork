@@ -22,6 +22,29 @@ wrapper and the GUI auto-installer detect the installed major version via
 `opencode --version` and select the matching artifact; any detection failure
 (not installed, unparseable output, timeout) keeps the V1 artifacts.
 
+### Inline plugin: V1 takes a file, V2 takes a directory
+
+OpenCode changed the semantics of the `plugins` config key between majors, and
+the wrapper injects a different shape accordingly:
+
+- **V1** — `plugins`/`plugin` entries are **file paths**. The wrapper injects
+  `share/seance/opencode/seance.mjs`.
+- **V2** — `plugins` entries must be **directories**, and only an entrypoint
+  named `index.mjs`/`index.ts` inside one is loaded (`plugin.ts`,
+  `package.json` `main`, and any sibling file are ignored). The wrapper injects
+  the directory `share/seance/opencode/inline/`, which contains exactly one
+  file: `index.mjs` (installed from the same `resources/opencode/seance-v2.mjs`).
+
+  > Verified live against OpenCode 2.0.26: a file-shaped entry logs
+  > `configured plugin path must be a directory` at location boot and the inline
+  > silently never loads; an `index.mjs` entrypoint logs
+  > `loading plugin id=<dir> entrypoint=<dir>/index.mjs`.
+
+  Nothing about the plugin's contents changed — only the path shape handed to
+  OpenCode. The installed `inline/` directory holds no other files on purpose:
+  pointing V2 at `share/seance/opencode/` would also load `seance.mjs`, which
+  is V1-format and fails noisily.
+
 ### OpenCode V2 notes
 
 - Wrapper-launched V2 TUI/`run` invocations run `opencode --standalone`
@@ -48,8 +71,8 @@ wrapper and the GUI auto-installer detect the installed major version via
   created or closed rather than waiting for the next activity; a
   single-session window renders no suffix. The subagent badge counts only
   real subagents — sessions created with a `parentID` — not independent
-  sessions. **Needs input** status and question/form alerts depend on the
-  inline plugin, which does not currently load on V2 (see Limitations).
+  sessions. **Needs input** status and question/form alerts come from the
+  inline plugin, which V2 loads from the `inline/` directory (see below).
 
 ## Events Handled
 
@@ -94,7 +117,7 @@ opencode-hooks = true
 ## Limitations
 
 - **Subagent counting is session-based** — subagent counts come from child sessions (`session.created` with `parentID`); independent sessions in the same window share the pane's status instead of being counted
-- **V2 inline plugin does not load (known bug, plan 066)** — OpenCode 2.x requires `plugins` config entries to be *directories*, and séance's per-launch injection passes a file path, so the inline plugin (`resources/opencode/seance-v2.mjs`) is rejected at serve startup (`configured plugin path must be a directory` in `~/.local/share/opencode/log/opencode.log`). Until fixed, V2 has no question/form alerts and no **Needs input** status; tool-permission notifications still work through the global plugin. The fix points the injection at a plugin directory — no plugin-logic changes
+- **V2 plugin paths are directories** — the wrapper's V2 injection only works while `share/seance/opencode/inline/index.mjs` keeps that exact name; renaming it (or adding a second file to `inline/`) silently disables the inline plugin on V2. See "Inline plugin: V1 takes a file, V2 takes a directory"
 
 ---
 
@@ -115,13 +138,32 @@ events with `ctx.event.subscribe(...)`, observes tool execution with
 to Séance through an `execFile` bridge (`seance ctl opencode-hook <event>`).
 The wrapper injects the **inline** plugin — `resources/opencode/seance.mjs` for V1,
 `resources/opencode/seance-v2.mjs` for V2 — into the launch with
-`seance ctl opencode-config <path>` (merged into the `plugin` config key) or
-`seance ctl opencode-config --v2 <path>` (merged into the V2-native `plugins`
-config key), exported through `OPENCODE_CONFIG_CONTENT`. This is a different file
+`seance ctl opencode-config <path>` (merged into the `plugin` config key, V1
+takes a **file path**) or `seance ctl opencode-config --v2 <dir>` (merged into
+the V2-native `plugins` config key, V2 takes a **directory** whose entrypoint
+must be named `index.mjs`/`index.ts`), exported through
+`OPENCODE_CONFIG_CONTENT`. The V2 inline is installed as
+`share/seance/opencode/inline/index.mjs`; the V1 one as
+`share/seance/opencode/seance.mjs`. This is a different file
 from the auto-installed `~/.config/opencode/plugins/seance-opencode.ts` above:
 the inline plugin aggregates the window's sessions into the pane state, while
 the installed one carries the lifecycle hooks, `session-end`, the
 subagent-count badge for both majors, and (V2) the session count.
+
+**Verifying that the inline actually loads:** `opencode run` never initializes
+the plugin host (verified on 2.0.26 — a full successful turn produces zero hook
+calls), so plugin loading must be observed at *location boot*, which happens on
+the first authenticated API request:
+
+```bash
+sleep 600 | OPENCODE_CONFIG_CONTENT="$CONTENT" OPENCODE_PASSWORD=verify \
+  opencode serve --stdio --port 0 &   # keep stdin open; --stdio exits on EOF
+curl -u opencode:verify "http://127.0.0.1:<port>/api/plugin"   # boots the location
+grep -E 'loading plugin|must be a directory' ~/.local/share/opencode/log/opencode.log
+```
+
+Expect `loading plugin id=<inline dir> entrypoint=<inline dir>/index.mjs` and no
+`configured plugin path must be a directory` WARN.
 
 ### Event Mapping
 
