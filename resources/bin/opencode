@@ -41,6 +41,7 @@ esac
 SEANCE_OPENCODE_BIN="$WRAPPER_DIR/../../../bin/seance"
 if [[ ! -x "$SEANCE_OPENCODE_BIN" ]] ||
    ! timeout 0.75 "$SEANCE_OPENCODE_BIN" ctl ping >/dev/null 2>&1; then
+    echo "opencode: séance tracking unavailable (socket unreachable)" >&2
     exec "$REAL_OPENCODE" "$@"
 fi
 
@@ -77,9 +78,11 @@ else
     CONFIG_ARGS=("$PLUGIN")
 fi
 if [[ ! -r "$PLUGIN" ]]; then
+    timeout 1 "$SEANCE_OPENCODE_BIN" ctl notify --title "OpenCode tracking disabled" --body "plugin file unreadable: $PLUGIN" >/dev/null 2>&1 || true
     exec "$REAL_OPENCODE" "$@"
 fi
 if ! CONTENT=$("$SEANCE_OPENCODE_BIN" ctl opencode-config "${CONFIG_ARGS[@]}"); then
+    timeout 1 "$SEANCE_OPENCODE_BIN" ctl notify --title "OpenCode tracking disabled" --body "opencode-config failed" >/dev/null 2>&1 || true
     exec "$REAL_OPENCODE" "$@"
 fi
 export OPENCODE_CONFIG_CONTENT="$CONTENT"

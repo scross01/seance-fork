@@ -46,6 +46,9 @@
   alerts nothing else can produce — agent questions (forms) and OpenCode
   errors, whose real reason its `stop` hook cannot carry since it always says
   "Completed".
+- Wrapper fallback visibility: séance no longer disables OpenCode tracking
+    silently — the wrapper reports fallback on the terminal (socket unreachable)
+    and via notification (plugin unreadable / `opencode-config` failure).
 
 ### Changed
 - OpenCode-family tool names (`shell`, `read`, `edit`, `patch`, `glob`,

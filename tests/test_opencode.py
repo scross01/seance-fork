@@ -75,11 +75,14 @@ sys.exit(int(os.environ.get('TEST_CLEANUP_EXIT', '0')))
         path.write_text(source)
         path.chmod(0o755)
 
-    def invoke(self, *args):
+    def invoke(self, *args, expect_stderr=None):
         result = subprocess.run([str(self.wrapper), *args], env=self.env, cwd=self.root,
                                 text=True, capture_output=True, timeout=10)
         self.assertTrue(result.stdout.endswith('agent output\n'))
-        self.assertEqual(result.stderr, '')
+        if expect_stderr is None:
+            self.assertEqual(result.stderr, '')
+        else:
+            self.assertEqual(result.stderr, expect_stderr)
         return result, json.loads(self.capture.read_text())
 
     def test_preserves_config_paths_inline_plugins_arguments_and_auth_home(self):
@@ -108,8 +111,7 @@ sys.exit(int(os.environ.get('TEST_CLEANUP_EXIT', '0')))
 
     def test_passthrough_outside_seance_disabled_or_failed_setup(self):
         for key, value in [('SEANCE_SURFACE_ID', ''), ('SEANCE_WORKSPACE_ID', ''),
-                           ('SEANCE_SOCKET_PATH', ''), ('SEANCE_OPENCODE_HOOKS_DISABLED', '1'),
-                           ('TEST_PING_EXIT', '1'), ('TEST_CONFIG_FAIL', '1')]:
+                           ('SEANCE_SOCKET_PATH', ''), ('SEANCE_OPENCODE_HOOKS_DISABLED', '1')]:
             with self.subTest(key=key):
                 previous = self.env.copy()
                 self.env.update({key: value, 'TEST_EXIT': '17'})
@@ -120,11 +122,13 @@ sys.exit(int(os.environ.get('TEST_CLEANUP_EXIT', '0')))
                 self.assertFalse(self.events.exists())
                 self.env = previous
 
-    def test_missing_bundle_passes_through(self):
+    def test_missing_bundle_notifies_and_passes_through(self):
         (self.wrappers.parent / 'opencode/seance.mjs').unlink()
-        self.invoke()
-        self.assertFalse(self.events.exists())
-
+        result, call = self.invoke()
+        self.assertNotIn('OPENCODE_CONFIG_CONTENT', call['env'])
+        self.assertTrue(self.events.exists())
+        notify = json.loads(self.events.read_text().splitlines()[0])
+        self.assertIn('OpenCode tracking disabled', notify['args'])
     def test_management_remote_and_pure_commands_pass_through(self):
         for args in [('models',), ('--version',), ('debug', 'config'), ('session', 'list'),
                      ('providers',), ('attach', 'http://localhost:1234'), ('serve',), ('web',),
@@ -191,11 +195,58 @@ sys.exit(int(os.environ.get('TEST_CLEANUP_EXIT', '0')))
         self.assertTrue(config['plugin'][0].endswith('/opencode/seance.mjs'))
         self.assertEqual(call['args'], ['run', 'hello'])
 
-    def test_v2_missing_bundle_passes_through(self):
+    def test_v2_missing_bundle_notifies_and_passes_through(self):
         self.env.update(TEST_OPENCODE_VERSION='v2.0.26')
         (self.wrappers.parent / 'opencode/inline/index.mjs').unlink()
-        _, call = self.invoke('run', 'hello')
+        result, call = self.invoke('run', 'hello')
+        self.assertEqual(result.returncode, 0)
         self.assertNotIn('OPENCODE_CONFIG_CONTENT', call['env'])
+        self.assertTrue(self.events.exists())
+        notify = json.loads(self.events.read_text().splitlines()[0])
+        self.assertEqual(notify['args'][1], 'notify')
+
+    def test_ping_failure_reports_stderr_and_passes_through(self):
+        self.env.update(TEST_PING_EXIT='1', TEST_EXIT='17')
+        result, call = self.invoke('run', 'hello', expect_stderr='opencode: séance tracking unavailable (socket unreachable)\n')
+        self.assertEqual(result.returncode, 17)
+        self.assertNotIn('SEANCE_OPENCODE_PID', call['env'])
+        self.assertNotIn('OPENCODE_CONFIG_CONTENT', call['env'])
+
+    def test_config_failure_records_notify_and_passes_through(self):
+        self.env.update(TEST_CONFIG_FAIL='1', TEST_EXIT='17')
+        result, call = self.invoke('run', 'hello')
+        self.assertEqual(result.returncode, 17)
+        self.assertNotIn('SEANCE_OPENCODE_PID', call['env'])
+        self.assertNotIn('OPENCODE_CONFIG_CONTENT', call['env'])
+        self.assertTrue(self.events.exists())
+        notify = json.loads(self.events.read_text().splitlines()[0])
+        self.assertEqual(notify['args'][:2], ['ctl', 'notify'])
+        self.assertIn('OpenCode tracking disabled', notify['args'])
+        self.assertEqual(result.stderr, '')
+
+    def test_missing_plugin_notifies_and_passes_through(self):
+        self.env.update(TEST_OPENCODE_VERSION='v2.0.26', TEST_EXIT='17')
+        (self.wrappers.parent / 'opencode/inline/index.mjs').unlink()
+        result, call = self.invoke('run', 'hello')
+        self.assertEqual(result.returncode, 17)
+        self.assertNotIn('OPENCODE_CONFIG_CONTENT', call['env'])
+        self.assertTrue(self.events.exists())
+        notify = json.loads(self.events.read_text().splitlines()[0])
+        self.assertIn('OpenCode tracking disabled', notify['args'])
+
+    def test_fault_paths_silence_regression(self):
+        for env in [{'TEST_OPENCODE_VERSION': None}]:
+            pass
+        # deliberate help path: no stderr, no notify
+        self.env.update(TEST_EXIT='0')
+        result, call = self.invoke('--help')
+        self.assertEqual(result.stderr, '')
+        self.assertFalse(self.events.exists())
+        # opt-out path
+        self.events.unlink(missing_ok=True)
+        self.env.update(TEST_OPENCODE_VERSION='v2.0.26', SEANCE_OPENCODE_V2_STANDALONE='0')
+        result, call = self.invoke('run', 'hello')
+        self.assertEqual(result.stderr, '')
         self.assertFalse(self.events.exists())
 
     def test_plugin_behavior(self):
