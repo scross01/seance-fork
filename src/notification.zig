@@ -89,6 +89,21 @@ pub const NotificationStore = struct {
         }
     }
 
+    /// Mark all notifications for a pane as read, preserving them as history.
+    pub fn markAllReadForPane(self: *NotificationStore, pane_id: u64) void {
+        for (0..self.count) |i| {
+            const idx = self.ringIndex(i);
+            if (self.items[idx]) |*item| {
+                if (item.pane_id == pane_id) item.read = true;
+            }
+        }
+    }
+
+    /// Mark the notification at logical index (0 = newest) as read.
+    pub fn markReadAt(self: *NotificationStore, index: usize) void {
+        if (self.getByIndex(index)) |item| item.read = true;
+    }
+
     pub fn mostRecentUnread(self: *const NotificationStore) ?*const Notification {
         if (self.count == 0) return null;
         // Iterate from newest to oldest
@@ -216,7 +231,7 @@ pub const NotificationStore = struct {
 pub const NotificationCenter = struct {
     store: NotificationStore = .{},
     ctx: ?*anyopaque = null, // WindowState pointer (opaque to avoid circular import)
-    suppress_focus_clear: bool = false, // set during notification-panel jump to prevent clearing all pane notifications
+    suppress_focus_mark_read: bool = false, // set during notification-panel jump to prevent marking sibling alerts read on focus
 
     // Callbacks (wired by window.zig during init)
     on_sidebar_refresh: ?*const fn (*anyopaque) void = null,
@@ -228,6 +243,7 @@ pub const NotificationCenter = struct {
     on_find_pane: ?*const fn (*anyopaque, u64) ?*anyopaque = null,
     on_check_visible: ?*const fn (*anyopaque, u64, u64) Visibility = null,
     on_clear_ws_visuals: ?*const fn (*anyopaque) void = null,
+    on_clear_all_visuals: ?*const fn (*anyopaque) void = null,
 
     pub const Visibility = struct { visible: bool, in_active_group: bool };
 
@@ -324,10 +340,11 @@ pub const NotificationCenter = struct {
         }
     }
 
-    /// Central clearing for a pane (called on focus). Handles store, CSS, tab badge, sidebar.
-    pub fn clearForPane(self: *NotificationCenter, pane_id: u64, pane_ptr: ?*anyopaque) void {
+    /// Central mark-read for a pane (called on focus). Marks the pane's alerts
+    /// read (kept as history), clears pane CSS, tab badge, and sidebar.
+    pub fn markReadForPane(self: *NotificationCenter, pane_id: u64, pane_ptr: ?*anyopaque) void {
         const ctx = self.ctx orelse return;
-        _ = self.store.removeForPane(pane_id);
+        self.store.markAllReadForPane(pane_id);
 
         // Clear pane CSS
         if (pane_ptr) |pp| {
@@ -349,10 +366,18 @@ pub const NotificationCenter = struct {
         if (self.on_sidebar_refresh) |cb| cb(ctx);
     }
 
-    /// Clear all notifications globally + refresh UI.
+    /// Clear all notifications globally + clear pane/tab visuals + refresh UI.
     pub fn clearAll(self: *NotificationCenter) void {
         const ctx = self.ctx orelse return;
         self.store.clearAll();
+        if (self.on_clear_all_visuals) |cb| cb(ctx);
+        if (self.on_sidebar_refresh) |cb| cb(ctx);
+    }
+
+    /// Remove one notification by panel index + refresh sidebar.
+    pub fn clearAt(self: *NotificationCenter, index: usize) void {
+        const ctx = self.ctx orelse return;
+        self.store.removeAt(index);
         if (self.on_sidebar_refresh) |cb| cb(ctx);
     }
 };
@@ -564,6 +589,55 @@ test "NotificationStore: removeForPane" {
     try testing.expectEqual(@as(usize, 2), removed);
     try testing.expectEqual(@as(usize, 1), store.count);
     try testing.expectEqual(@as(u64, 2), store.getByIndex(0).?.pane_id);
+}
+
+// --- markAllReadForPane / markReadAt ---
+
+test "NotificationStore: markAllReadForPane keeps history" {
+    var store = NotificationStore{};
+    store.push(makeTestNotif(1, 10));
+    store.push(makeTestNotif(2, 10));
+    store.push(makeTestNotif(3, 20));
+
+    store.markAllReadForPane(1);
+    try testing.expectEqual(@as(usize, 3), store.count); // nothing removed
+    try testing.expect(store.getByIndex(2).?.read); // pane 1, oldest
+    try testing.expect(!store.getByIndex(1).?.read); // pane 2 untouched
+    try testing.expectEqual(@as(usize, 2), store.unreadCount());
+}
+
+test "NotificationStore: markAllReadForPane from wrapped buffer" {
+    var store = NotificationStore{};
+    for (0..105) |i| {
+        store.push(makeTestNotif(@intCast(1 + (i % 2)), 1)); // alternating pane_id 1/2
+    }
+    store.markAllReadForPane(1);
+    try testing.expectEqual(@as(usize, 100), store.count);
+    for (0..store.count) |i| {
+        const item = store.getByIndex(i).?;
+        if (item.pane_id == 1) try testing.expect(item.read);
+    }
+}
+
+test "NotificationStore: markReadAt" {
+    var store = NotificationStore{};
+    store.push(makeTestNotif(1, 10));
+    store.push(makeTestNotif(2, 10));
+    store.push(makeTestNotif(3, 10));
+
+    store.markReadAt(1);
+    try testing.expect(store.getByIndex(1).?.read);
+    try testing.expect(!store.getByIndex(0).?.read);
+    try testing.expectEqual(@as(usize, 2), store.unreadCount());
+}
+
+test "NotificationStore: markReadAt out of range is a no-op" {
+    var store = NotificationStore{};
+    store.push(makeTestNotif(1, 10));
+
+    store.markReadAt(5);
+    try testing.expectEqual(@as(usize, 1), store.count);
+    try testing.expect(!store.getByIndex(0).?.read);
 }
 
 // --- latestForWorkspace ---

@@ -203,7 +203,7 @@ An accent-filled circle (18px, accent-fg text at 9px/600) counting unread notifi
 The one elevated surface: 8px radius, window-bg fill, 1px border at 18% fg alpha, palette shadow, minimum width 340px, centered over a 24% black scrim. Entry text 13px; results at 24px minimum row height; shortcut chips are 4px-radius, 8% fg pills at 11px.
 
 ### Notification Popover & Rows
-Popover surface is a 15% fg lift with no border. Rows: 6px radius, `10px 8px`, hover at 5% fg; an 8px accent unread dot, 12px bold title, 11px body at 0.6 opacity, 10px timestamp at 0.5.
+Popover surface is a 15% fg lift with no border. Rows: 6px radius, `10px 8px`, hover at 5% fg; an 8px accent unread dot, 12px bold title, 11px body at 0.6 opacity, 10px timestamp at 0.5. Read (history) rows drop the accent dot — an empty dot slot preserves title alignment — and dim the title to 0.7 (the Dim Label Rule floor); unread rows keep the accent dot at full title strength.
 
 ### Icon Buttons (chrome)
 Footer and header buttons are 28×28px minimum, 6px radius, symbolic icons only (`list-add-symbolic`, `sidebar-show-right-symbolic`, `bell-outline-symbolic`, `emblem-system-symbolic`). In-row close buttons shrink to 16px circles at 0.7 opacity.

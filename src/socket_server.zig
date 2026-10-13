@@ -273,7 +273,7 @@ pub const SocketServer = struct {
         // Notification methods
         if (eql(method, "notification.create")) return handleNotificationCreate(params, id, buf);
         if (eql(method, "notification.list")) return handleNotificationList(id, buf);
-        if (eql(method, "notification.clear")) return handleNotificationClear(id, buf);
+        if (eql(method, "notification.clear")) return handleNotificationClear(params, id, buf);
 
         // Workspace metadata methods
         if (eql(method, "workspace.set_status")) return handleWorkspaceSetStatus(params, id, buf);
@@ -1644,8 +1644,14 @@ pub const SocketServer = struct {
         return writeJsonOk(buf, id, result_buf[0..pos]);
     }
 
-    fn handleNotificationClear(id: []const u8, buf: []u8) []const u8 {
+    fn handleNotificationClear(params: ?std.json.Value, id: []const u8, buf: []u8) []const u8 {
         const state = getActiveState() orelse return writeJsonError(buf, id, "not_ready", "No active window");
+        if (getParamInt(params, "index")) |idx| { // getParamInt returns ?u64 — unsigned, no < 0 check
+            if (idx >= state.notif_center.store.count)
+                return writeJsonError(buf, id, "invalid_params", "index out of range");
+            state.notif_center.clearAt(@intCast(idx));
+            return writeJsonOk(buf, id, "{}");
+        }
         state.notif_center.clearAll();
         return writeJsonOk(buf, id, "{}");
     }

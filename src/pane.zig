@@ -265,8 +265,8 @@ pub const Pane = struct {
             const Window = @import("window.zig");
             if (Window.window_manager) |wm| {
                 if (wm.findByWorkspaceId(self.workspace_id)) |state| {
-                    if (!state.notif_center.suppress_focus_clear) {
-                        state.notif_center.clearForPane(self.id, @ptrCast(self));
+                    if (!state.notif_center.suppress_focus_mark_read) {
+                        state.notif_center.markReadForPane(self.id, @ptrCast(self));
                     }
                 }
             }

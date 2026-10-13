@@ -1945,6 +1945,7 @@ fn initNotificationCenter(state: *WindowState) void {
     state.notif_center.on_find_pane = &ncFindPane;
     state.notif_center.on_check_visible = &ncCheckVisible;
     state.notif_center.on_clear_ws_visuals = &ncClearWsVisuals;
+    state.notif_center.on_clear_all_visuals = &ncClearAllVisuals;
 }
 
 fn ncSidebarRefresh(ctx: *anyopaque) void {
@@ -2047,6 +2048,11 @@ fn ncClearWsVisuals(ws_ptr: *anyopaque) void {
             grp.clearAllTabNotifications();
         }
     }
+}
+
+fn ncClearAllVisuals(ctx: *anyopaque) void {
+    const state: *WindowState = @ptrCast(@alignCast(ctx));
+    for (state.workspaces.items) |ws| ncClearWsVisuals(@ptrCast(ws));
 }
 
 fn onMetadataRefresh(data: c.gpointer) callconv(.c) c.gboolean {
@@ -2338,6 +2344,11 @@ fn loadThemeCss() void {
         \\.notif-body {{ font-size: 0.75em; opacity: 0.7; }}
         \\
     , .{accent_bg}) catch return;
+
+    w.print(
+        \\.notif-row-read .title {{ opacity: 0.7; }}
+        \\
+    , .{}) catch return;
 
     w.print(
         \\.sidebar-close-btn {{ min-width: 16px; min-height: 16px; padding: 0; margin: 0; border-radius: 50%; opacity: 0.7; transition: opacity 0.14s ease-in-out; }}

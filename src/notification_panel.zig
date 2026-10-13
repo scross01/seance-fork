@@ -158,6 +158,7 @@ fn buildNotificationRow(notif: *notification.Notification, now: i64, panel: *Not
     const row = c.adw_action_row_new();
     const action_row: *c.AdwActionRow = @ptrCast(row);
     c.gtk_widget_add_css_class(@as(*c.GtkWidget, @ptrCast(row)), "notif-row");
+    if (notif.read) c.gtk_widget_add_css_class(@as(*c.GtkWidget, @ptrCast(row)), "notif-row-read");
     c.gtk_widget_set_margin_top(@as(*c.GtkWidget, @ptrCast(row)), 4);
     c.gtk_widget_set_margin_bottom(@as(*c.GtkWidget, @ptrCast(row)), 4);
 
@@ -194,14 +195,13 @@ fn buildNotificationRow(notif: *notification.Notification, now: i64, panel: *Not
     }
     c.adw_action_row_set_subtitle_lines(action_row, 3);
 
-    // Prefix: unread indicator dot
-    if (!notif.read) {
-        const dot = c.gtk_label_new("\xe2\x97\x8f"); // ●
-        c.gtk_widget_add_css_class(dot, "notif-unread-dot");
-        c.gtk_widget_set_valign(dot, c.GTK_ALIGN_CENTER);
-        @import("a11y.zig").setLabel(dot, "Unread");
-        c.adw_action_row_add_prefix(action_row, dot);
-    }
+    // Prefix: unread indicator dot. Read rows render an empty label with the
+    // same class so the dot slot is reserved and titles stay aligned.
+    const dot = c.gtk_label_new(if (!notif.read) "\xe2\x97\x8f" else ""); // ●
+    c.gtk_widget_add_css_class(dot, "notif-unread-dot");
+    c.gtk_widget_set_valign(dot, c.GTK_ALIGN_CENTER);
+    if (!notif.read) @import("a11y.zig").setLabel(dot, "Unread");
+    c.adw_action_row_add_prefix(action_row, dot);
 
     // Suffix: timestamp
     var time_buf: [32]u8 = undefined;
@@ -254,7 +254,7 @@ fn formatRelativeTime(diff_secs: i64, buf: []u8) [:0]const u8 {
 
 fn onClearAllClicked(_: *c.GtkButton, data: c.gpointer) callconv(.c) void {
     const self: *NotificationPanel = @ptrCast(@alignCast(data));
-    self.center.store.clearAll();
+    self.center.clearAll();
     self.refresh();
 }
 
@@ -293,18 +293,17 @@ fn onRowActivated(
 
     const notif = self.center.store.getByIndex(index) orelse return;
 
-    // Save navigation target before removing the notification
     const ws_id = notif.workspace_id;
     const pg_id = notif.pane_group_id;
     const p_id = notif.pane_id;
 
-    // Remove only the clicked notification
-    self.center.store.removeAt(index);
+    // Mark only the clicked notification read; it stays as muted history.
+    self.center.store.markReadAt(index);
 
-    // Suppress the blanket clearForPane that pane.focus() would trigger,
-    // so remaining notifications for this pane are preserved.
-    self.center.suppress_focus_clear = true;
-    defer self.center.suppress_focus_clear = false;
+    // Suppress the blanket markReadForPane that pane.focus() would trigger,
+    // so sibling alerts for this pane stay unread.
+    self.center.suppress_focus_mark_read = true;
+    defer self.center.suppress_focus_mark_read = false;
 
     // Navigate to source
     if (self.on_jump) |jump| {

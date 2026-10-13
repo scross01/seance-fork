@@ -928,7 +928,15 @@ fn cmdListNotifications(ctx: Ctx) u8 {
 }
 
 fn cmdClearNotifications(ctx: Ctx) u8 {
-    _ = apiCall(ctx.alloc, ctx.socket_path, "notification.clear", null) catch |e| {
+    var pbuf: [64]u8 = undefined;
+    const params: ?[]const u8 = if (ctx.rest.len > 0) blk: {
+        const n = parseU64(ctx.rest[0]) orelse {
+            werr("clear-notifications: invalid index\n");
+            return 1;
+        };
+        break :blk std.fmt.bufPrint(&pbuf, "{{\"index\":{d}}}", .{n}) catch return 1;
+    } else null;
+    _ = apiCall(ctx.alloc, ctx.socket_path, "notification.clear", params) catch |e| {
         printSocketError(e);
         return 1;
     };
@@ -2976,7 +2984,7 @@ fn printUsage() void {
         \\Notifications:
         \\  notify                  Send notification [--title T] [--body B]
         \\  list-notifications      List notifications
-        \\  clear-notifications     Clear all notifications
+        \\  clear-notifications [index]  Clear one or all notifications
         \\
         \\Browser:
         \\  browser-open URL        Open URL in new browser panel
