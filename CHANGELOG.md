@@ -19,10 +19,13 @@
   "Completed in `<project>`" (plugin versions: OpenCode 17/17, Kilo 15,
   MiMo 39).
 - OpenCode V2 windows now show how many sessions share the pane: the plugin
-  reports `session_count` on every hook and the sidebar appends
-  ` · 2 sessions` to the status whenever more than one session is live
-  (`OpenCode: Running · 2 sessions (1 subagent)`). Single-session windows
-  render no suffix (OpenCode V2 plugin version 18).
+  reports `session_count` on every hook and pushes an update the moment a
+  session is created or closed, so the sidebar repaints immediately
+  (`OpenCode: Running · 2 sessions (1 subagent)`). The counts are stored next
+  to the status value rather than inside it, so completion, permission and
+  state writes no longer erase them and the total stays visible while the
+  pane is Idle. Single-session windows render no suffix (OpenCode V2 plugin
+  version 19).
 
 ### Changed
 - OpenCode-family tool names (`shell`, `read`, `edit`, `patch`, `glob`,

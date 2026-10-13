@@ -1,6 +1,6 @@
 // Séance plugin for OpenCode V2
 // Copy to ~/.config/opencode/plugins/seance-opencode.ts
-// @seance-version 18
+// @seance-version 19
 
 import { Plugin } from "@opencode/plugin";
 import { execFile } from "node:child_process";
@@ -65,6 +65,20 @@ export default Plugin.define({
       }));
     }
 
+    // A peer session appearing or disappearing produces no status event of its
+    // own, so push the counts on their own: the sidebar repaints without
+    // waiting for the next prompt or tool hook, and without inventing a status
+    // value (which would flip an idle pane to Running).
+    async function pushCounts() {
+      await send(["ctl", "opencode-hook", "session-update"], JSON.stringify({
+        session_id: currentSessionId,
+        workspace_id: workspaceId,
+        surface_id: surfaceId,
+        session_count: sessionCount(),
+        subagent_count: subagentCount,
+      }));
+    }
+
     async function trackChildSession(eventSessionId) {
       if (completedSessions.has(eventSessionId)) return;
       if (!childSessions.has(eventSessionId)) {
@@ -110,7 +124,10 @@ export default Plugin.define({
             // session sharing this window's single status (V1 counted every
             // second session as a subagent).
             if (payload.parentID) await trackChildSession(eventSessionId);
-            else peerSessions.add(eventSessionId);
+            else {
+              peerSessions.add(eventSessionId);
+              await pushCounts();
+            }
           }
           break;
 
@@ -167,8 +184,10 @@ export default Plugin.define({
             await hook("session-end");
             currentSessionId = undefined;
           } else {
-            const wasExecuting = peerSessions.delete(eventSessionId) && executing.delete(eventSessionId);
+            const removed_peer = peerSessions.delete(eventSessionId);
+            const wasExecuting = removed_peer && executing.delete(eventSessionId);
             await untrackChildSession(eventSessionId);
+            if (removed_peer) await pushCounts();
             if (wasExecuting && executing.size === 0) {
               sessionIdle = true;
               await hook("stop", { cwd });

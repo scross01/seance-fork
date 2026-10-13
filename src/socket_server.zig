@@ -277,6 +277,7 @@ pub const SocketServer = struct {
 
         // Workspace metadata methods
         if (eql(method, "workspace.set_status")) return handleWorkspaceSetStatus(params, id, buf);
+        if (eql(method, "workspace.set_status_counts")) return handleWorkspaceSetStatusCounts(params, id, buf);
         if (eql(method, "workspace.clear_status")) return handleWorkspaceClearStatus(params, id, buf);
         if (eql(method, "workspace.log")) return handleWorkspaceLog(params, id, buf);
         if (eql(method, "workspace.clear_log")) return handleWorkspaceClearLog(params, id, buf);
@@ -398,6 +399,11 @@ pub const SocketServer = struct {
             .string => |s| std.fmt.parseInt(u64, s, 10) catch null,
             else => null,
         };
+    }
+
+    fn clampU32(v: ?u64) ?u32 {
+        const n = v orelse return null;
+        return @intCast(@min(n, std.math.maxInt(u32)));
     }
 
     fn getParamBool(params: ?std.json.Value, key: []const u8) ?bool {
@@ -1925,9 +1931,31 @@ pub const SocketServer = struct {
 
         const is_agent = getParamBool(params, "is_agent") orelse false;
         const display_name = getParamString(params, "display_name");
+        // Absent counts mean "keep what the entry already has": most status
+        // writers (stop, notification, the inline OpenCode state hook) know
+        // nothing about them and must not wipe them.
+        const session_count = getParamInt(params, "session_count");
+        const subagent_count = getParamInt(params, "subagent_count");
 
         const result = findWorkspaceById(ws_id) orelse return writeJsonError(buf, id, "not_found", "Workspace not found");
         result.ws.setStatus(key, value, priority, is_agent, display_name);
+        if (session_count != null or subagent_count != null) {
+            _ = result.ws.setStatusCounts(key, clampU32(session_count), clampU32(subagent_count));
+        }
+        result.state.sidebar.refresh();
+        result.state.sidebar.setActive(result.state.active_workspace);
+        return writeJsonOk(buf, id, "{}");
+    }
+
+    fn handleWorkspaceSetStatusCounts(params: ?std.json.Value, id: []const u8, buf: []u8) []const u8 {
+        const ws_id = getParamInt(params, "workspace_id") orelse return writeJsonError(buf, id, "invalid_params", "Missing 'workspace_id'");
+        const key = getParamString(params, "key") orelse return writeJsonError(buf, id, "invalid_params", "Missing 'key'");
+        const session_count = getParamInt(params, "session_count");
+        const subagent_count = getParamInt(params, "subagent_count");
+
+        const result = findWorkspaceById(ws_id) orelse return writeJsonError(buf, id, "not_found", "Workspace not found");
+        // Counts without a status value: repaint the existing row in place.
+        _ = result.ws.setStatusCounts(key, clampU32(session_count), clampU32(subagent_count));
         result.state.sidebar.refresh();
         result.state.sidebar.setActive(result.state.active_workspace);
         return writeJsonOk(buf, id, "{}");

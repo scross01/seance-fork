@@ -1321,7 +1321,7 @@ fn cmdAntigravityHook(ctx: Ctx) u8 {
     const update = agy.transition(tracker.state, parsed.value) orelse return 0;
     if (!update.changed) return 0;
     if (h.workspace) |ws| {
-        trySetAgentStatus(h, ws, update.state.phase.label(), if (update.state.phase == .idle or update.state.phase == .failed) 5 else 10) catch return 1;
+        trySetAgentStatus(h, ws, update.state.phase.label(), if (update.state.phase == .idle or update.state.phase == .failed) 5 else 10, .{}) catch return 1;
         if (update.notification != .none) {
             const title = if (update.notification == .permission) "Antigravity needs input" else "Antigravity is idle";
             const body = if (update.notification == .permission) "A tool is waiting for your approval." else parsed.value.cwd;
@@ -1966,6 +1966,7 @@ fn cmdAgentHook(ctx: Ctx, agent: AgentConfig) u8 {
 
     if (eql(hook_cmd, "session-start")) return agentHookSessionStart(h);
     if (eql(hook_cmd, "session-end")) return agentHookSessionEnd(h);
+    if (eql(hook_cmd, "session-update")) return agentHookSessionUpdate(h);
     if (eql(hook_cmd, "prompt-submit")) return agentHookPromptSubmit(h);
     if (eql(hook_cmd, "pre-tool-use")) return agentHookPreToolUse(h);
     if (eql(hook_cmd, "post-tool-use")) {
@@ -2000,20 +2001,47 @@ fn agentHookOpenCodeState(h: HookCtx) u8 {
 }
 
 fn setAgentStatus(h: HookCtx, ws: u64, value: []const u8, priority: i32) void {
-    trySetAgentStatus(h, ws, value, priority) catch {};
+    trySetAgentStatus(h, ws, value, priority, .{}) catch {};
 }
 
-fn trySetAgentStatus(h: HookCtx, ws: u64, value: []const u8, priority: i32) !void {
+fn setAgentStatusWithCounts(h: HookCtx, ws: u64, value: []const u8, priority: i32, counts: StatusCounts) void {
+    trySetAgentStatus(h, ws, value, priority, counts) catch {};
+}
+
+/// Per-pane session/subagent counts carried by an agent's hook payload. Null
+/// means the agent did not report that count, so the sidebar keeps whatever
+/// the status entry already holds instead of resetting it to zero.
+const StatusCounts = struct {
+    session: ?u64 = null,
+    subagent: ?u64 = null,
+};
+
+fn payloadCounts(h: HookCtx) StatusCounts {
+    return .{
+        .session = getJsonInt(h.input, "session_count"),
+        .subagent = getJsonInt(h.input, "subagent_count"),
+    };
+}
+
+fn countsJson(alloc: Allocator, counts: StatusCounts) []const u8 {
+    var out: []const u8 = "";
+    if (counts.session) |n| out = std.fmt.allocPrint(alloc, "{s},\"session_count\":{d}", .{ out, n }) catch return "";
+    if (counts.subagent) |n| out = std.fmt.allocPrint(alloc, "{s},\"subagent_count\":{d}", .{ out, n }) catch return "";
+    return out;
+}
+
+fn trySetAgentStatus(h: HookCtx, ws: u64, value: []const u8, priority: i32, counts: StatusCounts) !void {
     const sk = jsonEscapeAlloc(h.alloc, h.getStatusKey());
-    const p = try std.fmt.allocPrint(h.alloc, "{{\"workspace_id\":{d},\"key\":\"{s}\",\"value\":\"{s}\",\"priority\":{d},\"is_agent\":true,\"display_name\":\"{s}\"}}", .{ ws, sk, jsonEscapeAlloc(h.alloc, value), priority, h.agent.name });
+    const cj = countsJson(h.alloc, counts);
+    const p = try std.fmt.allocPrint(h.alloc, "{{\"workspace_id\":{d},\"key\":\"{s}\",\"value\":\"{s}\",\"priority\":{d},\"is_agent\":true,\"display_name\":\"{s}\"{s}}}", .{ ws, sk, jsonEscapeAlloc(h.alloc, value), priority, h.agent.name, cj });
     _ = try apiCall(h.alloc, h.socket_path, "workspace.set_status", p);
 }
 
-fn statusWithCounts(alloc: Allocator, base: []const u8, sessions: u64, subagents: u64) []const u8 {
-    var out = base;
-    if (sessions > 1) out = std.fmt.allocPrint(alloc, "{s} · {d} sessions", .{ out, sessions }) catch out;
-    if (subagents > 0) out = std.fmt.allocPrint(alloc, "{s} ({d} subagent{s})", .{ out, subagents, if (subagents > 1) "s" else "" }) catch out;
-    return out;
+fn trySetStatusCounts(h: HookCtx, ws: u64, counts: StatusCounts) !void {
+    if (counts.session == null and counts.subagent == null) return;
+    const sk = jsonEscapeAlloc(h.alloc, h.getStatusKey());
+    const p = try std.fmt.allocPrint(h.alloc, "{{\"workspace_id\":{d},\"key\":\"{s}\"{s}}}", .{ ws, sk, countsJson(h.alloc, counts) });
+    _ = try apiCall(h.alloc, h.socket_path, "workspace.set_status_counts", p);
 }
 
 fn emitNotification(h: HookCtx, ws: u64, title: []const u8, body: []const u8, focused: bool) void {
@@ -2052,14 +2080,19 @@ fn agentHookSessionStart(h: HookCtx) u8 {
     return 0;
 }
 
+fn agentHookSessionUpdate(h: HookCtx) u8 {
+    if (h.workspace) |ws| {
+        trySetStatusCounts(h, ws, payloadCounts(h)) catch {};
+    }
+    wout(h.agent.response);
+    return 0;
+}
+
 fn agentHookPromptSubmit(h: HookCtx) u8 {
     if (h.workspace) |ws| {
         // Allow callers to specify a custom status (e.g. "Idle"); default to "Running"
         const base = getNestedString(h.input, "status") orelse "Running";
-        const session_count = getJsonInt(h.input, "session_count") orelse 0;
-        const subagent_count = getJsonInt(h.input, "subagent_count") orelse 0;
-        const status = statusWithCounts(h.alloc, base, session_count, subagent_count);
-        setAgentStatus(h, ws, status, 10);
+        setAgentStatusWithCounts(h, ws, base, 10, payloadCounts(h));
     }
     wout(h.agent.response);
     return 0;
@@ -2093,10 +2126,7 @@ fn agentHookPreToolUse(h: HookCtx) u8 {
 
     if (h.workspace) |ws| {
         const desc = toolDescription(h.alloc, tool_name, h.input);
-        const session_count = getJsonInt(h.input, "session_count") orelse 0;
-        const subagent_count = getJsonInt(h.input, "subagent_count") orelse 0;
-        const status = statusWithCounts(h.alloc, desc, session_count, subagent_count);
-        setAgentStatus(h, ws, status, 10);
+        setAgentStatusWithCounts(h, ws, desc, 10, payloadCounts(h));
     }
     wout(h.agent.response);
     return 0;
@@ -2105,10 +2135,7 @@ fn agentHookPreToolUse(h: HookCtx) u8 {
 fn agentHookPostToolUse(h: HookCtx) u8 {
     if (h.workspace) |ws| {
         const base = "Running";
-        const session_count = getJsonInt(h.input, "session_count") orelse 0;
-        const subagent_count = getJsonInt(h.input, "subagent_count") orelse 0;
-        const status = statusWithCounts(h.alloc, base, session_count, subagent_count);
-        setAgentStatus(h, ws, status, 10);
+        setAgentStatusWithCounts(h, ws, base, 10, payloadCounts(h));
     }
     wout(h.agent.response);
     return 0;
@@ -3394,45 +3421,25 @@ test "toolDescription: reads tool_input or input payload" {
     try std.testing.expectEqualStrings("Reading", toolDescForTest(alloc, "read", "{\"tool_input\":{\"path\":12}}"));
 }
 
-// ── statusWithCounts ────────────────────────────────────────────────────
+// ── countsJson ──────────────────────────────────────────────────────────
 
-test "statusWithCounts: absent, zero and single-session counts add no session suffix" {
+test "countsJson: unreported counts leave the status payload untouched" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer _ = arena.deinit();
     const alloc = arena.allocator();
 
-    try std.testing.expectEqualStrings("Running", statusWithCounts(alloc, "Running", 0, 0));
-    try std.testing.expectEqualStrings("Running", statusWithCounts(alloc, "Running", 1, 0));
-    try std.testing.expectEqualStrings("Reading main.zig", statusWithCounts(alloc, "Reading main.zig", 1, 0));
+    try std.testing.expectEqualStrings("", countsJson(alloc, .{}));
 }
 
-test "statusWithCounts: session suffix only above one session" {
+test "countsJson: only the counts the agent reported are carried" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer _ = arena.deinit();
     const alloc = arena.allocator();
 
-    try std.testing.expectEqualStrings("Running · 2 sessions", statusWithCounts(alloc, "Running", 2, 0));
-    try std.testing.expectEqualStrings("Running · 3 sessions", statusWithCounts(alloc, "Running", 3, 0));
-    try std.testing.expectEqualStrings("Reading main.zig · 2 sessions", statusWithCounts(alloc, "Reading main.zig", 2, 0));
-}
-
-test "statusWithCounts: subagent suffix spelling is unchanged" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer _ = arena.deinit();
-    const alloc = arena.allocator();
-
-    try std.testing.expectEqualStrings("Running (1 subagent)", statusWithCounts(alloc, "Running", 0, 1));
-    try std.testing.expectEqualStrings("Running (1 subagent)", statusWithCounts(alloc, "Running", 1, 1));
-    try std.testing.expectEqualStrings("Running (2 subagents)", statusWithCounts(alloc, "Running", 0, 2));
-    try std.testing.expectEqualStrings("Running", statusWithCounts(alloc, "Running", 0, 0));
-}
-
-test "statusWithCounts: sessions precede subagents" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer _ = arena.deinit();
-    const alloc = arena.allocator();
-
-    try std.testing.expectEqualStrings("Running · 2 sessions (1 subagent)", statusWithCounts(alloc, "Running", 2, 1));
-    try std.testing.expectEqualStrings("Running · 3 sessions (2 subagents)", statusWithCounts(alloc, "Running", 3, 2));
-    try std.testing.expectEqualStrings("Reading main.zig · 2 sessions (1 subagent)", statusWithCounts(alloc, "Reading main.zig", 2, 1));
+    // Null means "keep the entry's current count"; an explicit 0 means reset,
+    // so both must stay distinguishable on the wire.
+    try std.testing.expectEqualStrings(",\"session_count\":0", countsJson(alloc, .{ .session = 0 }));
+    try std.testing.expectEqualStrings(",\"session_count\":2", countsJson(alloc, .{ .session = 2 }));
+    try std.testing.expectEqualStrings(",\"subagent_count\":1", countsJson(alloc, .{ .subagent = 1 }));
+    try std.testing.expectEqualStrings(",\"session_count\":3,\"subagent_count\":2", countsJson(alloc, .{ .session = 3, .subagent = 2 }));
 }

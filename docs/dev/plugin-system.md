@@ -63,7 +63,7 @@ Current plugin versions:
 
 | Agent | Plugin Version |
 |-------|----------------|
-| OpenCode | `@seance-version 17` (V1), `@seance-version 18` (V2) |
+| OpenCode | `@seance-version 17` (V1), `@seance-version 19` (V2) |
 | Kilo Code | `@seance-version 15` |
 | MiMo Code | `@seance-version 39` |
 

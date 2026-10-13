@@ -927,6 +927,10 @@ fn makeStatusLabel(entry: *const workspace_mod.StatusEntry, background_count: u3
     const vlen = @min(val.len, buf.len - pos - 1);
     @memcpy(buf[pos..][0..vlen], val[0..vlen]);
     pos += vlen;
+    // Leave the final byte for the terminator: countsSuffix writes into the
+    // remaining span and does not reserve one.
+    const suffix = entry.countsSuffix(buf[pos .. buf.len - 1]);
+    pos += suffix.len;
     buf[pos] = 0;
 
     const label = c.gtk_label_new(&buf);

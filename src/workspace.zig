@@ -15,6 +15,8 @@ pub const StatusEntry = struct {
     is_agent: bool = false,
     display_name: [32]u8 = undefined,
     display_name_len: usize = 0,
+    session_count: u32 = 0,
+    subagent_count: u32 = 0,
 
     pub fn getKey(self: *const StatusEntry) []const u8 {
         return self.key[0..self.key_len];
@@ -27,6 +29,26 @@ pub const StatusEntry = struct {
     pub fn getDisplayName(self: *const StatusEntry) ?[]const u8 {
         if (self.display_name_len == 0) return null;
         return self.display_name[0..self.display_name_len];
+    }
+
+    /// Appended by the sidebar after `getValue()`: ` · N sessions` when more
+    /// than one session shares the pane, then ` (N subagents)`.
+    ///
+    /// The counts live on the entry rather than inside `value` so that status
+    /// writers which know nothing about them (`stop`, `notification`, the
+    /// inline OpenCode `state` hook) cannot erase them, and so a count change
+    /// alone can repaint the sidebar without supplying a new status value.
+    pub fn countsSuffix(self: *const StatusEntry, buf: []u8) []const u8 {
+        var pos: usize = 0;
+        if (self.session_count > 1) {
+            const part = std.fmt.bufPrint(buf[pos..], " · {d} sessions", .{self.session_count}) catch return buf[0..pos];
+            pos += part.len;
+        }
+        if (self.subagent_count > 0) {
+            const part = std.fmt.bufPrint(buf[pos..], " ({d} subagent{s})", .{ self.subagent_count, if (self.subagent_count > 1) "s" else "" }) catch return buf[0..pos];
+            pos += part.len;
+        }
+        return buf[0..pos];
     }
 };
 
@@ -100,6 +122,17 @@ pub const WorkspaceMetadata = struct {
             entry.display_name_len = dnlen;
         }
         self.status_count += 1;
+    }
+
+    pub fn setStatusCounts(self: *WorkspaceMetadata, key: []const u8, session_count: ?u32, subagent_count: ?u32) bool {
+        for (self.status_entries[0..self.status_count]) |*entry| {
+            if (std.mem.eql(u8, entry.getKey(), key)) {
+                if (session_count) |n| entry.session_count = n;
+                if (subagent_count) |n| entry.subagent_count = n;
+                return true;
+            }
+        }
+        return false;
     }
 
     pub fn clearStatus(self: *WorkspaceMetadata, key: []const u8) bool {
@@ -1608,6 +1641,10 @@ pub const Workspace = struct {
         self.metadata.setStatus(key, value, priority, is_agent, display_name);
     }
 
+    pub fn setStatusCounts(self: *Workspace, key: []const u8, session_count: ?u32, subagent_count: ?u32) bool {
+        return self.metadata.setStatusCounts(key, session_count, subagent_count);
+    }
+
     pub fn clearStatus(self: *Workspace, key: []const u8) bool {
         return self.metadata.clearStatus(key);
     }
@@ -2509,6 +2546,71 @@ test "WorkspaceMetadata: setStatus at capacity silently drops new entry" {
     try testing.expectEqual(@as(usize, 16), meta.status_count);
     meta.setStatus("overflow", "v", 0, false, null);
     try testing.expectEqual(@as(usize, 16), meta.status_count);
+}
+
+test "WorkspaceMetadata: setStatusCounts updates only the reported counts" {
+    var meta = WorkspaceMetadata{};
+    meta.setStatus("agent", "running", 10, true, "OpenCode");
+    try testing.expect(meta.setStatusCounts("agent", 2, 1));
+    try testing.expectEqual(@as(u32, 2), meta.status_entries[0].session_count);
+    try testing.expectEqual(@as(u32, 1), meta.status_entries[0].subagent_count);
+
+    // A status writer that knows nothing about counts must not reset them.
+    meta.setStatus("agent", "idle", 5, true, "OpenCode");
+    try testing.expectEqual(@as(u32, 2), meta.status_entries[0].session_count);
+    try testing.expectEqual(@as(u32, 1), meta.status_entries[0].subagent_count);
+
+    // Null leaves a count alone; an explicit zero resets it.
+    try testing.expect(meta.setStatusCounts("agent", 1, null));
+    try testing.expectEqual(@as(u32, 1), meta.status_entries[0].session_count);
+    try testing.expectEqual(@as(u32, 1), meta.status_entries[0].subagent_count);
+    try testing.expect(meta.setStatusCounts("agent", 0, 0));
+    try testing.expectEqual(@as(u32, 0), meta.status_entries[0].session_count);
+    try testing.expectEqual(@as(u32, 0), meta.status_entries[0].subagent_count);
+}
+
+test "WorkspaceMetadata: setStatusCounts on an unknown key returns false" {
+    var meta = WorkspaceMetadata{};
+    meta.setStatus("agent", "running", 10, true, "OpenCode");
+    try testing.expect(!meta.setStatusCounts("missing", 2, 0));
+    try testing.expectEqual(@as(u32, 0), meta.status_entries[0].session_count);
+}
+
+// --- StatusEntry: countsSuffix ---
+
+test "StatusEntry: countsSuffix is empty for a single session" {
+    var buf: [64]u8 = undefined;
+    const fresh = StatusEntry{};
+    try testing.expectEqualStrings("", fresh.countsSuffix(buf[0..]));
+    const single = StatusEntry{ .session_count = 1, .subagent_count = 0 };
+    try testing.expectEqualStrings("", single.countsSuffix(buf[0..]));
+}
+
+test "StatusEntry: countsSuffix reports sessions before subagents" {
+    var buf: [64]u8 = undefined;
+
+    const sessions_only = StatusEntry{ .session_count = 2, .subagent_count = 0 };
+    try testing.expectEqualStrings(" · 2 sessions", sessions_only.countsSuffix(buf[0..]));
+
+    const subagents_only = StatusEntry{ .session_count = 1, .subagent_count = 1 };
+    try testing.expectEqualStrings(" (1 subagent)", subagents_only.countsSuffix(buf[0..]));
+
+    const both = StatusEntry{ .session_count = 3, .subagent_count = 2 };
+    try testing.expectEqualStrings(" · 3 sessions (2 subagents)", both.countsSuffix(buf[0..]));
+
+    const one_of_each = StatusEntry{ .session_count = 2, .subagent_count = 1 };
+    try testing.expectEqualStrings(" · 2 sessions (1 subagent)", one_of_each.countsSuffix(buf[0..]));
+}
+
+test "StatusEntry: countsSuffix drops what does not fit rather than overflowing" {
+    // The session span (14 bytes) fits, the subagent span (14) does not.
+    var tight: [16]u8 = undefined;
+    const both = StatusEntry{ .session_count = 2, .subagent_count = 3 };
+    try testing.expectEqualStrings(" · 2 sessions", both.countsSuffix(tight[0..]));
+
+    // Not even the session span fits: nothing is written.
+    var tiny: [8]u8 = undefined;
+    try testing.expectEqualStrings("", both.countsSuffix(tiny[0..]));
 }
 
 test "WorkspaceMetadata: clearStatus removes and compacts" {
