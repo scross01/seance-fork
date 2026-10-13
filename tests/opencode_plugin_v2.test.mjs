@@ -350,6 +350,27 @@ test('global: independent sessions are not subagents and share the pane status',
     ['session-start', 'prompt-submit', 'prompt-submit', 'notification', 'stop']);
 });
 
+test('global: session_count reports pane sessions, not subagent children', async (t) => {
+  const f = await fixture(t, { source: GLOBAL_SRC });
+  await f.feed('session.created', { sessionID: 'ses_1' });
+  assert.equal((await f.events()).at(-1).payload.session_count, 1);
+  await f.feed('session.created', { sessionID: 'ses_2', parentID: 'ses_1' });
+  assert.equal((await f.events()).at(-1).payload.session_count, 1); // a child is a subagent, not a session
+  await f.feed('session.created', { sessionID: 'ses_3' });
+  await f.feed('session.execution.started', { sessionID: 'ses_3' });
+  assert.equal((await f.events()).at(-1).payload.session_count, 2);
+  await f.feed('session.execution.succeeded', { sessionID: 'ses_3' });
+  const stop = (await f.events()).at(-1);
+  assert.equal(stop.args.at(-1), 'stop');
+  assert.equal(stop.payload.session_count, 2);
+  await f.feed('session.deleted', { sessionID: 'ses_3' });
+  await f.feed('session.execution.started', { sessionID: 'ses_1' });
+  assert.equal((await f.events()).at(-1).payload.session_count, 1);
+  const hooks = (await f.events()).filter((e) => e.args.at(-1) !== 'subagent-update');
+  assert.ok(hooks.length > 0);
+  assert.ok(hooks.every((e) => typeof e.payload.session_count === 'number'));
+});
+
 test('global: subagent count only counts sessions with a parentID', async (t) => {
   const f = await fixture(t, { source: GLOBAL_SRC });
   await f.feed('session.created', { sessionID: 'ses_1' });

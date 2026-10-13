@@ -2009,9 +2009,11 @@ fn trySetAgentStatus(h: HookCtx, ws: u64, value: []const u8, priority: i32) !voi
     _ = try apiCall(h.alloc, h.socket_path, "workspace.set_status", p);
 }
 
-fn statusWithSubagentCount(alloc: Allocator, base: []const u8, count: u64) []const u8 {
-    if (count == 0) return base;
-    return std.fmt.allocPrint(alloc, "{s} ({d} subagent{s})", .{ base, count, if (count > 1) "s" else "" }) catch base;
+fn statusWithCounts(alloc: Allocator, base: []const u8, sessions: u64, subagents: u64) []const u8 {
+    var out = base;
+    if (sessions > 1) out = std.fmt.allocPrint(alloc, "{s} · {d} sessions", .{ out, sessions }) catch out;
+    if (subagents > 0) out = std.fmt.allocPrint(alloc, "{s} ({d} subagent{s})", .{ out, subagents, if (subagents > 1) "s" else "" }) catch out;
+    return out;
 }
 
 fn emitNotification(h: HookCtx, ws: u64, title: []const u8, body: []const u8, focused: bool) void {
@@ -2054,8 +2056,9 @@ fn agentHookPromptSubmit(h: HookCtx) u8 {
     if (h.workspace) |ws| {
         // Allow callers to specify a custom status (e.g. "Idle"); default to "Running"
         const base = getNestedString(h.input, "status") orelse "Running";
+        const session_count = getJsonInt(h.input, "session_count") orelse 0;
         const subagent_count = getJsonInt(h.input, "subagent_count") orelse 0;
-        const status = statusWithSubagentCount(h.alloc, base, subagent_count);
+        const status = statusWithCounts(h.alloc, base, session_count, subagent_count);
         setAgentStatus(h, ws, status, 10);
     }
     wout(h.agent.response);
@@ -2090,8 +2093,9 @@ fn agentHookPreToolUse(h: HookCtx) u8 {
 
     if (h.workspace) |ws| {
         const desc = toolDescription(h.alloc, tool_name, h.input);
+        const session_count = getJsonInt(h.input, "session_count") orelse 0;
         const subagent_count = getJsonInt(h.input, "subagent_count") orelse 0;
-        const status = statusWithSubagentCount(h.alloc, desc, subagent_count);
+        const status = statusWithCounts(h.alloc, desc, session_count, subagent_count);
         setAgentStatus(h, ws, status, 10);
     }
     wout(h.agent.response);
@@ -2101,8 +2105,9 @@ fn agentHookPreToolUse(h: HookCtx) u8 {
 fn agentHookPostToolUse(h: HookCtx) u8 {
     if (h.workspace) |ws| {
         const base = "Running";
+        const session_count = getJsonInt(h.input, "session_count") orelse 0;
         const subagent_count = getJsonInt(h.input, "subagent_count") orelse 0;
-        const status = statusWithSubagentCount(h.alloc, base, subagent_count);
+        const status = statusWithCounts(h.alloc, base, session_count, subagent_count);
         setAgentStatus(h, ws, status, 10);
     }
     wout(h.agent.response);
@@ -3387,4 +3392,47 @@ test "toolDescription: reads tool_input or input payload" {
     try std.testing.expectEqualStrings("Reading pane.zig", toolDescForTest(alloc, "read", "{\"input\":{\"path\":\"/x/pane.zig\"}}"));
     try std.testing.expectEqualStrings("Running ls -la", toolDescForTest(alloc, "shell", "{\"input\":{\"command\":\"ls -la\"}}"));
     try std.testing.expectEqualStrings("Reading", toolDescForTest(alloc, "read", "{\"tool_input\":{\"path\":12}}"));
+}
+
+// ── statusWithCounts ────────────────────────────────────────────────────
+
+test "statusWithCounts: absent, zero and single-session counts add no session suffix" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer _ = arena.deinit();
+    const alloc = arena.allocator();
+
+    try std.testing.expectEqualStrings("Running", statusWithCounts(alloc, "Running", 0, 0));
+    try std.testing.expectEqualStrings("Running", statusWithCounts(alloc, "Running", 1, 0));
+    try std.testing.expectEqualStrings("Reading main.zig", statusWithCounts(alloc, "Reading main.zig", 1, 0));
+}
+
+test "statusWithCounts: session suffix only above one session" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer _ = arena.deinit();
+    const alloc = arena.allocator();
+
+    try std.testing.expectEqualStrings("Running · 2 sessions", statusWithCounts(alloc, "Running", 2, 0));
+    try std.testing.expectEqualStrings("Running · 3 sessions", statusWithCounts(alloc, "Running", 3, 0));
+    try std.testing.expectEqualStrings("Reading main.zig · 2 sessions", statusWithCounts(alloc, "Reading main.zig", 2, 0));
+}
+
+test "statusWithCounts: subagent suffix spelling is unchanged" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer _ = arena.deinit();
+    const alloc = arena.allocator();
+
+    try std.testing.expectEqualStrings("Running (1 subagent)", statusWithCounts(alloc, "Running", 0, 1));
+    try std.testing.expectEqualStrings("Running (1 subagent)", statusWithCounts(alloc, "Running", 1, 1));
+    try std.testing.expectEqualStrings("Running (2 subagents)", statusWithCounts(alloc, "Running", 0, 2));
+    try std.testing.expectEqualStrings("Running", statusWithCounts(alloc, "Running", 0, 0));
+}
+
+test "statusWithCounts: sessions precede subagents" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer _ = arena.deinit();
+    const alloc = arena.allocator();
+
+    try std.testing.expectEqualStrings("Running · 2 sessions (1 subagent)", statusWithCounts(alloc, "Running", 2, 1));
+    try std.testing.expectEqualStrings("Running · 3 sessions (2 subagents)", statusWithCounts(alloc, "Running", 3, 2));
+    try std.testing.expectEqualStrings("Reading main.zig · 2 sessions (1 subagent)", statusWithCounts(alloc, "Reading main.zig", 2, 1));
 }

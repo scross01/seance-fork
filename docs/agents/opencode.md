@@ -42,10 +42,13 @@ wrapper and the GUI auto-installer detect the installed major version via
   plugins adopt it, and the session-store record flips to the last writer.
 - A V2 window can run several sessions at once (session picker, background
   tasks). Séance shows one status per pane: it is **Running** while any
-  session in the window is executing. The subagent badge counts only real
-  subagents — sessions created with a `parentID` — not independent sessions.
-  **Needs input** status and question/form alerts depend on the inline
-  plugin, which does not currently load on V2 (see Limitations).
+  session in the window is executing. The status text also carries a
+  session-count suffix — `Running · 2 sessions` — whenever more than one
+  session shares the pane (a single-session window renders no suffix), and
+  the subagent badge counts only real subagents — sessions created with a
+  `parentID` — not independent sessions. **Needs input** status and
+  question/form alerts depend on the inline plugin, which does not currently
+  load on V2 (see Limitations).
 
 ## Events Handled
 
@@ -102,7 +105,7 @@ OpenCode uses a **TypeScript plugin** (`plugins/seance-opencode/index.ts`) auto-
 
 The plugin exports a `SeancePlugin` async function receiving `$` (shell executor). It subscribes to OpenCode's event system and sends hooks via `seance ctl opencode-hook <event>` subprocess with JSON payload piped via stdin.
 
-**Version:** `@seance-version 17` (V1 and V2)
+**Version:** `@seance-version 17` (V1), `@seance-version 18` (V2)
 
 For OpenCode V2 the plugin lives in `plugins/seance-opencode/index-v2.ts` and
 uses V2's plugin API: it exports `Plugin.define({...})`, streams lifecycle
@@ -116,8 +119,8 @@ The wrapper injects the **inline** plugin — `resources/opencode/seance.mjs` fo
 config key), exported through `OPENCODE_CONFIG_CONTENT`. This is a different file
 from the auto-installed `~/.config/opencode/plugins/seance-opencode.ts` above:
 the inline plugin aggregates the window's sessions into the pane state, while
-the installed one carries the lifecycle hooks, `session-end`, and the
-subagent-count badge for both majors.
+the installed one carries the lifecycle hooks, `session-end`, the
+subagent-count badge for both majors, and (V2) the session count.
 
 ### Event Mapping
 
@@ -145,6 +148,7 @@ subagent-count badge for both majors.
 - **Binary discovery:** Derives `seanceBin` from `SEANCE_BIN_DIR` env var, falling back to `"seance"`.
 - **State variables:** `currentSessionId`, `sessionIdle`, `permissionPending`, `childSessions` (Set), `peerSessions` (Set), `executing` (Set), `completedSessions` (Set), `subagentCount`.
 - **Subagent detection (V2):** only `session.created` events carrying a `parentID` are tracked as subagent children (counted); independent sessions without `parentID` are peer sessions that share the pane's single Running/Idle state via the `executing` set (the pane goes Idle only when the last executing session finishes). `completedSessions` avoids re-tracking finished subagents. (V1 tracked every non-primary session as a subagent — V2 sessions are first-class and several can run in one window.)
+- **Session count (V2):** every `hook()` payload carries `session_count` — the primary session plus the peer sessions, excluding subagent children — and `ctl` appends ` · N sessions` to the sidebar status whenever it exceeds 1, ahead of the `(N subagents)` suffix.
 
 ### Upstream Framework Events
 

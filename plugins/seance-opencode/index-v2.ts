@@ -1,6 +1,6 @@
 // Séance plugin for OpenCode V2
 // Copy to ~/.config/opencode/plugins/seance-opencode.ts
-// @seance-version 17
+// @seance-version 18
 
 import { Plugin } from "@opencode/plugin";
 import { execFile } from "node:child_process";
@@ -40,12 +40,19 @@ export default Plugin.define({
       });
     }
 
+    // Sessions sharing this pane: the primary plus in-window peers. Child
+    // sessions are counted separately as subagents.
+    function sessionCount() {
+      return (currentSessionId ? 1 : 0) + peerSessions.size;
+    }
+
     async function hook(event, extra = {}) {
       await send(["ctl", "opencode-hook", event], JSON.stringify({
         session_id: currentSessionId,
         workspace_id: workspaceId,
         surface_id: surfaceId,
         subagent_count: subagentCount,
+        session_count: sessionCount(),
         ...extra,
       }));
     }
