@@ -25,7 +25,10 @@
   to the status value rather than inside it, so completion, permission and
   state writes no longer erase them and the total stays visible while the
   pane is Idle. Single-session windows render no suffix (OpenCode V2 plugin
-  version 19).
+  version 20). Sessions that already existed when the pane launched are
+  seeded from `session.list` at startup, so a pre-populated window counts
+  correctly instead of waiting for the next session event (best-effort: a
+  client without the method falls back to the event-driven path).
 
 ### Fixed
 - OpenCode V2: the per-launch inline plugin now loads. OpenCode 2.x requires

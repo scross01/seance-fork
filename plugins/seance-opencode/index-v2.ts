@@ -1,6 +1,6 @@
 // Séance plugin for OpenCode V2
 // Copy to ~/.config/opencode/plugins/seance-opencode.ts
-// @seance-version 19
+// @seance-version 20
 
 import { Plugin } from "@opencode/plugin";
 import { execFile } from "node:child_process";
@@ -112,11 +112,21 @@ export default Plugin.define({
           if (!currentSessionId) {
             currentSessionId = eventSessionId;
             sessionIdle = false;
-            childSessions.clear();
-            peerSessions.clear();
+            // Preserve sessions seeded at startup (peers and subagents that
+            // pre-date this pane's launch); only per-run bookkeeping resets.
+            // The primary may itself have been seeded as a peer or child —
+            // drop it so it isn't double-counted as primary + peer/subagent.
+            if (eventSessionId) {
+              peerSessions.delete(eventSessionId);
+              if (childSessions.delete(eventSessionId)) {
+                subagentCount = Math.max(0, subagentCount - 1);
+              }
+            }
             completedSessions.clear();
             executing.clear();
-            subagentCount = 0;
+            // Push only when the seed contributed surviving entries; without
+            // a seed the session-start/prompt-submit hooks carry the counts.
+            if (peerSessions.size > 0 || childSessions.size > 0) await pushCounts();
             await hook("session-start", { cwd });
             await hook("prompt-submit");
           } else if (eventSessionId && eventSessionId !== currentSessionId) {
@@ -136,11 +146,21 @@ export default Plugin.define({
           if (!currentSessionId && eventSessionId) {
             currentSessionId = eventSessionId;
             sessionIdle = false;
-            childSessions.clear();
-            peerSessions.clear();
+            // Preserve sessions seeded at startup (peers and subagents that
+            // pre-date this pane's launch); only per-run bookkeeping resets.
+            // The primary may itself have been seeded as a peer or child —
+            // drop it so it isn't double-counted as primary + peer/subagent.
+            if (eventSessionId) {
+              peerSessions.delete(eventSessionId);
+              if (childSessions.delete(eventSessionId)) {
+                subagentCount = Math.max(0, subagentCount - 1);
+              }
+            }
             completedSessions.clear();
             executing.clear();
-            subagentCount = 0;
+            // Push only when the seed contributed surviving entries; without
+            // a seed the session-start/prompt-submit hooks carry the counts.
+            if (peerSessions.size > 0 || childSessions.size > 0) await pushCounts();
             await hook("session-start", { cwd });
             await hook("prompt-submit");
             adopted = true;
@@ -226,6 +246,35 @@ export default Plugin.define({
         await handleEvent(event).catch(() => {});
       }
     })().catch(() => {});
+
+    // Startup seeding: `peerSessions`/`childSessions` only fill from
+    // `session.created` events observed after this pane's own session adopts,
+    // so a session that already existed when the pane launched would never be
+    // counted and the gap would not self-heal on a later peer event. The V2
+    // client can enumerate existing sessions, so adopt them here (independent
+    // sessions → peers, `parentID` ones → subagents) and push the counts so
+    // the sidebar reflects a pre-populated window. The adoption path is left
+    // to the first `session.created`/`execution.started` so a seed that races
+    // the primary's own create event cannot double-count.
+    if (typeof ctx.client?.session?.list === "function") {
+      try {
+        const existing = await ctx.client.session.list({ query: { directory: cwd } });
+        const sessions = Array.isArray(existing?.data) ? existing.data : [];
+        for (const s of sessions) {
+          if (!s?.id) continue;
+          if (s.parentID) {
+            childSessions.add(s.id);
+            subagentCount++;
+          } else {
+            peerSessions.add(s.id);
+          }
+        }
+        if (sessions.length > 0) await pushCounts();
+      } catch {
+        // Seeding is best-effort; a client without the method or a failed call
+        // leaves the pane to the event-driven path, which still works.
+      }
+    }
 
     await ctx.tool.hook("execute.before", async (event) => {
       if (!event.sessionID || event.sessionID === currentSessionId || peerSessions.has(event.sessionID)) {

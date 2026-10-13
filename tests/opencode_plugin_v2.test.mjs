@@ -109,6 +109,10 @@ ${options.fail ? 'process.exitCode = 1;' : ''}
       if (options.lookupFailure) throw Error('unavailable');
       return { data: { id: sessionID, parentID: options.parents?.[sessionID] } };
     } },
+    client: { session: { list: async () => {
+      if (options.listFailure) throw Error('unavailable');
+      return { data: options.existingSessions ?? [] };
+    } } },
     location: { directory: "/tmp/a 'project'" },
     options: {},
   };
@@ -381,6 +385,50 @@ test('global: session_count reports pane sessions, not subagent children', async
   const hooks = (await f.events()).filter((e) => e.args.at(-1) !== 'subagent-update');
   assert.ok(hooks.length > 0);
   assert.ok(hooks.every((e) => typeof e.payload.session_count === 'number'));
+});
+
+test('global: startup seeding counts sessions that pre-date the pane launch', async (t) => {
+  // A session that already existed when the pane launched produces no
+  // session.created event, so it must be seeded from session.list.
+  const f = await fixture(t, { source: GLOBAL_SRC, existingSessions: [
+    { id: 'ses_old' },                    // independent session sharing the window
+    { id: 'ses_sub', parentID: 'ses_old' }, // subagent of a pre-existing session
+  ] });
+  // The seed pushed counts before any event arrived.
+  const seeded = (await f.events()).at(-1);
+  assert.equal(seeded.args.at(-1), 'session-update');
+  assert.equal(seeded.payload.session_count, 1); // one pre-existing peer
+  assert.equal(seeded.payload.subagent_count, 1);
+  // The pane's own session adopts afterwards; seeded entries must survive.
+  await f.feed('session.created', { sessionID: 'ses_new' });
+  const adopted = (await f.events()).at(-1);
+  assert.equal(adopted.payload.session_count, 2); // primary + seeded peer
+  assert.equal(adopted.payload.subagent_count, 1);
+});
+
+test('global: the adopting primary is dropped from the seed, not double-counted', async (t) => {
+  // session.list runs before the pane's own session adopts, so the primary
+  // can appear in the seed; adoption must remove it from the peer set.
+  const f = await fixture(t, { source: GLOBAL_SRC, existingSessions: [
+    { id: 'ses_1' }, { id: 'ses_2' },
+  ] });
+  await f.feed('session.created', { sessionID: 'ses_1' });
+  const adopted = (await f.events()).at(-1);
+  assert.equal(adopted.payload.session_count, 2); // ses_1 primary + ses_2 peer
+  await f.feed('session.execution.started', { sessionID: 'ses_1' });
+  assert.equal((await f.events()).at(-1).payload.session_count, 2);
+  // The adoption path must not wipe the seeded peer on execution start either.
+  await f.feed('session.deleted', { sessionID: 'ses_1' });
+});
+
+test('global: seeding is best-effort when session.list is unavailable', async (t) => {
+  const f = await fixture(t, { source: GLOBAL_SRC, listFailure: true });
+  // No session-update from a failed seed; the event path still works.
+  await f.feed('session.created', { sessionID: 'ses_1' });
+  const adopted = (await f.events()).at(-1);
+  assert.equal(adopted.payload.session_count, 1);
+  await f.feed('session.created', { sessionID: 'ses_2' });
+  assert.equal((await f.events()).at(-1).payload.session_count, 2);
 });
 
 test('global: subagent count only counts sessions with a parentID', async (t) => {

@@ -141,7 +141,7 @@ OpenCode uses a **TypeScript plugin** (`plugins/seance-opencode/index.ts`) auto-
 
 The plugin exports a `SeancePlugin` async function receiving `$` (shell executor). It subscribes to OpenCode's event system and sends hooks via `seance ctl opencode-hook <event>` subprocess with JSON payload piped via stdin.
 
-**Version:** `@seance-version 17` (V1), `@seance-version 19` (V2)
+**Version:** `@seance-version 17` (V1), `@seance-version 20` (V2)
 
 For OpenCode V2 the plugin lives in `plugins/seance-opencode/index-v2.ts` and
 uses V2's plugin API: it exports `Plugin.define({...})`, streams lifecycle
@@ -213,7 +213,13 @@ Expect `loading plugin id=<inline dir> entrypoint=<inline dir>/index.mjs` and no
   is Idle. A peer session appearing or closing also fires `session-update`, a
   counts-only hook served by `workspace.set_status_counts`, so the repaint
   does not wait for the next prompt or tool event — and never invents a status
-  value, which would flip an idle pane to Running.
+  value, which would flip an idle pane to Running. Sessions that already
+  existed when the pane launched are seeded at plugin setup from
+  `client.session.list()` (independent sessions become peers, `parentID` ones
+  become subagents), so a pre-populated window counts correctly; the adopting
+  primary drops itself from the seeded sets to avoid double-counting, and the
+  seed is best-effort (a client without the method simply falls back to the
+  event-driven path).
 
 ### Upstream Framework Events
 
