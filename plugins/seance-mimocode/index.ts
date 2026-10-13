@@ -1,4 +1,4 @@
-// @seance-version 38
+// @seance-version 39
 
 export const SeancePlugin = async ({ $ }) => {
   const socket = process.env.SEANCE_SOCKET_PATH;
@@ -15,6 +15,8 @@ export const SeancePlugin = async ({ $ }) => {
   let childSessions: Set<string> = new Set();
   let subagentCount = 0;
   const shEscape = (s: string) => s.replace(/'/g, "'\\''");
+  // One server process per pane launch: its cwd is the pane's launch directory.
+  const cwd = process.cwd();
 
   async function hook(event: string, extra: Record<string, unknown> = {}) {
     const payload = JSON.stringify({
@@ -44,7 +46,7 @@ export const SeancePlugin = async ({ $ }) => {
           if (!currentSessionId) {
             currentSessionId = event.properties.sessionID;
             sessionIdle = false;
-            await hook("session-start");
+            await hook("session-start", { cwd });
             await hook("prompt-submit");
           }
           break;
@@ -55,7 +57,7 @@ export const SeancePlugin = async ({ $ }) => {
             sessionIdle = false;
             childSessions.clear();
             subagentCount = 0;
-            await hook("session-start");
+            await hook("session-start", { cwd });
             await hook("prompt-submit");
           }
           break;
@@ -66,7 +68,7 @@ export const SeancePlugin = async ({ $ }) => {
               permissionPending = false;
             } else {
               sessionIdle = true;
-              await hook("stop");
+              await hook("stop", { cwd });
             }
           }
           break;

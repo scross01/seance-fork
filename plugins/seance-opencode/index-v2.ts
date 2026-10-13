@@ -1,6 +1,6 @@
 // Séance plugin for OpenCode V2
 // Copy to ~/.config/opencode/plugins/seance-opencode.ts
-// @seance-version 16
+// @seance-version 17
 
 import { Plugin } from "@opencode/plugin";
 import { execFile } from "node:child_process";
@@ -17,6 +17,9 @@ export default Plugin.define({
 
     const surfaceId = env.SEANCE_SURFACE_ID;
     const workspaceId = env.SEANCE_WORKSPACE_ID;
+    // V2 launches run --standalone per pane: the setup location is the pane's
+    // launch directory, and process.cwd() agrees when the ctx shape drifts.
+    const cwd = ctx.location?.directory ?? process.cwd();
     let currentSessionId;
     let sessionIdle = false;
     let permissionPending = false;
@@ -93,7 +96,7 @@ export default Plugin.define({
             completedSessions.clear();
             executing.clear();
             subagentCount = 0;
-            await hook("session-start");
+            await hook("session-start", { cwd });
             await hook("prompt-submit");
           } else if (eventSessionId && eventSessionId !== currentSessionId) {
             // V2 subagents carry parentID; any other session is an independent
@@ -114,7 +117,7 @@ export default Plugin.define({
             completedSessions.clear();
             executing.clear();
             subagentCount = 0;
-            await hook("session-start");
+            await hook("session-start", { cwd });
             await hook("prompt-submit");
             adopted = true;
           }
@@ -143,7 +146,7 @@ export default Plugin.define({
             break;
           }
           sessionIdle = true;
-          await hook("stop");
+          await hook("stop", { cwd });
           break;
 
         case "session.deleted":
@@ -161,7 +164,7 @@ export default Plugin.define({
             await untrackChildSession(eventSessionId);
             if (wasExecuting && executing.size === 0) {
               sessionIdle = true;
-              await hook("stop");
+              await hook("stop", { cwd });
             }
           }
           break;

@@ -12,6 +12,12 @@
   while any session in the window executes and the subagent badge counts only
   sessions with a `parentID`, so independent concurrent sessions no longer
   inflate the count or leave a working pane marked idle.
+- Session directory tracking for the plugin-family agents: the OpenCode (V1
+  and V2), Kilo Code, and MiMo Code plugins now send `cwd` on their
+  `session-start` and `stop` hooks, so their sessions store the pane's launch
+  directory (`ctl session list`) and completion notifications read
+  "Completed in `<project>`" (plugin versions: OpenCode 17/17, Kilo 15,
+  MiMo 39).
 
 ## [0.5.1]
 

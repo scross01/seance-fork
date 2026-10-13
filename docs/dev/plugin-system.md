@@ -54,7 +54,7 @@ For detailed documentation on each integration approach, see:
 Each TypeScript plugin embeds a version as a comment:
 
 ```typescript
-// @seance-version 14
+// @seance-version 17
 ```
 
 This version is extracted by `extractVersion()` in `src/app.zig` and compared against the installed version. If the bundled version is newer, the plugin is reinstalled.
@@ -63,9 +63,9 @@ Current plugin versions:
 
 | Agent | Plugin Version |
 |-------|----------------|
-| OpenCode | `@seance-version 14` (V1), `@seance-version 16` (V2) |
-| Kilo Code | `@seance-version 14` |
-| MiMo Code | `@seance-version 38` |
+| OpenCode | `@seance-version 17` (V1), `@seance-version 17` (V2) |
+| Kilo Code | `@seance-version 15` |
+| MiMo Code | `@seance-version 39` |
 
 ## Wrapper Scripts
 

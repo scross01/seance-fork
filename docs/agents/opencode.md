@@ -77,6 +77,7 @@ wrapper and the GUI auto-installer detect the installed major version via
 - **Permission detection** — shows "Waiting for permission" when OpenCode asks to run a command
 - **Desktop notifications** — notifies on completion and permission requests
 - **Multi-session aggregation** — one status per pane even when a V2 window runs several concurrent sessions (see the V2 notes above)
+- **Session directory tracking** — the hook payloads carry the pane's launch directory, so the session record stores it and completion notifications read "Completed in `<project>`"
 
 ## Configuration
 
@@ -89,7 +90,6 @@ opencode-hooks = true
 ## Limitations
 
 - **Subagent counting is session-based** — subagent counts come from child sessions (`session.created` with `parentID`); independent sessions in the same window share the pane's status instead of being counted
-- **No session directory** — session is managed through plugin in-memory state
 - **V2 inline plugin does not load (known bug, plan 066)** — OpenCode 2.x requires `plugins` config entries to be *directories*, and séance's per-launch injection passes a file path, so the inline plugin (`resources/opencode/seance-v2.mjs`) is rejected at serve startup (`configured plugin path must be a directory` in `~/.local/share/opencode/log/opencode.log`). Until fixed, V2 has no question/form alerts and no **Needs input** status; tool-permission notifications still work through the global plugin. The fix points the injection at a plugin directory — no plugin-logic changes
 
 ---
@@ -102,7 +102,7 @@ OpenCode uses a **TypeScript plugin** (`plugins/seance-opencode/index.ts`) auto-
 
 The plugin exports a `SeancePlugin` async function receiving `$` (shell executor). It subscribes to OpenCode's event system and sends hooks via `seance ctl opencode-hook <event>` subprocess with JSON payload piped via stdin.
 
-**Version:** `@seance-version 14` (V1) / `@seance-version 16` (V2)
+**Version:** `@seance-version 17` (V1 and V2)
 
 For OpenCode V2 the plugin lives in `plugins/seance-opencode/index-v2.ts` and
 uses V2's plugin API: it exports `Plugin.define({...})`, streams lifecycle

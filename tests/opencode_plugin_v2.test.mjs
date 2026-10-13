@@ -153,6 +153,7 @@ test('inline: starts idle, runs, and emits one completion with the title but no 
   assert.equal(payload.title, "Completed in a 'project'");
   assert.equal(payload.message ?? '', '');
   assert.equal(payload.state, 'Idle');
+  assert.equal('cwd' in payload, false); // the inline port titles its own notice
 });
 
 test('inline: subagent completion cannot hide a working parent or announce early', async (t) => {
@@ -250,6 +251,7 @@ test('global: first session adopts, a second session is tracked as a subagent ch
   await f.feed('session.created', { sessionID: 'ses_1', projectID: 'p1' });
   assert.deepEqual(await f.commands(), ['session-start', 'prompt-submit']);
   assert.equal((await f.events())[0].payload.session_id, 'ses_1');
+  assert.equal((await f.events())[0].payload.cwd, "/tmp/a 'project'");
   await f.feed('session.renamed', { sessionID: 'ses_1', title: 'Renamed' });
   assert.equal((await f.commands()).length, 2);
   await f.feed('session.created', { sessionID: 'ses_2', parentID: 'ses_1' });
@@ -307,6 +309,9 @@ test('global: resumed session adopts on execution.started, failure stops, deleti
   assert.deepEqual(await f.commands(), ['session-start', 'prompt-submit']);
   await f.feed('session.execution.failed', { sessionID: 'ses_r', error: { message: 'boom' } });
   assert.deepEqual(await f.commands(), ['session-start', 'prompt-submit', 'stop']);
+  const stop = (await f.events()).at(-1);
+  assert.equal(stop.args.at(-1), 'stop');
+  assert.equal(stop.payload.cwd, "/tmp/a 'project'");
   await f.feed('session.deleted', { sessionID: 'ses_r' });
   assert.deepEqual(await f.commands(),
     ['session-start', 'prompt-submit', 'stop', 'subagent-update', 'session-end']);

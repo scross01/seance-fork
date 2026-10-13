@@ -1,15 +1,26 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, writeFile, readFile, rm } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
+import { pathToFileURL, fileURLToPath } from 'node:url';
 import { SeancePlugin } from '../resources/opencode/seance.mjs';
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+const GLOBAL_SRC = join(HERE, '..', 'plugins', 'seance-opencode', 'index.ts');
+const KILO_SRC = join(HERE, '..', 'plugins', 'seance-kilo', 'index.ts');
+const MIMO_SRC = join(HERE, '..', 'plugins', 'seance-mimocode', 'index.ts');
 
 async function fixture(t, options = {}) {
   const root = await mkdtemp(join(tmpdir(), "seance-plugin-' "));
   t.after(() => rm(root, { recursive: true, force: true }));
   const capture = join(root, 'events');
-  const binary = join(root, 'seance');
+  // The global plugins interpolate the binary path raw into a shell command, so
+  // it cannot share the quoted directory the payload-escaping tests rely on.
+  const binRoot = options.source ? await mkdtemp(join(tmpdir(), 'seance-plugin-')) : root;
+  t.after(() => rm(binRoot, { recursive: true, force: true }));
+  const binary = join(binRoot, 'seance');
   await writeFile(binary, `#!/usr/bin/env node
 const { appendFileSync } = require('node:fs');
 (async () => {
@@ -24,8 +35,18 @@ ${options.fail ? 'process.exitCode = 1;' : ''}
   Object.assign(process.env, { SEANCE_OPENCODE_BIN: binary, SEANCE_SOCKET_PATH: join(root, 'sock'),
     SEANCE_SURFACE_ID: options.surface ?? '3', SEANCE_WORKSPACE_ID: '1' });
   delete process.env.SEANCE_OPENCODE_HOOKS_DISABLED;
+  delete process.env.SEANCE_KILO_HOOKS_DISABLED;
+  delete process.env.SEANCE_MIMOCODE_HOOKS_DISABLED;
+  const $ = (strings, ...values) => new Promise((resolve, reject) => {
+    const command = strings.reduce((acc, part, i) =>
+      acc + part + (i < values.length ? String(values[i]) : ''), '');
+    execFile('/bin/sh', ['-c', command], (error) => (error ? reject(error) : resolve()));
+  });
+  const plugin = options.source
+    ? (await import(pathToFileURL(options.source).href)).SeancePlugin
+    : SeancePlugin;
   const lookups = [];
-  const hooks = await SeancePlugin({ directory: "/tmp/a 'project'", client: { session: { get: async ({ path }) => {
+  const hooks = await plugin({ directory: "/tmp/a 'project'", $, client: { session: { get: async ({ path }) => {
     lookups.push(path.id);
     if (options.lookupFailure) throw Error('unavailable');
     return { data: { id: path.id, parentID: options.parents?.[path.id] } };
@@ -188,3 +209,23 @@ test('plugin is inert outside a wrapper launch and when disabled', async () => {
     assert.deepEqual(await SeancePlugin({}), {});
   } finally { process.env = previous; }
 });
+
+for (const [agent, source, hook] of [
+  ['opencode', GLOBAL_SRC, 'opencode-hook'],
+  ['kilo', KILO_SRC, 'kilo-hook'],
+  ['mimocode', MIMO_SRC, 'mimocode-hook'],
+]) {
+  test(`global ${agent}: session-start and stop carry the launch directory`, async (t) => {
+    const f = await fixture(t, { source });
+    await f.emit('session.created', { sessionID: 'root' });
+    const events = await f.events();
+    assert.deepEqual(events.map((e) => e.args.at(-1)), ['session-start', 'prompt-submit']);
+    assert.equal(events[0].args.at(-2), hook);
+    assert.equal(events[0].payload.cwd, process.cwd());
+    assert.equal('cwd' in events[1].payload, false);
+    await f.emit('session.idle', { sessionID: 'root' });
+    const stop = (await f.events()).at(-1);
+    assert.equal(stop.args.at(-1), 'stop');
+    assert.equal(stop.payload.cwd, process.cwd());
+  });
+}

@@ -1,6 +1,6 @@
 // Séance plugin for OpenCode
 // Copy to ~/.config/opencode/plugins/seance-opencode.ts
-// @seance-version 14
+// @seance-version 17
 
 export const SeancePlugin = async ({ $ }) => {
   const socket = process.env.SEANCE_SOCKET_PATH;
@@ -18,6 +18,8 @@ export const SeancePlugin = async ({ $ }) => {
   let completedSessions: Set<string> = new Set();
   let subagentCount = 0;
   const shEscape = (s: string) => s.replace(/'/g, "'\\''");
+  // One server process per pane launch: its cwd is the pane's launch directory.
+  const cwd = process.cwd();
 
   async function hook(event: string, extra: Record<string, unknown> = {}) {
     const payload = JSON.stringify({
@@ -75,7 +77,7 @@ export const SeancePlugin = async ({ $ }) => {
             childSessions.clear();
             completedSessions.clear();
             subagentCount = 0;
-            await hook("session-start");
+            await hook("session-start", { cwd });
             await hook("prompt-submit");
           } else if (eventSessionId && eventSessionId !== currentSessionId) {
             await trackChildSession(eventSessionId);
@@ -89,7 +91,7 @@ export const SeancePlugin = async ({ $ }) => {
             childSessions.clear();
             completedSessions.clear();
             subagentCount = 0;
-            await hook("session-start");
+            await hook("session-start", { cwd });
             await hook("prompt-submit");
           } else if (eventSessionId && eventSessionId !== currentSessionId) {
             await trackChildSession(eventSessionId);
@@ -102,7 +104,7 @@ export const SeancePlugin = async ({ $ }) => {
               permissionPending = false;
             } else {
               sessionIdle = true;
-              await hook("stop");
+              await hook("stop", { cwd });
             }
           } else {
             await untrackChildSession(eventSessionId);

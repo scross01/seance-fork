@@ -28,6 +28,7 @@ Séance integrates with [MiMo Code](https://github.com/XiaoMi/mimo-code) through
 - **Per-surface status** — each terminal pane tracks its own agent status independently
 - **Permission detection** — shows "Waiting for permission" when MiMo Code asks to run a command
 - **Desktop notifications** — notifies on completion and permission requests
+- **Session directory tracking** — hook payloads carry the pane's launch directory, so the session record stores it and completion notifications read "Completed in `<project>`" (same as OpenCode and Kilo Code)
 - **Subagent tracking** — MiMo Code can run multiple concurrent sessions; the plugin detects subagents via `tool.execute.before` session ID mismatches and tracks them separately
 - **Activity indicators** — the sidebar icon changes based on subagent activity:
 
@@ -46,10 +47,6 @@ Toggle integration on or off in `config.toml`:
 mimocode-hooks = true
 ```
 
-## Limitations
-
-- **No session directory** — MiMo Code manages sessions entirely through plugin in-memory state; hook payloads carry no working directory (same as OpenCode and Kilo Code)
-
 ---
 
 ## For Contributors
@@ -60,7 +57,7 @@ MiMo Code uses a **TypeScript plugin** (`plugins/seance-mimocode/index.ts`) auto
 
 A wrapper script (`resources/bin/mimo`) intercepts launches for PID tracking and `session-end` on exit.
 
-**Version:** `@seance-version 38` (higher than OpenCode/Kilo due to subagent extensions)
+**Version:** `@seance-version 39` (higher than OpenCode/Kilo due to subagent extensions)
 
 ### Event Mapping
 
