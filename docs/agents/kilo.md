@@ -39,7 +39,6 @@ kilo-hooks = true
 ## Limitations
 
 - **No subagent tracking** — Kilo doesn't emit subagent lifecycle events (unlike MiMo Code)
-- **Session directory** — Kilo exposes its own session directory via environment variable, which Séance ignores; the tracked directory is the pane's launch directory
 
 ---
 

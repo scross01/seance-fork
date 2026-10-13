@@ -1243,7 +1243,7 @@ const codex_agent = AgentConfig{
     .has_notification_hook = false,
     .has_post_tool_hook = true,
     .clear_status_on_end = true,
-    .session_dir_env = "SEANCE_CODEX_SESSION_DIR",
+    .session_dir_env = null,
 };
 
 const pi_agent = AgentConfig{
@@ -1273,7 +1273,7 @@ const opencode_agent = AgentConfig{
     .has_notification_hook = true,
     .has_post_tool_hook = true,
     .clear_status_on_end = true,
-    .session_dir_env = "SEANCE_OPENCODE_SESSION_DIR",
+    .session_dir_env = null,
 };
 
 const antigravity_agent = AgentConfig{
@@ -1381,7 +1381,7 @@ const kilo_agent = AgentConfig{
     .has_notification_hook = true,
     .has_post_tool_hook = true,
     .clear_status_on_end = true,
-    .session_dir_env = "SEANCE_KILO_SESSION_DIR",
+    .session_dir_env = null,
 };
 
 const vibe_agent = AgentConfig{
@@ -2376,7 +2376,7 @@ fn agentHookSessionEnd(h: HookCtx) u8 {
 
 fn isValidSessionDir(dir: []const u8) bool {
     const home = io.getenv("HOME") orelse return false;
-    const cache_prefixes = [_][]const u8{ "/.cache/seance-codex/", "/.cache/seance-pi/" };
+    const cache_prefixes = [_][]const u8{ "/.cache/seance-pi/" };
     for (cache_prefixes) |prefix| {
         // Check for $HOME/.cache/seance-<agent>/<id>
         if (std.mem.startsWith(u8, dir, home)) {
@@ -3450,4 +3450,30 @@ test "countsJson: only the counts the agent reported are carried" {
     try std.testing.expectEqualStrings(",\"session_count\":2", countsJson(alloc, .{ .session = 2 }));
     try std.testing.expectEqualStrings(",\"subagent_count\":1", countsJson(alloc, .{ .subagent = 1 }));
     try std.testing.expectEqualStrings(",\"session_count\":3,\"subagent_count\":2", countsJson(alloc, .{ .session = 3, .subagent = 2 }));
+}
+
+test "session_dir_env: only pi retains an entry" {
+    try std.testing.expect(codex_agent.session_dir_env == null);
+    try std.testing.expect(opencode_agent.session_dir_env == null);
+    try std.testing.expect(kilo_agent.session_dir_env == null);
+    try std.testing.expectEqualStrings("SEANCE_PI_SESSION_DIR", pi_agent.session_dir_env.?);
+}
+
+test "isValidSessionDir: accepts pi paths, rejects others" {
+    const home = io.getenv("HOME") orelse return error.SkipZigTest;
+
+    var buf: [1024]u8 = undefined;
+    const accepted = std.fmt.bufPrint(&buf, "{s}/.cache/seance-pi/12345", .{home}) catch return error.SkipZigTest;
+    try std.testing.expect(isValidSessionDir(accepted));
+
+    const codex_path = std.fmt.bufPrint(&buf, "{s}/.cache/seance-codex/12345", .{home}) catch return error.SkipZigTest;
+    try std.testing.expect(!isValidSessionDir(codex_path));
+
+    const non_digit = std.fmt.bufPrint(&buf, "{s}/.cache/seance-pi/abc", .{home}) catch return error.SkipZigTest;
+    try std.testing.expect(!isValidSessionDir(non_digit));
+
+    const empty_id = std.fmt.bufPrint(&buf, "{s}/.cache/seance-pi/", .{home}) catch return error.SkipZigTest;
+    try std.testing.expect(!isValidSessionDir(empty_id));
+
+    try std.testing.expect(!isValidSessionDir("/tmp/.cache/seance-pi/12345"));
 }

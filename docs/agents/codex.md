@@ -64,7 +64,7 @@ Codex uses a **built-in integration** — no TypeScript plugin or Python plugin 
 - `clear_status_on_end` is `true`.
 - `has_notification_hook` is `false`.
 - **Config toggle:** `codex-hooks = true` in `config.toml`.
-- **Cache directory:** `~/.cache/seance-codex/` — cleaned up on session end.
+- **Session directory:** Codex has no Séance-owned scratch directory; session state rides the hook payloads.
 
 ### Upstream Framework Events
 
