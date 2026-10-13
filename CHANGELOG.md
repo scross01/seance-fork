@@ -19,6 +19,11 @@
   "Completed in `<project>`" (plugin versions: OpenCode 17/17, Kilo 15,
   MiMo 39).
 
+### Changed
+- OpenCode-family tool names (`shell`, `read`, `edit`, `patch`, `glob`,
+  `grep`, `list`, `subagent`, `webfetch`, `websearch`, …) now map to readable
+  sidebar activity descriptions instead of showing the raw tool name.
+
 ## [0.5.1]
 
 ### Changed

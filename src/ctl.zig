@@ -2396,38 +2396,57 @@ fn toolDescription(alloc: Allocator, tool_name: ?[]const u8, data: JsonValue) []
     if (eql(tn, "Read")) return tiFileDesc(alloc, ti_obj, "Reading");
     if (eql(tn, "Edit")) return tiFileDesc(alloc, ti_obj, "Editing");
     if (eql(tn, "Write")) return tiFileDesc(alloc, ti_obj, "Writing");
-    if (eql(tn, "Bash")) {
-        if (ti_obj) |obj| {
-            if (obj.get("command")) |cmd| {
-                if (cmd == .string) {
-                    const s = if (cmd.string.len > 30) cmd.string[0..30] else cmd.string;
-                    return std.fmt.allocPrint(alloc, "Running {s}", .{s}) catch "Running command";
-                }
-            }
-        }
-        return "Running command";
-    }
+    if (eql(tn, "Bash")) return tiCommandDesc(alloc, ti_obj);
     if (eql(tn, "Glob")) return tiPatternDesc(alloc, ti_obj, "Searching");
     if (eql(tn, "Grep")) return tiPatternDesc(alloc, ti_obj, "Searching");
-    if (eql(tn, "Agent")) {
-        if (ti_obj) |obj| {
-            if (obj.get("description")) |d| {
-                if (d == .string) {
-                    return if (d.string.len > 40) d.string[0..40] else d.string;
-                }
-            }
-        }
-        return "Agent";
-    }
+    if (eql(tn, "Agent")) return tiTaskDesc(ti_obj, "Agent");
     if (eql(tn, "WebFetch")) return "Fetching URL";
     if (eql(tn, "WebSearch")) return tiQueryDesc(alloc, ti_obj, "Searching web");
+
+    // OpenCode family (opencode, kilo, mimocode) and Codex use lowercase names.
+    // Exact-match only, so these cannot collide with Claude's capitalized ones.
+    if (eql(tn, "shell") or eql(tn, "bash")) return tiCommandDesc(alloc, ti_obj);
+    if (eql(tn, "read")) return tiFileDesc(alloc, ti_obj, "Reading");
+    if (eql(tn, "write")) return tiFileDesc(alloc, ti_obj, "Writing");
+    if (eql(tn, "edit") or eql(tn, "patch") or eql(tn, "apply_patch")) return tiFileDesc(alloc, ti_obj, "Editing");
+    if (eql(tn, "glob") or eql(tn, "grep")) return tiPatternDesc(alloc, ti_obj, "Searching");
+    if (eql(tn, "list")) return tiFileDesc(alloc, ti_obj, "Listing");
+    if (eql(tn, "subagent") or eql(tn, "task")) return tiTaskDesc(ti_obj, "Subagent");
+    if (eql(tn, "webfetch")) return "Fetching URL";
+    if (eql(tn, "websearch")) return tiQueryDesc(alloc, ti_obj, "Searching web");
+    if (eql(tn, "question")) return "Question";
+    if (eql(tn, "skill")) return "Skill";
     return tn;
+}
+
+fn tiCommandDesc(alloc: Allocator, obj: ?std.json.ObjectMap) []const u8 {
+    if (obj) |o| {
+        if (o.get("command")) |cmd| {
+            if (cmd == .string) {
+                const s = if (cmd.string.len > 30) cmd.string[0..30] else cmd.string;
+                return std.fmt.allocPrint(alloc, "Running {s}", .{s}) catch "Running command";
+            }
+        }
+    }
+    return "Running command";
+}
+
+fn tiTaskDesc(obj: ?std.json.ObjectMap, fallback: []const u8) []const u8 {
+    if (obj) |o| {
+        if (o.get("description")) |d| {
+            if (d == .string) return if (d.string.len > 40) d.string[0..40] else d.string;
+        }
+    }
+    return fallback;
 }
 
 fn tiFileDesc(alloc: Allocator, obj: ?std.json.ObjectMap, verb: []const u8) []const u8 {
     if (obj) |o| {
-        if (o.get("file_path")) |fp| {
-            if (fp == .string) return std.fmt.allocPrint(alloc, "{s} {s}", .{ verb, std.fs.path.basename(fp.string) }) catch verb;
+        // Claude sends `file_path`; the OpenCode family sends `filePath`/`path`.
+        for ([_][]const u8{ "file_path", "filePath", "path" }) |key| {
+            if (o.get(key)) |fp| {
+                if (fp == .string) return std.fmt.allocPrint(alloc, "{s} {s}", .{ verb, std.fs.path.basename(fp.string) }) catch verb;
+            }
         }
     }
     return verb;
@@ -3305,4 +3324,67 @@ test "JsonFields: multiple fields" {
     try std.testing.expectEqualStrings("status", fields.keys.items[0]);
     try std.testing.expectEqualStrings("workspace_id", fields.keys.items[1]);
     try std.testing.expectEqualStrings("surface_id", fields.keys.items[2]);
+}
+
+// ── toolDescription ─────────────────────────────────────────────────────
+
+fn toolDescForTest(alloc: Allocator, tool_name: ?[]const u8, payload: []const u8) []const u8 {
+    const parsed = std.json.parseFromSlice(JsonValue, alloc, payload, .{}) catch return "parse-error";
+    return toolDescription(alloc, tool_name, parsed.value);
+}
+
+test "toolDescription: Claude path unchanged" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer _ = arena.deinit();
+    const alloc = arena.allocator();
+
+    try std.testing.expectEqualStrings("Running git status", toolDescForTest(alloc, "Bash", "{\"tool_input\":{\"command\":\"git status\"}}"));
+    try std.testing.expectEqualStrings("Running command", toolDescForTest(alloc, "Bash", "{\"tool_input\":{}}"));
+    try std.testing.expectEqualStrings("Reading main.zig", toolDescForTest(alloc, "Read", "{\"tool_input\":{\"file_path\":\"/x/src/main.zig\"}}"));
+    try std.testing.expectEqualStrings("Editing main.zig", toolDescForTest(alloc, "Edit", "{\"tool_input\":{\"file_path\":\"/x/src/main.zig\"}}"));
+    try std.testing.expectEqualStrings("Writing notes.md", toolDescForTest(alloc, "Write", "{\"tool_input\":{\"file_path\":\"notes.md\"}}"));
+    try std.testing.expectEqualStrings("Searching *.zig", toolDescForTest(alloc, "Glob", "{\"tool_input\":{\"pattern\":\"*.zig\"}}"));
+    try std.testing.expectEqualStrings("Searching TODO", toolDescForTest(alloc, "Grep", "{\"tool_input\":{\"pattern\":\"TODO\"}}"));
+    try std.testing.expectEqualStrings("Review the flaky test", toolDescForTest(alloc, "Agent", "{\"tool_input\":{\"description\":\"Review the flaky test\"}}"));
+    try std.testing.expectEqualStrings("Agent", toolDescForTest(alloc, "Agent", "{\"tool_input\":{}}"));
+    try std.testing.expectEqualStrings("Fetching URL", toolDescForTest(alloc, "WebFetch", "{}"));
+    try std.testing.expectEqualStrings("Search: weather", toolDescForTest(alloc, "WebSearch", "{\"tool_input\":{\"query\":\"weather\"}}"));
+    try std.testing.expectEqualStrings("Searching web", toolDescForTest(alloc, "WebSearch", "{\"tool_input\":{}}"));
+    try std.testing.expectEqualStrings("Running", toolDescForTest(alloc, null, "{}"));
+    try std.testing.expectEqualStrings("Bash tool", toolDescForTest(alloc, "Bash tool", "{}"));
+}
+
+test "toolDescription: OpenCode-family lowercase names" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer _ = arena.deinit();
+    const alloc = arena.allocator();
+
+    try std.testing.expectEqualStrings("Running git status", toolDescForTest(alloc, "shell", "{\"tool_input\":{\"command\":\"git status\"}}"));
+    try std.testing.expectEqualStrings("Running git status", toolDescForTest(alloc, "bash", "{\"tool_input\":{\"command\":\"git status\"}}"));
+    try std.testing.expectEqualStrings("Running command", toolDescForTest(alloc, "shell", "{}"));
+    try std.testing.expectEqualStrings("Reading pane.zig", toolDescForTest(alloc, "read", "{\"tool_input\":{\"path\":\"/x/src/pane.zig\"}}"));
+    try std.testing.expectEqualStrings("Writing notes.md", toolDescForTest(alloc, "write", "{\"tool_input\":{\"filePath\":\"notes.md\"}}"));
+    try std.testing.expectEqualStrings("Editing main.zig", toolDescForTest(alloc, "edit", "{\"tool_input\":{\"path\":\"src/main.zig\"}}"));
+    try std.testing.expectEqualStrings("Editing util.zig", toolDescForTest(alloc, "patch", "{\"tool_input\":{\"path\":\"src/util.zig\"}}"));
+    try std.testing.expectEqualStrings("Editing util.zig", toolDescForTest(alloc, "apply_patch", "{\"tool_input\":{\"path\":\"src/util.zig\"}}"));
+    try std.testing.expectEqualStrings("Searching *.zig", toolDescForTest(alloc, "glob", "{\"tool_input\":{\"pattern\":\"*.zig\"}}"));
+    try std.testing.expectEqualStrings("Searching TODO", toolDescForTest(alloc, "grep", "{\"tool_input\":{\"pattern\":\"TODO\"}}"));
+    try std.testing.expectEqualStrings("Listing src", toolDescForTest(alloc, "list", "{\"tool_input\":{\"path\":\"src\"}}"));
+    try std.testing.expectEqualStrings("Review the flaky test", toolDescForTest(alloc, "subagent", "{\"tool_input\":{\"description\":\"Review the flaky test\"}}"));
+    try std.testing.expectEqualStrings("Subagent", toolDescForTest(alloc, "task", "{\"tool_input\":{}}"));
+    try std.testing.expectEqualStrings("Fetching URL", toolDescForTest(alloc, "webfetch", "{}"));
+    try std.testing.expectEqualStrings("Search: weather", toolDescForTest(alloc, "websearch", "{\"tool_input\":{\"query\":\"weather\"}}"));
+    try std.testing.expectEqualStrings("Question", toolDescForTest(alloc, "question", "{}"));
+    try std.testing.expectEqualStrings("Skill", toolDescForTest(alloc, "skill", "{}"));
+    try std.testing.expectEqualStrings("mcp_tool", toolDescForTest(alloc, "mcp_tool", "{}"));
+}
+
+test "toolDescription: reads tool_input or input payload" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer _ = arena.deinit();
+    const alloc = arena.allocator();
+
+    try std.testing.expectEqualStrings("Reading pane.zig", toolDescForTest(alloc, "read", "{\"input\":{\"path\":\"/x/pane.zig\"}}"));
+    try std.testing.expectEqualStrings("Running ls -la", toolDescForTest(alloc, "shell", "{\"input\":{\"command\":\"ls -la\"}}"));
+    try std.testing.expectEqualStrings("Reading", toolDescForTest(alloc, "read", "{\"tool_input\":{\"path\":12}}"));
 }
