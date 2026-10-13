@@ -35,6 +35,17 @@
   alerts plus the **Needs input** sidebar status never fired on V2. The inline
   is installed as `share/seance/opencode/inline/index.mjs` and the wrapper
   injects that directory; V1 keeps its file-path injection.
+- OpenCode V2: duplicate desktop alerts are gone. Once the inline loaded it
+  answered the same events as the auto-installed plugin, so a completion or a
+  tool-permission prompt notified twice — and a window with a second session
+  open could alert three times, because the inline fired once per completed
+  session while the installed plugin fired once when the pane went idle. Each
+  event now has one owner: the installed plugin announces completions
+  (`stop`) and permission prompts (`notification`), while the inline publishes
+  only the Running/Needs input/Idle status for those. The inline keeps the two
+  alerts nothing else can produce — agent questions (forms) and OpenCode
+  errors, whose real reason its `stop` hook cannot carry since it always says
+  "Completed".
 
 ### Changed
 - OpenCode-family tool names (`shell`, `read`, `edit`, `patch`, `glob`,

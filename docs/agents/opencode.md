@@ -11,9 +11,9 @@ Séance integrates with [OpenCode](https://opencode.ai) through TypeScript plugi
    `resources/opencode/seance-v2.mjs` (V2) — into that launch only, via
    `seance ctl opencode-config [--v2] <path>` exported as `OPENCODE_CONFIG_CONTENT`.
    The inline plugin aggregates every session in the window into the pane's
-   Running/Needs input/Idle state (including completion notices), while the
-   auto-installed plugin drives the lifecycle hooks, `session-end`, and the
-   subagent badge.
+   Running/Needs input/Idle state, while the auto-installed plugin drives the
+   lifecycle hooks, `session-end`, the subagent badge, and every desktop
+   notification.
 
 Both plugin formats ship: `plugins/seance-opencode/index.ts` for OpenCode V1 and
 `plugins/seance-opencode/index-v2.ts` for V2 (installed as
@@ -73,6 +73,18 @@ the wrapper injects a different shape accordingly:
   real subagents — sessions created with a `parentID` — not independent
   sessions. **Needs input** status and question/form alerts come from the
   inline plugin, which V2 loads from the `inline/` directory (see below).
+
+  > **One notification per event (V2).** Each alert has exactly one owner.
+  > Completions and tool-permission prompts are announced by the
+  > auto-installed plugin (`stop` and `notification` hooks); for those same
+  > events the inline publishes only the Running/Needs input/Idle *status*.
+  > The inline does announce the two things nothing else can: agent questions
+  > (forms) and OpenCode errors — the installed plugin's `stop` hook always
+  > reports "Completed", so the error notice is what carries the real reason.
+  > Both plugins answering the same event is what produced the duplicate
+  > desktop alerts, including the extra ones seen with a second session open
+  > (the inline fired once per completed session while the installed plugin
+  > fired once when the pane went idle).
 
 ## Events Handled
 

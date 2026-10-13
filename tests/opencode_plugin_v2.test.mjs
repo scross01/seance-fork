@@ -141,19 +141,18 @@ ${options.fail ? 'process.exitCode = 1;' : ''}
     events, notices, last, commands, feed, feedBurst, missing };
 }
 
-test('inline: starts idle, runs, and emits one completion with the title but no message text', async (t) => {
+test('inline: starts idle, runs, and reports no completion of its own', async (t) => {
+  // Success is announced by ctl's own stop handler (the global plugin sends
+  // `stop`), so the inline must stay quiet — a second notice here is the
+  // double alert plan 066 removed.
   const f = await fixture(t, { source: INLINE_SRC });
   assert.deepEqual(await f.last(), { state: 'Idle' });
   await f.feed('session.execution.started', { sessionID: 'resumed' });
   assert.equal((await f.last()).state, 'Running');
   await f.feed('session.execution.succeeded', { sessionID: 'resumed' });
   assert.deepEqual(f.lookups, ['resumed']);
-  assert.equal((await f.notices()).length, 1);
-  const payload = await f.last();
-  assert.equal(payload.title, "Completed in a 'project'");
-  assert.equal(payload.message ?? '', '');
-  assert.equal(payload.state, 'Idle');
-  assert.equal('cwd' in payload, false); // the inline port titles its own notice
+  assert.deepEqual(await f.notices(), []);
+  assert.deepEqual(await f.last(), { state: 'Idle' });
 });
 
 test('inline: subagent completion cannot hide a working parent or announce early', async (t) => {
@@ -166,7 +165,8 @@ test('inline: subagent completion cannot hide a working parent or announce early
   assert.equal((await f.last()).state, 'Running');
   assert.equal((await f.notices()).length, 0);
   await f.feed('session.execution.succeeded', { sessionID: 'root' });
-  assert.equal((await f.notices()).length, 1);
+  assert.equal((await f.last()).state, 'Idle');
+  assert.equal((await f.notices()).length, 0);
   assert.deepEqual(f.lookups, []);
 });
 
@@ -174,13 +174,17 @@ test('inline: pending permissions and forms dominate until every request is answ
   const f = await fixture(t);
   await f.feed('session.execution.started', { sessionID: 'root' });
   await f.feed('permission.asked', { sessionID: 'root', id: 'a', action: 'bash', resources: ['echo hello'] });
-  assert.equal((await f.last()).message, 'Permission required: bash (echo hello)');
+  // A permission prompt is announced by the global plugin's `notification`
+  // hook, not here — this port only publishes the status it implies.
+  assert.deepEqual(await f.last(), { state: 'Needs input' });
   await f.feed('permission.asked', { sessionID: 'root', id: 'a', action: 'bash', resources: ['echo hello'] });
   await f.feed('permission.asked', { sessionID: 'root', id: 'b', action: 'edit' });
   await f.feed('form.created', { form: { id: 'q1', sessionID: 'root', title: 'Which file?' } });
   assert.equal((await f.last()).state, 'Needs input');
   assert.equal((await f.last()).message, 'Which file?');
-  assert.equal((await f.notices()).filter((e) => e.payload.title === 'OpenCode').length, 3);
+  // Agent questions are form-driven and handled nowhere else, so the inline
+  // still announces those.
+  assert.equal((await f.notices()).filter((e) => e.payload.title === 'OpenCode').length, 1);
   await f.feed('permission.replied', { sessionID: 'root', requestID: 'a', reply: 'once' });
   assert.equal((await f.last()).state, 'Needs input');
   await f.feed('permission.replied', { sessionID: 'root', requestID: 'b', reply: 'reject' });

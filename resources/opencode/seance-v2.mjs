@@ -4,7 +4,6 @@
 
 import { Plugin } from "@opencode/plugin";
 import { execFile } from "node:child_process";
-import { basename } from "node:path";
 
 // OpenCode invokes event hooks concurrently. Keep lifecycle changes and socket
 // writes ordered; an integration failure must never reject an agent/tool hook.
@@ -15,7 +14,6 @@ export default Plugin.define({
     const binary = env.SEANCE_OPENCODE_BIN;
     if (!binary || !env.SEANCE_SOCKET_PATH || !env.SEANCE_SURFACE_ID ||
         !env.SEANCE_WORKSPACE_ID || env.SEANCE_OPENCODE_HOOKS_DISABLED === "1") return;
-    const directory = ctx.location.directory;
 
     const sessions = new Map();
     let queue = Promise.resolve();
@@ -100,15 +98,15 @@ export default Plugin.define({
       state.pending.clear();
       if (wasBusy) {
         await identify(id, state);
-        if (state.parent === null) {
-          if (state.error?.name !== "MessageAbortedError") {
-            state.completion = state.error ? {
-              title: "OpenCode error",
-              message: state.error.data?.message ?? state.error.message ?? state.error.name ?? "Task failed",
-            } : {
-              title: `Completed${directory ? ` in ${basename(directory)}` : ""}`,
-            };
-          }
+        // Success is announced once, by ctl's own stop handler (the global
+        // plugin sends `stop` when the pane's last session goes idle). This
+        // port only reports the failure that handler cannot: it always says
+        // "Completed", so the error notice is what carries the real reason.
+        if (state.parent === null && state.error && state.error?.name !== "MessageAbortedError") {
+          state.completion = {
+            title: "OpenCode error",
+            message: state.error.data?.message ?? state.error.message ?? state.error.name ?? "Task failed",
+          };
         }
       }
       await publish();
@@ -144,8 +142,11 @@ export default Plugin.define({
         case "permission.asked": {
           if (!p.id || state.pending.has(p.id)) return;
           state.pending.add(p.id);
-          const message = `Permission required: ${p.action ?? "tool"}${p.resources?.length ? ` (${p.resources.join(", ")})` : ""}`;
-          return publish({ title: "OpenCode", message: message.slice(0, 200) });
+          // The alert is the global plugin's job: it sends `notification`, and
+          // ctl titles it and clears the pending stop. Announcing here too
+          // doubles the desktop alert; only the "Needs input" status is
+          // published from this port.
+          return publish();
         }
         case "form.created": {
           if (!p.form?.id || state.pending.has(p.form.id)) return;
