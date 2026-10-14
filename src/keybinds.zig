@@ -458,6 +458,44 @@ pub fn displayString(action: Action, buf: []u8) usize {
     return displayKeybind(bindings[@intFromEnum(action)], buf);
 }
 
+/// Format a keybind as a GTK accelerator string (e.g., "<Control><Shift>C").
+/// Returns the number of bytes written excluding the NUL terminator, or 0
+/// if the action is unbound. The buffer is always NUL-terminated on success,
+/// so buf.ptr is directly usable as a C string. Single letters are lowercased
+/// unless Shift is held, matching gtk_accelerator_name conventions.
+pub fn accelString(action: Action, buf: []u8) usize {
+    if (!initialized) initDefaults();
+    const kb = bindings[@intFromEnum(action)];
+    if (!kb.enabled or kb.key == 0) return 0;
+
+    var pos: usize = 0;
+    const mods = [_]struct { set: bool, s: []const u8 }{
+        .{ .set = kb.ctrl, .s = "<Control>" },
+        .{ .set = kb.shift, .s = "<Shift>" },
+        .{ .set = kb.alt, .s = "<Alt>" },
+    };
+    for (mods) |m| {
+        if (!m.set) continue;
+        if (pos + m.s.len + 1 > buf.len) return 0;
+        @memcpy(buf[pos..][0..m.s.len], m.s);
+        pos += m.s.len;
+    }
+
+    const key_name = c.gdk_keyval_name(kb.key);
+    if (key_name == null) return 0;
+    var name = std.mem.span(key_name);
+    var lower_buf: [1:0]u8 = .{0};
+    if (name.len == 1 and name[0] >= 'A' and name[0] <= 'Z' and !kb.shift) {
+        lower_buf[0] = name[0] + 32;
+        name = &lower_buf;
+    }
+    if (pos + name.len + 1 > buf.len) return 0;
+    @memcpy(buf[pos..][0..name.len], name);
+    pos += name.len;
+    buf[pos] = 0;
+    return pos;
+}
+
 // --- Key event handler ---
 
 fn onKeyPressed(
@@ -1403,4 +1441,17 @@ test "canonicalize: only letter keys are uppercased" {
     try std.testing.expectEqual(@as(u32, c.GDK_KEY_1), canonicalize(.{ .key = c.GDK_KEY_1 }).key);
     try std.testing.expectEqual(@as(u32, c.GDK_KEY_F3), canonicalize(.{ .key = c.GDK_KEY_F3 }).key);
     try std.testing.expectEqual(@as(u32, c.GDK_KEY_Left), canonicalize(.{ .key = c.GDK_KEY_Left }).key);
+}
+
+test "accelString: canonical GTK form, NUL-terminated, 0 when unbound" {
+    resetToDefaults();
+    var buf: [64]u8 = undefined;
+    const n = accelString(.copy, &buf);
+    try std.testing.expectEqualStrings("<Control><Shift>C", buf[0..n]);
+    try std.testing.expectEqual(@as(u8, 0), buf[n]);
+    const m = accelString(.browser_reload, &buf);
+    try std.testing.expectEqualStrings("<Control>r", buf[0..m]);
+    const f = accelString(.find_previous, &buf);
+    try std.testing.expectEqualStrings("<Shift>F3", buf[0..f]);
+    try std.testing.expectEqual(@as(usize, 0), accelString(.rename_tab, &buf));
 }
