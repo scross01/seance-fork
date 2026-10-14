@@ -1126,6 +1126,11 @@ fn onActivate(app: *c.AdwApplication) callconv(.c) void {
         syncPlugin(.vibe, config_mod.get().vibe_hooks);
         syncPlugin(.hermes, config_mod.get().hermes_hooks);
 
+        // Keybinds are fully resolved now (defaults + config overrides), so
+        // publish them as GtkApplication accels for menu shortcut display.
+        const menu_mod = @import("menu.zig");
+        menu_mod.syncAccels();
+
         // Set libadwaita to follow system dark/light, preferring dark when
         // the system has no opinion (or on non-Linux platforms).
         const style_manager = c.adw_style_manager_get_default();

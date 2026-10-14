@@ -22,7 +22,6 @@ pub const menu_actions = [_]Entry{
     .{ .action = .find, .name = "find", .label = "Find…" },
     .{ .action = .find_next, .name = "find-next", .label = "Find Next" },
     .{ .action = .find_previous, .name = "find-previous", .label = "Find Previous" },
-    .{ .action = .clear_scrollback, .name = "clear-scrollback", .label = "Clear Scrollback" },
     .{ .action = .new_column, .name = "new-column", .label = "New Column" },
     .{ .action = .move_column_left, .name = "move-column-left", .label = "Move Column Left" },
     .{ .action = .move_column_right, .name = "move-column-right", .label = "Move Column Right" },
@@ -55,11 +54,38 @@ fn activateMenuAction(_: ?*c.GSimpleAction, _: ?*c.GVariant, data: c.gpointer) c
 /// Register one `app.<name>` GAction per menu entry, all sharing the
 /// executeAction dispatch above. Called once from app.initAppMenu.
 pub fn registerActions(app: *c.AdwApplication) void {
+    menu_app = @ptrCast(@alignCast(app));
     for (menu_actions) |entry| {
         const ga = c.g_simple_action_new(entry.name, null);
         _ = c.g_signal_connect_data(@ptrCast(ga), "activate", @as(c.GCallback, @ptrCast(&activateMenuAction)), @ptrFromInt(@intFromEnum(entry.action)), null, 0);
         c.g_action_map_add_action(@as(*c.GActionMap, @ptrCast(app)), @ptrCast(@alignCast(ga)));
         c.g_object_unref(@ptrCast(ga));
+    }
+}
+
+var menu_app: ?*c.GtkApplication = null;
+
+/// Push current keybinds into GtkApplication accels so every menu item shows
+/// its shortcut dimmed and right-aligned via native HIG rendering. Call after
+/// config load and after every keybind change — WindowState.reloadConfig is
+/// the single funnel for all of those (settings recorder, config reload).
+/// Safe against double-triggering: the window's capture-phase key controller
+/// consumes bound keys before accels see them; when it passes (palette open,
+/// entry focused), the accel performs the same executeAction.
+pub fn syncAccels() void {
+    const app = menu_app orelse return;
+    for (menu_actions) |entry| {
+        var name_buf: [48]u8 = undefined;
+        const detailed = std.fmt.bufPrintZ(&name_buf, "app.{s}", .{std.mem.span(entry.name)}) catch continue;
+        var accel_buf: [64]u8 = undefined;
+        if (keybinds.accelString(entry.action, &accel_buf) == 0) {
+            const empty: [1][*c]const u8 = .{null};
+            c.gtk_application_set_accels_for_action(app, detailed.ptr, &empty);
+        } else {
+            const accel_ptr: [*c]const u8 = @ptrCast(&accel_buf);
+            const accels: [2][*c]const u8 = .{ accel_ptr, null };
+            c.gtk_application_set_accels_for_action(app, detailed.ptr, &accels);
+        }
     }
 }
 
@@ -110,24 +136,18 @@ pub fn buildMenu() MenuRef {
         .{ .label = "Command Palette…", .detailed = "app.command-palette" },
     });
 
+    addSection(root, &.{
+        .{ .label = "Copy", .detailed = "app.copy" },
+        .{ .label = "Paste", .detailed = "app.paste" },
+    });
+
+    addSection(root, &.{
+        .{ .label = "Find…", .detailed = "app.find" },
+        .{ .label = "Find Next", .detailed = "app.find-next" },
+        .{ .label = "Find Previous", .detailed = "app.find-previous" },
+    });
+
     const subs = c.g_menu_new();
-    {
-        const terminal = c.g_menu_new();
-        addGroup(terminal, &.{
-            .{ .label = "Copy", .detailed = "app.copy" },
-            .{ .label = "Paste", .detailed = "app.paste" },
-        });
-        addGroup(terminal, &.{
-            .{ .label = "Find…", .detailed = "app.find" },
-            .{ .label = "Find Next", .detailed = "app.find-next" },
-            .{ .label = "Find Previous", .detailed = "app.find-previous" },
-        });
-        addGroup(terminal, &.{
-            .{ .label = "Clear Scrollback", .detailed = "app.clear-scrollback" },
-        });
-        c.g_menu_append_submenu(@as(*c.GMenu, @ptrCast(subs)), "Terminal", @ptrCast(@alignCast(terminal)));
-        c.g_object_unref(@ptrCast(terminal));
-    }
     {
         const splits = c.g_menu_new();
         addGroup(splits, &.{

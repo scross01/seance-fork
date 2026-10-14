@@ -1012,6 +1012,10 @@ pub const WindowState = struct {
         const cfg = config_mod.reloadConfig();
         self.config = cfg;
 
+        // Keybinds may have changed — re-publish menu shortcut accels.
+        const menu_mod = @import("menu.zig");
+        menu_mod.syncAccels();
+
         // Apply sidebar position if it changed
         self.applySidebarPosition(&cfg);
 
