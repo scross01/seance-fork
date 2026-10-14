@@ -1312,7 +1312,7 @@ fn onAboutAction(_: ?*c.GSimpleAction, _: ?*c.GVariant, data: c.gpointer) callco
     const d: *c.AdwAboutDialog = @ptrCast(about);
     c.adw_about_dialog_set_application_name(d, "Séance-fork");
     c.adw_about_dialog_set_application_icon(d, "com.seance-fork.app");
-    c.adw_about_dialog_set_version(d, "0.5.1");
+    c.adw_about_dialog_set_version(d, "0.6.0");
     c.adw_about_dialog_set_developer_name(d, "Stephen Cross");
     c.adw_about_dialog_set_license_type(d, c.GTK_LICENSE_MIT_X11);
     c.adw_about_dialog_set_website(d, "https://github.com/scross01/seance-fork");

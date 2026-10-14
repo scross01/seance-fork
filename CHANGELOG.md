@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.6.0]
+
 ### Added
 - OpenCode V2 support alongside V1: both plugins ported to the V2 plugin
   API, with version-aware launch/install selection via `opencode --version`
