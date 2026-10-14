@@ -7,7 +7,7 @@
 
 static gboolean fullscreen_label(GtkWidget *widget) {
     if (GTK_IS_LABEL(widget) &&
-        g_strcmp0(gtk_label_get_text(GTK_LABEL(widget)), "Toggle Fullscreen") == 0) return TRUE;
+        g_ascii_strcasecmp(gtk_label_get_text(GTK_LABEL(widget)), "Toggle Fullscreen") == 0) return TRUE;
     for (GtkWidget *child = gtk_widget_get_first_child(widget); child;
          child = gtk_widget_get_next_sibling(child)) {
         if (fullscreen_label(child)) return TRUE;
