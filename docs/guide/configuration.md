@@ -26,6 +26,7 @@ size = 13.0
 [colors]
 theme = ""                    # ghostty theme name (empty = use ghostty's own theme)
 background-opacity = 1.0
+focus-ring-opacity = 0.3      # strength of the active-pane outline; 0 = dim only
 ```
 
 ### Window
@@ -42,8 +43,9 @@ decoration-mode = "auto"      # "auto" (GNOME=CSD, else=SSD), "csd", or "ssd"
 ```toml
 [sidebar]
 position = "left"             # "left" or "right"
-width = 200
+width = 240
 visible = true
+show-button-bar = true       # bottom button row with server-side window decorations
 show-notification-text = true  # latest notification text below workspace title
 show-status = true             # custom status metadata pills
 show-logs = true               # most recent log message
@@ -94,6 +96,7 @@ hermes-hooks = true
 pool-hooks = true
 codebuff-hooks = true
 freebuff-hooks = true
+antigravity-hooks = true
 ```
 
 ### Notifications
@@ -114,7 +117,10 @@ open_folder = "ctrl+shift+o"
 reload_config = "ctrl+shift+comma"
 ```
 
-See [Keybindings](./keybindings.md) for the full default mapping.
+See [Keybindings](./keybindings.md) for the full default mapping. A few
+actions (`close_window`, `rename_tab`, `equalize_splits`,
+`close_tabs_to_right`) have no default chord — they live in the command
+palette and hamburger menu — but all of them are rebindable here.
 
 ### Socket
 

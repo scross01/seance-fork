@@ -3,60 +3,75 @@
 ## [Unreleased]
 
 ### Added
-- OpenCode V2 support: both Séance plugins ported to the V2 plugin API, with
-  version-aware launch/install selection via `opencode --version` (V1-safe
-  fallback) and per-launch `--standalone` private servers so each pane's
-  status stays correctly attributed (`SEANCE_OPENCODE_V2_STANDALONE=0` opts
-  out; explicit `--server` targets pass through untracked).
-- Multi-session awareness for OpenCode V2 windows: the pane is **Running**
-  while any session in the window executes and the subagent badge counts only
-  sessions with a `parentID`, so independent concurrent sessions no longer
-  inflate the count or leave a working pane marked idle.
-- Session directory tracking for the plugin-family agents: the OpenCode (V1
-  and V2), Kilo Code, and MiMo Code plugins now send `cwd` on their
-  `session-start` and `stop` hooks, so their sessions store the pane's launch
-  directory (`ctl session list`) and completion notifications read
-  "Completed in `<project>`" (plugin versions: OpenCode 17/17, Kilo 15,
-  MiMo 39).
-- OpenCode V2 windows now show how many sessions share the pane: the plugin
-  reports `session_count` on every hook and pushes an update the moment a
-  session is created or closed, so the sidebar repaints immediately
-  (`OpenCode: Running · 2 sessions (1 subagent)`). The counts are stored next
-  to the status value rather than inside it, so completion, permission and
-  state writes no longer erase them and the total stays visible while the
-  pane is Idle. Single-session windows render no suffix (OpenCode V2 plugin
-  version 20). Sessions that already existed when the pane launched are
-  seeded from `session.list` at startup, so a pre-populated window counts
-  correctly instead of waiting for the next session event (best-effort: a
-  client without the method falls back to the event-driven path).
-
-### Fixed
-- OpenCode V2: the per-launch inline plugin now loads. OpenCode 2.x requires
-  `plugins` config entries to be *directories* whose entrypoint is named
-  `index.mjs`/`index.ts`, and séance injected a file path, so the inline was
-  rejected (`configured plugin path must be a directory`) and question/form
-  alerts plus the **Needs input** sidebar status never fired on V2. The inline
-  is installed as `share/seance/opencode/inline/index.mjs` and the wrapper
-  injects that directory; V1 keeps its file-path injection.
-- OpenCode V2: duplicate desktop alerts are gone. Once the inline loaded it
-  answered the same events as the auto-installed plugin, so a completion or a
-  tool-permission prompt notified twice — and a window with a second session
-  open could alert three times, because the inline fired once per completed
-  session while the installed plugin fired once when the pane went idle. Each
-  event now has one owner: the installed plugin announces completions
-  (`stop`) and permission prompts (`notification`), while the inline publishes
-  only the Running/Needs input/Idle status for those. The inline keeps the two
-  alerts nothing else can produce — agent questions (forms) and OpenCode
-  errors, whose real reason its `stop` hook cannot carry since it always says
-  "Completed".
-- Wrapper fallback visibility: séance no longer disables OpenCode tracking
-    silently — the wrapper reports fallback on the terminal (socket unreachable)
-    and via notification (plugin unreadable / `opencode-config` failure).
+- OpenCode V2 support alongside V1: both plugins ported to the V2 plugin
+  API, with version-aware launch/install selection via `opencode --version`
+  (V1 on any detection failure) and per-launch `--standalone` private
+  servers so each pane's status stays attributed to its own surface
+  (`SEANCE_OPENCODE_V2_STANDALONE=0` opts out; explicit `--server` targets
+  pass through untracked).
+- Multi-session awareness for OpenCode V2 panes: the pane stays Running
+  while any session in the window executes, and the subagent badge counts
+  only sessions created with a `parentID`.
+- Session-count suffix for multi-session OpenCode V2 panes
+  (`OpenCode: Running · 2 sessions (1 subagent)`), stored as structured
+  status data so completion, permission, and state writes no longer erase
+  it. Counts repaint on session create/close and are seeded from
+  `session.list` at startup so pre-existing sessions count immediately
+  (OpenCode V2 plugin version 20).
+- Project-aware completion notifications: the OpenCode (V1/V2), Kilo Code,
+  and MiMo Code plugins send `cwd` on session hooks, so session records
+  carry the launch directory (`ctl session list`) and notifications read
+  "Completed in `<project>`" (plugin versions: OpenCode V1 17 / V2 20,
+  Kilo 15, MiMo 39).
+- Readable sidebar activity descriptions for OpenCode-family tool names
+  (`shell`, `read`, `edit`, `patch`, `glob`, `grep`, `list`, `subagent`,
+  `webfetch`, `websearch`, …) instead of raw tool names.
+- Notification history: entries are kept and marked read on viewing or pane
+  focus instead of being deleted.
+- Full hamburger command menu with Splits & Layout, Tabs, and Browser
+  submenus, top-level Edit (Copy/Paste/Find) sections, and native shortcut
+  hints that follow keybind customization. `close_window` is a rebindable
+  menu/palette action.
+- Setting to adjust the active-pane focus ring opacity
+  (`focus-ring-opacity` under `[colors]`).
 
 ### Changed
-- OpenCode-family tool names (`shell`, `read`, `edit`, `patch`, `glob`,
-  `grep`, `list`, `subagent`, `webfetch`, `websearch`, …) now map to readable
-  sidebar activity descriptions instead of showing the raw tool name.
+- Active-pane indicator rebuilt on the system accent color as a uniform
+  outline; the top focus bar is gone.
+- Sidebar width is capped on narrow windows and the window has a minimum
+  size.
+- Interface text honors system text scaling (em-based chrome type) with
+  higher-contrast dimmed text.
+- Labels across the app use sentence case with proper ellipses.
+- Notifications go through the system notification service with per-app
+  settings and Do Not Disturb awareness.
+- Browser toolbar compacted to headerbar metrics with a single accent focus
+  ring.
+- Header Settings gear dropped in favor of the hamburger menu; Preferences,
+  Keyboard Shortcuts, and About live in the primary menu.
+
+### Fixed
+- OpenCode V2 inline plugin now loads: the wrapper injects the `inline/`
+  directory (V2 requires directory entries with an `index.mjs` entrypoint)
+  instead of a file path, so question/form alerts and Needs input status
+  fire on V2.
+- OpenCode V2 duplicate alerts eliminated: each event has a single owner —
+  the installed plugin announces completions and permission prompts while
+  the inline publishes only Running/Needs input/Idle status for those,
+  keeping the two alerts nothing else can produce (agent questions and
+  OpenCode errors).
+- OpenCode wrapper reports fallback decisions on the terminal (socket
+  unreachable) and via notification (plugin unreadable /
+  `opencode-config` failure) instead of silently disabling tracking.
+- Agent plugin sync gated on content; agent plugins resolve the séance
+  binary via `SEANCE_OPENCODE_BIN`.
+- Browser commands run asynchronously instead of freezing the interface for
+  several seconds.
+- Scrollback clearing routed through ghostty's `clear_screen` binding.
+- Accessibility, keyboard navigation, high-contrast, and reduced-motion
+  support hardened; file pickers use the modern system dialog.
+- Removed a dead 3-second timer and moved socket reads and session I/O off
+  the UI path.
 
 ## [0.5.1]
 

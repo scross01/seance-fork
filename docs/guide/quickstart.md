@@ -23,7 +23,7 @@ or
 opencode
 ```
 
-3. The sidebar (right side) shows the agent status immediately — a colored dot indicates whether the agent is **working**, **idle**, or **waiting**.
+3. The sidebar (left by default) shows the agent status immediately — a colored dot indicates whether the agent is **working**, **idle**, or **waiting**.
 
 That's it. Séance tracks the agent lifecycle automatically — no configuration needed.
 
@@ -43,7 +43,7 @@ You can also **scroll** with the mouse wheel or trackpad to move between panes.
 
 ## Understanding the Sidebar
 
-The sidebar on the right shows all active agent sessions. Each entry has a status indicator:
+The sidebar on the left by default shows all active agent sessions. Each entry has a status indicator:
 
 - **Running** — the agent is actively processing (green dot)
 - **Waiting** — the agent needs your input or permission (yellow dot)
@@ -58,8 +58,10 @@ Toggle the sidebar with **Ctrl+Shift+B**.
 Séance surfaces important events as desktop notifications:
 
 - **Permission prompts** — when an agent needs approval for a tool call or command
-- **Task completions** — when an agent finishes a task
-- **Unread indicators** — panes with new activity show an unread badge
+- **Task completions** — when an agent finishes a task (named by project
+  for OpenCode, Kilo Code, and MiMo Code: "Completed in `<project>`")
+- **Unread indicators** — panes with new activity show an unread badge.
+  Notifications are kept as history and marked read when viewed.
 
 Jump to the next unread pane with **Ctrl+Shift+U**.
 
@@ -78,7 +80,7 @@ Workspaces let you organize agents by project or task.
 
 ## Command Palette
 
-Press **Ctrl+Shift+P** to open the command palette. From here you can access any action — open settings, rename workspaces, toggle layout mode, and more.
+Press **Ctrl+Shift+P** to open the command palette. From here you can access any action — open settings, rename workspaces, toggle layout mode, and more. The hamburger menu in the header bar exposes the same commands with their current shortcuts.
 
 ## What's Next
 

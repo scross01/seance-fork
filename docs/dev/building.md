@@ -16,7 +16,7 @@ How to build Séance from source, manage dependencies, and work with the Ghostty
 
 ## System Requirements
 
-- **Language:** Zig 0.15.2+
+- **Language:** Zig 0.16.0 (pinned — 0.17.x is not supported yet)
 - **Graphics:** GTK4, libadwaita, OpenGL 4.3+ (desktop, not GLES)
 - **Platform:** Linux (X11 or Wayland)
 - **GPU:** Mesa or proprietary GPU drivers (for libGL/libEGL)
@@ -41,8 +41,9 @@ sudo pacman -S gtk4 libadwaita libcanberra inotify-tools
 
 ```bash
 git clone --recursive https://github.com/scross01/seance-fork.git
-cd seance
-zig build
+cd seance-fork
+make build
+make run
 ```
 
 The `--recursive` flag initializes the Ghostty submodule during clone. If you cloned without it:

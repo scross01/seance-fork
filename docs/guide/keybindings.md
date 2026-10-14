@@ -108,7 +108,14 @@ Browser back/forward use `Ctrl+Shift+Alt+Left/Right` so they don't collide with 
 | Command palette | `Ctrl+Shift+P` |
 | Open folder | `Ctrl+Shift+O` |
 | New window | `Ctrl+Shift+N` |
+| Close window | *(menu/palette only — rebindable, no default chord)* |
+| Toggle fullscreen | `F11` |
 | Quit | `Ctrl+Shift+Q` |
 | Open settings | `Ctrl+,` |
 | Reload config | `Ctrl+Shift+,` |
 | Show shortcuts help | `F1` |
+
+`Rename tab`, `Equalize splits`, and `Close tabs to right` are also
+menu/palette-only with no default chord; bind them under `[keybinds]` in
+`~/.config/seance/config.toml` to give them shortcuts. Every menu item shows
+its current shortcut, following customization.

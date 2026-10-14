@@ -26,6 +26,13 @@ Agent status indicators showing what's running in the workspace:
 
 Multiple agents can have independent status in the same workspace. Pills are sorted by priority and can be expanded/collapsed when there are more than 3 entries.
 
+OpenCode V2 panes running several sessions show one aggregated status
+(Running while any session executes) with a session-count suffix such as
+`OpenCode: Running · 2 sessions (1 subagent)`; the subagent count covers
+only sessions created with a `parentID`. Activity text for OpenCode-family
+tools shows readable descriptions (e.g. shell, edit, subagent activity)
+instead of raw tool names.
+
 ### 4. Latest Log Entry
 
 The most recent log message from agents in the workspace. Logs are cleared when the workspace is closed.
@@ -80,9 +87,13 @@ The shell integration script reports git branch and dirty status automatically w
 When an agent needs your attention — a permission request, a question, or a completed task — Séance sends a desktop notification. Clicking the notification focuses the relevant terminal.
 
 Notifications are:
+
 - **Focus-suppressed** — don't steal focus when your terminal is active
-- **Tracked** — unread count shown in the sidebar
+- **Tracked as history** — entries are kept and marked read on viewing or
+  pane focus instead of being deleted; unread count shown in the sidebar
 - **Clickable** — click to jump to the relevant pane
+- **System-integrated** — delivered through the system notification service
+  with per-app settings and Do Not Disturb awareness
 
 ## Configuration
 
@@ -111,7 +122,8 @@ Or via the Settings UI: **Settings → Sidebar**.
 
 | Action | Shortcut |
 |--------|----------|
-| Focus sidebar | `Ctrl+Shift+S` |
+| Toggle sidebar | `Ctrl+Shift+B` |
+| Cycle preset column width | `Ctrl+Shift+S` |
 | Navigate up/down | `Up`/`Down` or `Ctrl+P`/`Ctrl+N` |
 | Select workspace | `Enter` |
 | Close workspace | `Delete` or `Ctrl+Shift+W` |

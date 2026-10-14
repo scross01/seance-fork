@@ -5,7 +5,7 @@ Séance is a GTK4 terminal multiplexer for Linux. It supports X11 and Wayland, w
 ## System Requirements
 
 - **OS:** Linux (X11 or Wayland)
-- **Zig:** 0.15.2+ (for building from source)
+- **Zig:** 0.16.0 (pinned — 0.17.x is not supported yet; for building from source)
 - **GTK4** and **libadwaita**
 - **OpenGL 4.3+** (Mesa or proprietary GPU drivers)
 
@@ -51,10 +51,13 @@ sudo pacman -S pkg-config gtk4 libadwaita libcanberra inotify-tools
 ```bash
 git clone --recursive https://github.com/scross01/seance-fork.git
 cd seance-fork
-zig build
+make build
+make run
 ```
 
-The binary is at `zig-out/bin/seance`.
+`make build` installs icons, shell integration, and themes into `AppDir/usr/`;
+`make run` builds and launches from there. Do not use `zig-out/bin/seance`
+directly — it lacks installed assets.
 
 If the ghostty dependency is missing:
 

@@ -83,7 +83,7 @@ A bundled [skill file](skills/seance-skill.md) provides AI agents with a complet
 
 ### And also
 
-Workspaces, session persistence across restarts, tabs within columns, a command palette, focus-follows-mouse, and no telemetry. Press **F11** to toggle fullscreen, or choose **Toggle Fullscreen** in the command palette. The header bar hides in fullscreen and returns when you exit.
+Workspaces, session persistence across restarts, tabs within columns, a command palette, a hamburger command menu with shortcut hints, focus-follows-mouse, and no telemetry. Press **F11** to toggle fullscreen, or choose **Toggle Fullscreen** in the command palette. The header bar hides in fullscreen and returns when you exit.
 
 ## Installation
 
@@ -106,7 +106,7 @@ mv seance-*-x86_64.AppImage ~/.local/bin/seance
 
 ### Building from source
 
-Requires Zig **0.16.x**, GTK4, libadwaita, OpenGL 4.3+, and Linux (X11 or Wayland).
+Requires Zig **0.16.0** (pinned), GTK4, libadwaita, OpenGL 4.3+, and Linux (X11 or Wayland).
 
 **Install build dependencies (Ubuntu/Debian):**
 
@@ -118,11 +118,14 @@ sudo apt install pkg-config libgtk-4-dev libadwaita-1-dev libcanberra-dev inotif
 
 ```bash
 git clone --recursive https://github.com/scross01/seance-fork.git
-cd seance
-zig build
+cd seance-fork
+make build
+make run
 ```
 
-The binary is at `zig-out/bin/seance`.
+`make build` installs icons, shell integration, and themes into `AppDir/usr/`;
+`make run` builds and launches from there. Do not use `zig-out/bin/seance`
+directly — it lacks installed assets.
 
 If the ghostty dependency is missing:
 
@@ -143,9 +146,9 @@ Claude Code, Codex, Pi, OpenCode, Kilo Code, MiMo Code, Mistral Vibe, and Antigr
 - **Antigravity CLI**: Tracked through its status-line callback, added by the wrapper on first launch. See above for details.
 - **Poolside, Codebuff, Freebuff**: Requires `inotify-tools` for real-time agent status monitoring.
 
-To disable OpenCode integration: **Settings → Terminal → OpenCode Integration**, or set `opencode-hooks = false` in `~/.config/seance/config.toml`.
+To disable OpenCode integration: **Settings → Integrations → OpenCode Integration**, or set `opencode-hooks = false` in `~/.config/seance/config.toml`.
 
-To disable Kilo Code integration: **Settings → Terminal → Kilo Code Integration**, or set `kilo-hooks = false` in `~/.config/seance/config.toml`.
+To disable Kilo Code integration: **Settings → Integrations → Kilo Code Integration**, or set `kilo-hooks = false` in `~/.config/seance/config.toml`.
 
 ## Contributing
 

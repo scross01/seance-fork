@@ -111,4 +111,4 @@ hermes-hooks = true
 antigravity-hooks = true
 ```
 
-Or via the Settings UI: **Settings → Terminal → Agent Integration**.
+Or via the Settings UI: **Settings → Integrations → Agent Integration**.
