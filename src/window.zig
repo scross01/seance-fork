@@ -1159,11 +1159,8 @@ pub const WindowState = struct {
         const menu_btn = c.gtk_menu_button_new();
         c.gtk_menu_button_set_icon_name(@ptrCast(menu_btn), "open-menu-symbolic");
         c.gtk_widget_set_tooltip_text(@ptrCast(menu_btn), "Main menu");
-        const menu = c.g_menu_new();
-        c.g_menu_append(@ptrCast(@alignCast(menu)), "Preferences", "app.preferences");
-        c.g_menu_append(@ptrCast(@alignCast(menu)), "Keyboard shortcuts", "app.shortcuts");
-        c.g_menu_append(@ptrCast(@alignCast(menu)), "About Séance", "app.about");
-        c.g_menu_append(@ptrCast(@alignCast(menu)), "Quit", "app.quit");
+        const menu_mod = @import("menu.zig");
+        const menu = menu_mod.buildMenu();
         c.gtk_menu_button_set_menu_model(@ptrCast(menu_btn), @ptrCast(@alignCast(menu)));
         c.g_object_unref(@ptrCast(menu));
         c.adw_header_bar_pack_end(@ptrCast(header), @ptrCast(menu_btn));

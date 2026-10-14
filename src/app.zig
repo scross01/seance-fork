@@ -1233,6 +1233,8 @@ pub fn gtkApp(app: *c.AdwApplication) *c.GtkApplication {
 /// g_application_set_action_group, which also asserts if the app is already
 /// registered — so this must run from create(), before activate().
 fn initAppMenu(app: *c.AdwApplication) void {
+    const menu = @import("menu.zig");
+    menu.registerActions(app);
     const entries = [_]c.GActionEntry{
         .{
             .name = "quit",
