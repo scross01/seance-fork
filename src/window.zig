@@ -2362,6 +2362,29 @@ fn loadThemeCss() void {
         \\
     , .{accent_bg}) catch return;
 
+    w.print(
+        \\.browser-toolbar {{ padding: 4px 2px; }}
+        \\.browser-toolbar button {{ min-width: 28px; min-height: 28px; padding: 4px; border-radius: 6px; }}
+        \\.browser-toolbar .linked.browser-nav button {{ min-width: 28px; }}
+        \\.browser-toolbar .linked.browser-nav button:first-child {{ border-top-left-radius: 6px; border-bottom-left-radius: 6px; }}
+        \\.browser-toolbar .linked.browser-nav button:last-child {{ border-top-right-radius: 6px; border-bottom-right-radius: 6px; }}
+        \\.browser-toolbar button.circular {{ border-radius: 50%; }}
+        \\.browser-url-stack {{ background-color: alpha(@window_fg_color, 0.06); border: 1px solid transparent; border-radius: 8px; padding: 0 10px; margin: 0 2px; }}
+        \\.browser-url-stack:focus-within {{ border-color: alpha(@accent_bg_color, 0.6); }}
+        \\.url-display, .browser-url-display {{ font-size: 0.85em; padding: 2px; }}
+        \\.browser-url-stack entry {{ background: transparent; border: none; box-shadow: none; padding: 0 2px; font-size: 0.85em; min-height: 24px; }}
+        \\.browser-url-stack entry:focus, .browser-url-stack entry:focus-within {{ outline-style: none; outline-width: 0; outline-offset: 0; box-shadow: none; border-style: none; border-width: 0; }}
+        \\.browser-url-stack entry selection {{ background-color: alpha(@accent_bg_color, 0.35); }}
+        \\progressbar.browser-progress trough {{ min-height: 2px; border-radius: 1px; background-color: alpha(@window_fg_color, 0.12); }}
+        \\progressbar.browser-progress progress {{ min-height: 2px; border-radius: 1px; background-color: @accent_bg_color; }}
+        \\.browser-toolbar:backdrop {{ opacity: 0.7; }}
+        \\@media (prefers-contrast: more) {{
+        \\  .browser-url-stack {{ border: 2px solid currentColor; }}
+        \\  .browser-toolbar button {{ border: 1px solid currentColor; }}
+        \\}}
+        \\
+    , .{}) catch return;
+
     // Vertical tab bar styles
     w.print(
         \\.vtab-bar {{ padding: 5px 0 2px 0; }}

@@ -96,33 +96,46 @@ pub const WebPanel = struct {
         c.gtk_widget_add_css_class(@ptrCast(wrapper), "pane-unfocused");
 
         // Toolbar: [◀] [▶] [⟲/✕] [URL entry] [✕]
-        const toolbar = c.gtk_box_new(c.GTK_ORIENTATION_HORIZONTAL, 4);
+        const toolbar = c.gtk_box_new(c.GTK_ORIENTATION_HORIZONTAL, 2);
+        c.gtk_widget_add_css_class(toolbar, "browser-toolbar");
         c.gtk_widget_set_hexpand(toolbar, 1);
-        c.gtk_widget_set_margin_start(toolbar, 4);
-        c.gtk_widget_set_margin_end(toolbar, 4);
-        c.gtk_widget_set_margin_top(toolbar, 4);
-        c.gtk_widget_set_margin_bottom(toolbar, 4);
+        c.gtk_widget_set_margin_start(toolbar, 2);
+        c.gtk_widget_set_margin_end(toolbar, 2);
+        c.gtk_widget_set_margin_top(toolbar, 2);
+        c.gtk_widget_set_margin_bottom(toolbar, 2);
+
+        const nav_box = c.gtk_box_new(c.GTK_ORIENTATION_HORIZONTAL, 0);
+        c.gtk_widget_add_css_class(nav_box, "linked");
+        c.gtk_widget_add_css_class(nav_box, "browser-nav");
+        c.gtk_box_append(@ptrCast(toolbar), nav_box);
 
         const btn_back = c.gtk_button_new_from_icon_name("go-previous-symbolic");
         c.gtk_widget_set_tooltip_text(btn_back, "Back");
-        c.gtk_box_append(@ptrCast(toolbar), btn_back);
+        c.gtk_widget_add_css_class(btn_back, "flat");
+        c.gtk_box_append(@ptrCast(nav_box), btn_back);
 
         const btn_forward = c.gtk_button_new_from_icon_name("go-next-symbolic");
         c.gtk_widget_set_tooltip_text(btn_forward, "Forward");
-        c.gtk_box_append(@ptrCast(toolbar), btn_forward);
+        c.gtk_widget_add_css_class(btn_forward, "flat");
+        c.gtk_box_append(@ptrCast(nav_box), btn_forward);
 
         const btn_reload = c.gtk_button_new_from_icon_name("view-refresh-symbolic");
         c.gtk_widget_set_tooltip_text(btn_reload, "Reload");
+        c.gtk_widget_add_css_class(btn_reload, "flat");
+        c.gtk_widget_add_css_class(btn_reload, "circular");
         c.gtk_box_append(@ptrCast(toolbar), btn_reload);
 
         // URL display stack: label (styled display) + entry (editing)
         const url_stack = c.gtk_stack_new();
+        c.gtk_widget_add_css_class(url_stack, "browser-url-stack");
         c.gtk_widget_set_hexpand(url_stack, 1);
+        c.gtk_widget_set_valign(url_stack, c.GTK_ALIGN_CENTER);
 
         const url_label: *c.GtkWidget = c.gtk_label_new(null);
         c.gtk_label_set_ellipsize(@ptrCast(url_label), c.PANGO_ELLIPSIZE_START);
         c.gtk_label_set_xalign(@ptrCast(url_label), 0);
         c.gtk_widget_add_css_class(url_label, "url-display");
+        c.gtk_widget_add_css_class(url_label, "browser-url-display");
         _ = c.gtk_stack_add_named(@ptrCast(url_stack), url_label, "display");
 
         const entry = c.gtk_entry_new();
@@ -150,17 +163,22 @@ pub const WebPanel = struct {
         const btn_menu = c.gtk_menu_button_new();
         c.gtk_menu_button_set_icon_name(@ptrCast(btn_menu), "open-menu-symbolic");
         c.gtk_widget_set_tooltip_text(btn_menu, "Browser menu");
+        c.gtk_widget_add_css_class(btn_menu, "flat");
+        c.gtk_widget_add_css_class(btn_menu, "circular");
         c.gtk_menu_button_set_popover(@ptrCast(btn_menu), popover);
         c.gtk_box_append(@ptrCast(toolbar), btn_menu);
 
         const btn_close = c.gtk_button_new_from_icon_name("window-close-symbolic");
         c.gtk_widget_set_tooltip_text(btn_close, "Close browser pane");
+        c.gtk_widget_add_css_class(btn_close, "flat");
+        c.gtk_widget_add_css_class(btn_close, "circular");
         c.gtk_box_append(@ptrCast(toolbar), btn_close);
 
         c.gtk_box_append(@ptrCast(box), toolbar);
 
         // Progress bar (thin line under toolbar, hidden by default)
         const progress_bar = c.gtk_progress_bar_new();
+        c.gtk_widget_add_css_class(progress_bar, "browser-progress");
         c.gtk_widget_set_hexpand(progress_bar, 1);
         c.gtk_widget_set_size_request(progress_bar, -1, 3);
         c.gtk_widget_set_visible(progress_bar, 0);
