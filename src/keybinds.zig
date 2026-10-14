@@ -74,6 +74,7 @@ pub const Action = enum(u8) {
 
     // Window
     new_window,
+    close_window,
     toggle_fullscreen,
     quit_app,
 
@@ -283,6 +284,7 @@ fn initDefaults() void {
 
     // Window
     set(.new_window, .{ .key = c.GDK_KEY_N, .ctrl = true, .shift = true });
+    set(.close_window, .{}); // menu/palette only; no default chord
     set(.toggle_fullscreen, .{ .key = c.GDK_KEY_F11 });
     set(.quit_app, .{ .key = c.GDK_KEY_Q, .ctrl = true, .shift = true });
 
@@ -671,6 +673,10 @@ pub fn executeAction(action: Action, state: *Window.WindowState) c.gboolean {
         // Window
         .new_window => {
             _ = state.window_manager.newWindow();
+        },
+        .close_window => {
+            // Re-enter the existing close-request flow (confirm dialog + closeWindow).
+            c.gtk_window_close(@ptrCast(state.gtk_window));
         },
         .toggle_fullscreen => state.toggleFullscreen(),
         .quit_app => state.quitApp(),
