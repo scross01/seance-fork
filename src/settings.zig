@@ -589,6 +589,7 @@ const shortcut_defs = [_]ShortcutDef{
     .{ .action = .rename_workspace, .label = "Rename workspace" },
     .{ .action = .toggle_pin, .label = "Toggle pin" },
     .{ .action = .new_window, .label = "New window" },
+    .{ .action = .close_window, .label = "Close window" },
     .{ .action = .quit_app, .label = "Quit app" },
     .{ .action = .open_command_palette, .label = "Command palette" },
     .{ .action = .open_folder, .label = "Open folder" },
