@@ -314,9 +314,10 @@ pub const Pane = struct {
 
     pub fn clearScrollback(self: *Pane) void {
         if (self.surface) |s| {
-            // Send clear screen escape sequences through ghostty
-            const seq = "\x1b[H\x1b[2J\x1b[3J";
-            c.ghostty_surface_text(s, seq, seq.len);
+            // Emulator-level clear (screen + scrollback). Never inject escape
+            // sequences as input text — ghostty_surface_text types into the
+            // shell, which pasted raw "[H[2J[3J" at the prompt.
+            _ = c.ghostty_surface_binding_action(s, "clear_screen", 12);
         }
     }
 
