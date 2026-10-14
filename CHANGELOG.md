@@ -5,75 +5,31 @@
 ## [0.6.0]
 
 ### Added
-- OpenCode V2 support alongside V1: both plugins ported to the V2 plugin
-  API, with version-aware launch/install selection via `opencode --version`
-  (V1 on any detection failure) and per-launch `--standalone` private
-  servers so each pane's status stays attributed to its own surface
-  (`SEANCE_OPENCODE_V2_STANDALONE=0` opts out; explicit `--server` targets
-  pass through untracked).
-- Multi-session awareness for OpenCode V2 panes: the pane stays Running
-  while any session in the window executes, and the subagent badge counts
-  only sessions created with a `parentID`.
-- Session-count suffix for multi-session OpenCode V2 panes
-  (`OpenCode: Running · 2 sessions (1 subagent)`), stored as structured
-  status data so completion, permission, and state writes no longer erase
-  it. Counts repaint on session create/close and are seeded from
-  `session.list` at startup so pre-existing sessions count immediately
-  (OpenCode V2 plugin version 20).
-- Project-aware completion notifications: the OpenCode (V1/V2), Kilo Code,
-  and MiMo Code plugins send `cwd` on session hooks, so session records
-  carry the launch directory (`ctl session list`) and notifications read
-  "Completed in `<project>`" (plugin versions: OpenCode V1 17 / V2 20,
-  Kilo 15, MiMo 39).
-- Readable sidebar activity descriptions for OpenCode-family tool names
-  (`shell`, `read`, `edit`, `patch`, `glob`, `grep`, `list`, `subagent`,
-  `webfetch`, `websearch`, …) instead of raw tool names.
-- Notification history: entries are kept and marked read on viewing or pane
-  focus instead of being deleted.
-- Full hamburger command menu with Splits & Layout, Tabs, and Browser
-  submenus, top-level Edit (Copy/Paste/Find) sections, and native shortcut
-  hints that follow keybind customization. `close_window` is a rebindable
-  menu/palette action.
-- Setting to adjust the active-pane focus ring opacity
-  (`focus-ring-opacity` under `[colors]`).
+- Support for OpenCode V2 alongside V1 with automatic version detection.
+- OpenCode V2 panes stay Running while any session in the window is working and count subagents separately from independent sessions.
+- OpenCode V2 panes with multiple sessions show how many sessions share the pane.
+- Completion notifications for OpenCode, Kilo Code, and MiMo Code now name the project that finished.
+- Notification history is kept and marked read on viewing instead of being deleted.
+- Header menu with the full command list, shortcut hints, Preferences, Keyboard Shortcuts, and About.
+- Close window is now in the menu and command palette and can be rebound like any shortcut.
+- Setting to adjust the active-pane focus ring opacity.
 
 ### Changed
-- Active-pane indicator rebuilt on the system accent color as a uniform
-  outline; the top focus bar is gone.
-- Sidebar width is capped on narrow windows and the window has a minimum
-  size.
-- Interface text honors system text scaling (em-based chrome type) with
-  higher-contrast dimmed text.
+- Sidebar shows readable activity descriptions for OpenCode-family tools instead of raw tool names.
+- Active-pane indicator follows the system accent color with a uniform outline.
+- Sidebar width is capped on narrow windows and the window has a minimum size.
+- Interface text respects system text scaling with brighter dimmed text for readability.
 - Labels across the app use sentence case with proper ellipses.
-- Notifications go through the system notification service with per-app
-  settings and Do Not Disturb awareness.
-- Browser toolbar compacted to headerbar metrics with a single accent focus
-  ring.
-- Header Settings gear dropped in favor of the hamburger menu; Preferences,
-  Keyboard Shortcuts, and About live in the primary menu.
+- Notifications use the system notification service with per-app settings and Do Not Disturb awareness.
+- Browser toolbar is more compact with a single focus ring.
 
 ### Fixed
-- OpenCode V2 inline plugin now loads: the wrapper injects the `inline/`
-  directory (V2 requires directory entries with an `index.mjs` entrypoint)
-  instead of a file path, so question/form alerts and Needs input status
-  fire on V2.
-- OpenCode V2 duplicate alerts eliminated: each event has a single owner —
-  the installed plugin announces completions and permission prompts while
-  the inline publishes only Running/Needs input/Idle status for those,
-  keeping the two alerts nothing else can produce (agent questions and
-  OpenCode errors).
-- OpenCode wrapper reports fallback decisions on the terminal (socket
-  unreachable) and via notification (plugin unreadable /
-  `opencode-config` failure) instead of silently disabling tracking.
-- Agent plugin sync gated on content; agent plugins resolve the séance
-  binary via `SEANCE_OPENCODE_BIN`.
-- Browser commands run asynchronously instead of freezing the interface for
-  several seconds.
-- Scrollback clearing routed through ghostty's `clear_screen` binding.
-- Accessibility, keyboard navigation, high-contrast, and reduced-motion
-  support hardened; file pickers use the modern system dialog.
-- Removed a dead 3-second timer and moved socket reads and session I/O off
-  the UI path.
+- OpenCode V2 questions and status prompts that previously never appeared are now tracked.
+- Duplicate desktop alerts for OpenCode V2 events are gone.
+- Séance now explains when OpenCode tracking falls back instead of failing silently.
+- Browser commands no longer freeze the interface for several seconds.
+- Accessibility, keyboard navigation, high-contrast, and reduced-motion support hardened.
+- File pickers use the modern system dialog.
 
 ## [0.5.1]
 
