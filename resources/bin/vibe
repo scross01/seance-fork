@@ -40,7 +40,7 @@ if ! timeout 0.75 seance ctl --socket "${SEANCE_SOCKET_PATH:-}" ping >/dev/null 
     exec "$REAL_VIBE" "$@"
 fi
 
-# ── Enable experimental hooks ────────────────────────────────────────────
+# ── Enable hooks (stable in current Vibe; export kept for older versions) ──────
 
 export VIBE_ENABLE_EXPERIMENTAL_HOOKS=1
 

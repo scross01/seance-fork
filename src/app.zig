@@ -14,7 +14,7 @@ const kde_decoration = @import("kde_decoration.zig");
 
 const is_linux = builtin.os.tag == .linux;
 
-const SEANCE_VIBE_VERSION: u32 = 1;
+const SEANCE_VIBE_VERSION: u32 = 2;
 const SEANCE_HERMES_PLUGIN_VERSION: u32 = 1;
 pub const SEANCE_POOL_VERSION: u32 = 1;
 

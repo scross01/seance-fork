@@ -2,23 +2,23 @@
 # Auto-installed by Séance - do not edit manually
 
 [[hooks]]
-name = "seance-post-agent-turn"
-type = "post_agent_turn"
+name = "seance-post-agent"
+type = "post_agent"
 command = "seance ctl vibe-hook stop"
 timeout = 10.0
 description = "Séance: Report idle state"
 
 [[hooks]]
-name = "seance-pre-tool-use"
-type = "before_tool"
+name = "seance-pre-tool"
+type = "pre_tool"
 match = "*"
 command = "seance ctl vibe-hook pre-tool-use"
 timeout = 5.0
 description = "Séance: Track tool usage start"
 
 [[hooks]]
-name = "seance-post-tool-use"
-type = "after_tool"
+name = "seance-post-tool"
+type = "post_tool"
 match = "*"
 command = "seance ctl vibe-hook post-tool-use"
 timeout = 5.0
