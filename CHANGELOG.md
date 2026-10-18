@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Changed
+- Mistral Vibe hooks updated to use stable hook type names (post_agent, pre_tool, post_tool).
+
 ## [0.6.0]
 
 ### Added
