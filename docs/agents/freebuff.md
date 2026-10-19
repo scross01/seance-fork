@@ -7,7 +7,9 @@ Séance integrates with [Freebuff](https://freebuff.com) through session log mon
 1. **Wrapper script** intercepts `freebuff` launches inside Séance terminals
 2. **Background monitor** discovers this session's own `chats/<timestamp>/log.jsonl` (Freebuff writes a fresh timestamped chat directory per launch) and watches that single file with `inotifywait`
 3. **Activity detection** — when a `Start agent` / `[message-queue] Processing` marker line is appended, status changes to "Running"
-4. **Idle detection** — when no log activity for 5 seconds, status changes to "Idle"; a `[chat-runtime] Freebuff session over` line flips to "Idle" immediately
+4. **Idle detection** — when no marker activity for 5 seconds (the CLI's
+   debug/telemetry writes don't count), status changes to "Idle"; a
+   `[chat-runtime] Freebuff session over` line flips to "Idle" immediately
 5. **Session end** — wrapper fires `session-end` on exit via trap
 
 ## Status Detection
@@ -81,7 +83,11 @@ The wrapper script starts a background process with two phases:
    | `End agent` alone | no state change (agents chain back-to-back; flipping on End would flicker) |
    | unrelated lines (debug/telemetry) | no state change (fixes false-Running) |
 
-5. On timeout (5s with no marker activity): if Running, fire Idle
+5. Idle is decided on every wake by **time since the last marker**: 5s
+   without one flips a Running status to Idle. Raw writes never extend
+   the Running state — the CLI emits debug lines (e.g. `fileNameTruncation
+   took a while`) indefinitely, so event silence alone would never
+   produce an Idle
 6. If the watched file vanished (shouldn't happen — pino appends, no rotation): re-discover once, then give up
 7. A TERM/INT/HUP trap reaps the watch child and state file; the wrapper's EXIT trap kills the monitor on session end
 
@@ -102,5 +108,9 @@ The wrapper script starts a background process with two phases:
 - `has_notification_hook` is `false`.
 - **Config toggle:** `freebuff-hooks = true` in `config.toml`.
 - **File pattern:** `log.jsonl` — one active file per launch under `chats/<ISO-8601 timestamp>/`, not a directory tree.
-- **Idle timeout:** 5 seconds
+- **Idle timeout:** 5 seconds since the last marker (not since the last file write)
+- **State file:** if the monitor's temp state file is deleted externally it
+  is recreated as Running, so the next timeout can still flip the sidebar
+  to Idle instead of erroring; status transitions retry once if the socket
+  call fails.
 - **Log path ownership:** verified by the `"pid"` field in log lines against the wrapper's descendant PIDs (`ps` walk), not by path guessing.
