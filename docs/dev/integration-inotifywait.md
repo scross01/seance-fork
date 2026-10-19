@@ -7,6 +7,9 @@ Session log monitoring is used for agents that don't have native hook systems. I
 1. A wrapper script intercepts agent launches inside Séance terminals
 2. The wrapper starts a background monitor process
 3. The monitor watches the agent's session log directory using `inotifywait`
+   (Freebuff is different: it resolves this session's own `log.jsonl` first —
+   bounded, pid-verified discovery — then watches that single file; the
+   directory-watch steps below describe the Codebuff/Poolside-era variant.)
 4. When files are modified, the monitor detects activity and reports "Running" status
 5. When no activity is detected for a timeout period, the monitor reports "Idle" status
 6. The wrapper fires `session-end` on exit via a trap
@@ -24,7 +27,7 @@ Some agents don't expose lifecycle events through a plugin API or hook system. T
 
 ### Limitations
 
-- **Heuristic-based** — activity detection is based on file modification, not actual agent state. A file write doesn't necessarily mean the agent is "working".
+- **Heuristic-based** — activity detection is based on file modification, not actual agent state. A file write doesn't necessarily mean the agent is "working". (For Freebuff this caveat is narrowed: its monitor parses agent-step markers — `Start agent` / `session over` — so unrelated writes no longer count as activity, though detection remains heuristic overall.)
 - **Latency** — there's a built-in idle timeout (typically 5 seconds) before status changes from "Running" to "Idle".
 - **Linux-specific** — `inotifywait` is Linux-only. This approach won't work on other platforms.
 - **Requires `inotify-tools`** — the package must be installed on the system.
@@ -75,6 +78,13 @@ EOF
 }
 ```
 
+**Note:** this is the generic recursive-watch pattern. Codebuff follows it
+(and Poolside did before its native-hooks migration in plan 079). Freebuff
+0.2.x does **not** — it creates a fresh chat directory per launch, so a
+recursive watch established before startup misses it. Freebuff uses a
+discover-then-single-file-watch variant with log-content marker parsing;
+`resources/bin/freebuff` is the reference implementation.
+
 ### State Machine
 
 | Current State | Event | Action | New State |
@@ -97,9 +107,9 @@ The monitor process:
 
 | Agent | Log Directory | File Pattern |
 |-------|---------------|--------------|
-| Poolside | `~/.local/state/poolside/trajectories` | `*.ndjson` |
+| Poolside | `~/.local/state/poolside/trajectories` | `*.ndjson` (native hooks now; monitor removed by plan 079) |
 | Codebuff | *(agent-specific)* | `*.jsonl` |
-| Freebuff | *(agent-specific)* | `*.jsonl` |
+| Freebuff | `~/.config/manicode/projects/<project>/chats/<timestamp>/` | log.jsonl (one active file, discovered at launch) |
 
 ## Supported Agents
 
@@ -138,7 +148,7 @@ Agent Launch → Wrapper Interception → Start Monitor → File Changes → ino
 
 ## Limitations
 
-- **Heuristic** — file modification doesn't always mean the agent is "working"
+- **Heuristic** — file modification doesn't always mean the agent is "working" (Freebuff narrows this by parsing agent-step markers from its log, but detection is still heuristic)
 - **Latency** — 5-second idle timeout before status changes
 - **No permission detection** — can't detect when the agent needs user input
 - **No notification support** — can't forward desktop notifications

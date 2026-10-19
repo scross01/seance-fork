@@ -6,6 +6,13 @@
 - Mistral Vibe hooks updated to use stable hook type names (post_agent, pre_tool, post_tool).
 - Pool integration now uses native Pool CLI hooks (v1.0.16+) instead of inotify-based trajectory monitoring. The `inotify-tools` system dependency is no longer required.
 
+### Fixed
+- Freebuff sidebar status now tracks the agent again: the monitor discovers
+  the per-launch `log.jsonl` Freebuff writes (verified by its pid field, so
+  two panes in the same project never claim each other's log) and parses
+  agent-step markers instead of watching a directory tree that never received
+  watch events.
+
 ## [0.6.0]
 
 ### Added
