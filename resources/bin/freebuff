@@ -97,10 +97,11 @@ _start_status_monitor() {
                     -printf '%T@ %p\n' 2>/dev/null || true
                 find "$MANICODE_DIR/projects" -name log.jsonl \
                     -newermt '-5 seconds' -printf '%T@ %p\n' 2>/dev/null || true
-            } | sort -rn | head -10
+            } | sort -rn | head -25
         }
 
-        _cli_pids() {   # wrapper's descendant PIDs (the npm launcher spawns
+        _cli_pids() {   # wrapper's descendant PIDs (npm launcher spawns
+            # the real CLI binary as its own child, hence the tree walk)
             local ppid_map frontier next pid c p depth=0
             ppid_map=$(ps -eo pid=,ppid= 2>/dev/null || true)
             frontier="$$"
@@ -108,7 +109,7 @@ _start_status_monitor() {
                 next=""
                 for pid in $frontier; do
                     while read -r c p; do
-                        [[ "$p" == "$pid" ]] && next+=" $c"
+                        if [[ "$p" == "$pid" ]]; then next+=" $c"; fi
                     done <<< "$ppid_map"
                 done
                 [[ -z "$next" ]] && break
@@ -150,46 +151,48 @@ _start_status_monitor() {
         fi
 
         # ── watch phase ──
-        local offset=0 line activity rediscover=1
+        local offset=0 line activity rediscover=1 timed_out
         offset=$(wc -c < "$logfile" 2>/dev/null || echo 0)
         while kill -0 $$ 2>/dev/null; do
             timeout "$idle_timeout" inotifywait -q -e modify \
                 "$logfile" >/dev/null 2>&1 &
             watch_pid=$!
+            timed_out=1
             if wait "$watch_pid"; then
-                activity=0
-                while IFS= read -r line; do
-                    case "$line" in
-                        *"Start agent "*|*"[message-queue] Processing"*)
-                            activity=1 ;;
-                        *"[chat-runtime] Freebuff session over"*)
-                            activity=0
-                            if [[ "$(cat "$state_file")" != "Idle" ]]; then
-                                echo "Idle" > "$state_file"; _fire_status "Idle"
-                            fi ;;
-                    esac
-                done < <(tail -c +$((offset + 1)) "$logfile" 2>/dev/null)
-                offset=$(wc -c < "$logfile" 2>/dev/null || echo "$offset")
-                if (( activity )) && [[ "$(cat "$state_file")" != "Running" ]]; then
-                    echo "Running" > "$state_file"; _fire_status "Running"
+                timed_out=0
+            elif [[ ! -f "$logfile" ]]; then
+                # File vanished (shouldn't happen — pino appends, no
+                # rotation): re-discover once, then give up
+                if (( rediscover )); then
+                    rediscover=0
+                    logfile=$(_find_log)
+                    [[ -n "$logfile" ]] || { rm -f "$state_file"; exit 0; }
+                    offset=$(wc -c < "$logfile" 2>/dev/null || echo 0)
+                    continue
                 fi
-            else
-                # File vanished (shouldn't happen — pino appends, no rotation):
-                # re-discover once, then give up
-                if [[ ! -f "$logfile" ]]; then
-                    if (( rediscover )); then
-                        rediscover=0
-                        logfile=$(_find_log)
-                        [[ -n "$logfile" ]] || { rm -f "$state_file"; exit 0; }
-                        offset=$(wc -c < "$logfile" 2>/dev/null || echo 0)
-                        continue
-                    fi
-                    rm -f "$state_file"; exit 0
-                fi
-                # idle timeout with no activity
-                if [[ "$(cat "$state_file")" == "Running" ]]; then
-                    echo "Idle" > "$state_file"; _fire_status "Idle"
-                fi
+                rm -f "$state_file"; exit 0
+            fi
+            # Drain bytes appended since the last read on every wake —
+            # including idle timeouts — so a marker that raced the watch
+            # arm still counts instead of being swallowed by the Idle path
+            activity=0
+            while IFS= read -r line; do
+                case "$line" in
+                    *"Start agent "*|*"[message-queue] Processing"*)
+                        activity=1 ;;
+                    *"[chat-runtime] Freebuff session over"*)
+                        activity=0
+                        if [[ "$(cat "$state_file")" != "Idle" ]]; then
+                            echo "Idle" > "$state_file"; _fire_status "Idle"
+                        fi ;;
+                esac
+            done < <(tail -c +$((offset + 1)) "$logfile" 2>/dev/null)
+            offset=$(wc -c < "$logfile" 2>/dev/null || echo "$offset")
+            if (( activity )) && [[ "$(cat "$state_file")" != "Running" ]]; then
+                echo "Running" > "$state_file"; _fire_status "Running"
+            elif (( timed_out )) && [[ "$(cat "$state_file")" == "Running" ]]; then
+                # idle timeout with no marker activity
+                echo "Idle" > "$state_file"; _fire_status "Idle"
             fi
         done
         rm -f "$state_file"
