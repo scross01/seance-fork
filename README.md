@@ -111,7 +111,7 @@ Requires Zig **0.16.0** (pinned), GTK4, libadwaita, OpenGL 4.3+, and Linux (X11 
 **Install build dependencies (Ubuntu/Debian):**
 
 ```bash
-sudo apt install pkg-config libgtk-4-dev libadwaita-1-dev libcanberra-dev inotify-tools
+sudo apt install pkg-config libgtk-4-dev libadwaita-1-dev libcanberra-dev
 ```
 
 **Build:**
@@ -144,7 +144,7 @@ Claude Code, Codex, Pi, OpenCode, Kilo Code, MiMo Code, Mistral Vibe, and Antigr
 - **Mistral Vibe**: Tracked through TOML config hooks appended to `~/.vibe/hooks.toml` by the wrapper on first launch.
 - **Hermes Agent**: Tracked through a Python plugin auto-installed to `~/.hermes/plugins/seance/`.
 - **Antigravity CLI**: Tracked through its status-line callback, added by the wrapper on first launch. See above for details.
-- **Poolside, Codebuff, Freebuff**: Requires `inotify-tools` for real-time agent status monitoring.
+- **Poolside**: Tracked via native Pool hooks (requires Pool CLI v1.0.16+).
 
 To disable OpenCode integration: **Settings → Integrations → OpenCode Integration**, or set `opencode-hooks = false` in `~/.config/seance/config.toml`.
 

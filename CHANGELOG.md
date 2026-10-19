@@ -4,6 +4,7 @@
 
 ### Changed
 - Mistral Vibe hooks updated to use stable hook type names (post_agent, pre_tool, post_tool).
+- Pool integration now uses native Pool CLI hooks (v1.0.16+) instead of inotify-based trajectory monitoring. The `inotify-tools` system dependency is no longer required.
 
 ## [0.6.0]
 
