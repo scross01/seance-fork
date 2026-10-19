@@ -474,7 +474,293 @@ pub fn removeVibeHooks() void {
     std.Io.Dir.renameAbsolute(tmp_path, hooks_path, io.get()) catch {};
 }
 
-pub const PluginAgent = enum { opencode, kilo, mimocode, vibe, hermes };
+// ── Pool hooks ─────────────────────────────────────────────────────────────
+
+/// Find the line-start index of a top-level YAML key (no indentation) in content.
+fn findTopLevelKey(content: []const u8, key: []const u8) ?usize {
+    var pos: usize = 0;
+    while (pos < content.len) {
+        const rest = content[pos..];
+        const nl = std.mem.indexOfScalar(u8, rest, '\n') orelse rest.len;
+        const line = rest[0..nl];
+        // Must be at column 0 (no leading whitespace) to be a top-level key
+        if (line.len > 0 and (line[0] == ' ' or line[0] == '\t')) {
+            pos += nl;
+            if (pos < content.len) pos += 1;
+            continue;
+        }
+        const trimmed = std.mem.trimEnd(u8, line, " \t\r");
+        if (std.mem.startsWith(u8, trimmed, key)) {
+            const after = trimmed[key.len..];
+            if (after.len == 0 or std.mem.trimStart(u8, after, " \t\r").len == 0) {
+                return pos;
+            }
+        }
+        pos += nl;
+        if (pos < content.len) pos += 1;
+    }
+    return null;
+}
+
+/// Remove the seance-managed section (between `# seance-pool-hooks-start` and
+/// `# seance-pool-hooks-end`, inclusive) from YAML content. Always returns
+/// an owned copy.
+fn removeSeancePoolSection(alloc: std.mem.Allocator, content: []const u8) ![]const u8 {
+    const start_marker = "# seance-pool-hooks-start";
+    const end_marker = "# seance-pool-hooks-end";
+
+    const start_idx = std.mem.indexOf(u8, content, start_marker) orelse {
+        return try alloc.dupe(u8, content);
+    };
+
+    // Find start of the start_marker's line
+    var line_start = start_idx;
+    while (line_start > 0 and content[line_start - 1] != '\n') : (line_start -= 1) {}
+
+    // Find end marker after start marker
+    const search_from = start_idx + start_marker.len;
+    const rel_end = std.mem.indexOf(u8, content[search_from..], end_marker) orelse {
+        // No end marker — remove from start_marker line to end
+        var result = try std.ArrayList(u8).initCapacity(alloc, content.len);
+        defer result.deinit(alloc);
+        try result.appendSlice(alloc, content[0..line_start]);
+        const trimmed = std.mem.trimEnd(u8, result.items, " \t\r\n");
+        result.shrinkRetainingCapacity(trimmed.len);
+        if (trimmed.len > 0) try result.append(alloc, '\n');
+        return try result.toOwnedSlice(alloc);
+    };
+    const after_end = search_from + rel_end + end_marker.len;
+
+    // Find end of end_marker's line
+    var block_end = after_end;
+    if (block_end < content.len and content[block_end] == '\n') block_end += 1;
+
+    // Trim trailing blank lines after the block
+    while (block_end < content.len) {
+        const ch = content[block_end];
+        if (ch == '\n' or ch == '\r' or ch == ' ' or ch == '\t') {
+            block_end += 1;
+        } else break;
+    }
+
+    var result = try std.ArrayList(u8).initCapacity(alloc, content.len);
+    defer result.deinit(alloc);
+    try result.appendSlice(alloc, content[0..line_start]);
+    try result.appendSlice(alloc, content[block_end..]);
+    return try result.toOwnedSlice(alloc);
+}
+
+/// After removing the seance marker section, if the `hooks:` key has no
+/// remaining children, delete the empty `hooks:` line (and surrounding blanks).
+fn pruneEmptyHooks(alloc: std.mem.Allocator, content: []const u8) ![]const u8 {
+    const maybe_idx = findTopLevelKey(content, "hooks:");
+    if (maybe_idx == null) return try alloc.dupe(u8, content);
+
+    const idx = maybe_idx.?;
+    // Find end of hooks: line
+    const rest = content[idx..];
+    const nl = std.mem.indexOfScalar(u8, rest, '\n') orelse rest.len;
+    const after_line = if (nl < rest.len) idx + nl + 1 else content.len;
+
+    // Check if there are indented children
+    var pos = after_line;
+    while (pos < content.len) {
+        const line_nl = std.mem.indexOfScalar(u8, content[pos..], '\n') orelse (content.len - pos);
+        const line = content[pos .. pos + line_nl];
+        const trimmed = std.mem.trimStart(u8, std.mem.trimEnd(u8, line, " \t\r"), " \t");
+        if (trimmed.len == 0) {
+            // blank line — continue
+        } else if (line[0] == ' ' or line[0] == '\t') {
+            // indented child — hooks: is not empty
+            return try alloc.dupe(u8, content);
+        } else {
+            // another top-level key — hooks: is empty
+            break;
+        }
+        pos += line_nl;
+        if (pos < content.len) pos += 1;
+    }
+
+    // Remove hooks: line + trailing blank lines
+    var end = after_line;
+    while (end < content.len) {
+        const line_nl = std.mem.indexOfScalar(u8, content[end..], '\n') orelse break;
+        const line = content[end .. end + line_nl];
+        const trimmed = std.mem.trimStart(u8, std.mem.trimEnd(u8, line, " \t\r"), " \t");
+        if (trimmed.len == 0) {
+            end += line_nl + 1;
+        } else break;
+    }
+
+    var result = try std.ArrayList(u8).initCapacity(alloc, content.len);
+    defer result.deinit(alloc);
+    try result.appendSlice(alloc, content[0..idx]);
+    try result.appendSlice(alloc, content[end..]);
+    const trimmed_result = std.mem.trimEnd(u8, result.items, " \t\r\n");
+    result.shrinkRetainingCapacity(trimmed_result.len);
+    if (trimmed_result.len > 0) try result.append(alloc, '\n');
+    return try result.toOwnedSlice(alloc);
+}
+
+/// Install Pool hooks into ~/.config/poolside/settings.yaml by merging the
+/// bundled pool-hooks.yaml template. Uses text-based merge with marker
+/// comments for idempotency.
+pub fn installPoolPlugin() void {
+    const home = io.getenv("HOME") orelse return;
+    const alloc = std.heap.page_allocator;
+
+    // Resolve bundled template path (share/seance/pool-hooks.yaml)
+    const template_path = blk: {
+        var exe_buf: [std.fs.max_path_bytes]u8 = undefined;
+        const exe_path = io.executablePath(&exe_buf) catch return;
+        const exe_dir = std.fs.path.dirname(exe_path) orelse return;
+        const prefix = std.fs.path.dirname(exe_dir) orelse return;
+        break :blk std.fmt.allocPrint(alloc, "{s}/share/seance/pool-hooks.yaml", .{prefix}) catch return;
+    };
+    defer alloc.free(template_path);
+
+    const bundled_file = std.Io.Dir.openFileAbsolute(io.get(), template_path, .{}) catch {
+        std.log.info("pool: hooks template not found, skipping", .{});
+        return;
+    };
+    defer bundled_file.close(io.get());
+    const bundled_content = io.readToEndAlloc(bundled_file, alloc, 64 * 1024) catch return;
+    defer alloc.free(bundled_content);
+
+    // Strip leading comment line(s) — find "hooks:" line
+    const hooks_idx = std.mem.indexOf(u8, bundled_content, "hooks:") orelse return;
+    var template_start = hooks_idx;
+    while (template_start > 0 and bundled_content[template_start - 1] != '\n') : (template_start -= 1) {}
+    const template_block = std.mem.trimEnd(u8, bundled_content[template_start..], " \t\r\n");
+
+    // Extract entries (everything after "hooks:\n")
+    const after_hooks = template_block["hooks:".len..];
+    const eol = std.mem.indexOfScalar(u8, after_hooks, '\n') orelse return;
+    const entries = std.mem.trimEnd(u8, after_hooks[eol + 1 ..], " \t\r\n");
+
+    // Read user settings.yaml (empty if missing)
+    const settings_path = std.fmt.allocPrint(alloc, "{s}/.config/poolside/settings.yaml", .{home}) catch return;
+    defer alloc.free(settings_path);
+
+    var settings_content: []const u8 = "";
+    var settings_allocated: bool = false;
+    if (std.Io.Dir.openFileAbsolute(io.get(), settings_path, .{})) |file| {
+        defer file.close(io.get());
+        if (io.readToEndAlloc(file, alloc, 1024 * 1024)) |data| {
+            settings_content = data;
+            settings_allocated = true;
+        } else |_| {}
+    } else |_| {}
+
+    // Remove existing seance section (idempotent)
+    const cleaned = removeSeancePoolSection(alloc, settings_content) catch {
+        if (settings_allocated) alloc.free(settings_content);
+        return;
+    };
+    if (settings_allocated) alloc.free(settings_content);
+    defer alloc.free(cleaned);
+
+    // Check if cleaned content has a top-level hooks: key
+    const hooks_line = findTopLevelKey(cleaned, "hooks:");
+
+    var result: std.ArrayList(u8) = .empty;
+    defer result.deinit(alloc);
+
+    if (hooks_line) |idx| {
+        // Insert entries after the hooks: line, with markers
+        const rest = cleaned[idx..];
+        const nl = std.mem.indexOfScalar(u8, rest, '\n') orelse rest.len;
+        const line_end = if (nl < rest.len) idx + nl + 1 else cleaned.len;
+        result.appendSlice(alloc, cleaned[0..line_end]) catch return;
+        result.appendSlice(alloc, "# seance-pool-hooks-start\n") catch return;
+        result.appendSlice(alloc, entries) catch return;
+        result.appendSlice(alloc, "\n# seance-pool-hooks-end\n") catch return;
+        if (line_end < cleaned.len) {
+            result.appendSlice(alloc, cleaned[line_end..]) catch return;
+        }
+    } else {
+        // No hooks: key — append full block with markers
+        result.appendSlice(alloc, cleaned) catch return;
+        if (result.items.len > 0) {
+            const last = result.items[result.items.len - 1];
+            if (last != '\n') result.append(alloc, '\n') catch return;
+        }
+        result.appendSlice(alloc, "# seance-pool-hooks-start\n") catch return;
+        result.appendSlice(alloc, template_block) catch return;
+        result.appendSlice(alloc, "\n# seance-pool-hooks-end\n") catch return;
+    }
+
+    // Create parent directory if needed
+    const settings_dir = std.fs.path.dirname(settings_path) orelse return;
+    std.Io.Dir.createDirAbsolute(io.get(), settings_dir, .default_dir) catch |err| {
+        if (err != error.PathAlreadyExists) return;
+    };
+
+    // Write atomically via temp file + rename
+    const tmp_path = std.fmt.allocPrint(alloc, "{s}.tmp", .{settings_path}) catch return;
+    defer alloc.free(tmp_path);
+    const tmp_file = std.Io.Dir.createFileAbsolute(io.get(), tmp_path, .{ .exclusive = true }) catch return;
+    errdefer std.Io.Dir.deleteFileAbsolute(io.get(), tmp_path) catch {};
+    tmp_file.writeStreamingAll(io.get(), result.items) catch {
+        tmp_file.close(io.get());
+        return;
+    };
+    tmp_file.close(io.get());
+    if (std.Io.Dir.cwd().statFile(io.get(), settings_path, .{})) |stat| {
+        if (stat.kind == .sym_link) return;
+    } else |_| {}
+    std.Io.Dir.renameAbsolute(tmp_path, settings_path, io.get()) catch return;
+    std.log.info("pool: installed hooks in {s}", .{settings_path});
+}
+
+/// Remove Pool hooks from ~/.config/poolside/settings.yaml by deleting the
+/// seance-managed marker section. If the `hooks:` block becomes empty, the
+/// empty `hooks:` line is also removed.
+pub fn removePoolPlugin() void {
+    const home = io.getenv("HOME") orelse return;
+    const alloc = std.heap.page_allocator;
+
+    const settings_path = std.fmt.allocPrint(alloc, "{s}/.config/poolside/settings.yaml", .{home}) catch return;
+    defer alloc.free(settings_path);
+
+    const file = std.Io.Dir.openFileAbsolute(io.get(), settings_path, .{}) catch return;
+    defer file.close(io.get());
+    const content = io.readToEndAlloc(file, alloc, 1024 * 1024) catch return;
+    defer alloc.free(content);
+
+    // Remove seance section (between markers, inclusive)
+    const cleaned = removeSeancePoolSection(alloc, content) catch return;
+    defer alloc.free(cleaned);
+
+    // Prune empty hooks: line if no children remain
+    const final = pruneEmptyHooks(alloc, cleaned) catch return;
+    defer alloc.free(final);
+
+    // If content is just whitespace, delete the file
+    const trimmed = std.mem.trim(u8, final, " \t\r\n");
+    if (trimmed.len == 0) {
+        std.Io.Dir.deleteFileAbsolute(io.get(), settings_path) catch {};
+        return;
+    }
+
+    // Write atomically via temp file + rename
+    const tmp_path = std.fmt.allocPrint(alloc, "{s}.tmp", .{settings_path}) catch return;
+    defer alloc.free(tmp_path);
+    const tmp_file = std.Io.Dir.createFileAbsolute(io.get(), tmp_path, .{ .exclusive = true }) catch return;
+    errdefer std.Io.Dir.deleteFileAbsolute(io.get(), tmp_path) catch {};
+    tmp_file.writeStreamingAll(io.get(), final) catch {
+        tmp_file.close(io.get());
+        return;
+    };
+    tmp_file.close(io.get());
+    if (std.Io.Dir.cwd().statFile(io.get(), settings_path, .{})) |stat| {
+        if (stat.kind == .sym_link) return;
+    } else |_| {}
+    std.Io.Dir.renameAbsolute(tmp_path, settings_path, io.get()) catch return;
+    std.log.info("pool: removed hooks from {s}", .{settings_path});
+}
+
+pub const PluginAgent = enum { opencode, kilo, mimocode, vibe, hermes, pool };
 
 /// Auto-install Hermes plugin if ~/.hermes exists.
 pub fn installHermesPlugin() void {
@@ -1062,6 +1348,7 @@ pub fn syncPlugin(agent: PluginAgent, enabled: bool) void {
             .mimocode => installMimocodePlugin(),
             .vibe => installVibeHooks(),
             .hermes => installHermesPlugin(),
+            .pool => installPoolPlugin(),
         }
     } else {
         switch (agent) {
@@ -1070,6 +1357,7 @@ pub fn syncPlugin(agent: PluginAgent, enabled: bool) void {
             .mimocode => removeMimocodePlugin(),
             .vibe => removeVibeHooks(),
             .hermes => removeHermesPlugin(),
+            .pool => removePoolPlugin(),
         }
     }
 }
@@ -1125,6 +1413,7 @@ fn onActivate(app: *c.AdwApplication) callconv(.c) void {
         syncPlugin(.mimocode, config_mod.get().mimocode_hooks);
         syncPlugin(.vibe, config_mod.get().vibe_hooks);
         syncPlugin(.hermes, config_mod.get().hermes_hooks);
+        syncPlugin(.pool, config_mod.get().pool_hooks);
 
         // Keybinds are fully resolved now (defaults + config overrides), so
         // publish them as GtkApplication accels for menu shortcut display.
