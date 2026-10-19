@@ -69,40 +69,126 @@ trap _cleanup EXIT
 EOF
 
 # ── Start background status monitor ────────────────────────────────────────
-# Uses inotifywait on the manicode directory to detect session log writes.
-# Requires inotify-tools package.
-_start_status_monitor() {
-    local manicode_dir="${HOME}/.config/manicode"
+# Discovers this session's own log.jsonl (Freebuff 0.2.x writes a fresh
+# chats/<timestamp>/log.jsonl per launch), then watches that single file.
+# Requires inotify-tools.
+MANICODE_DIR="${HOME}/.config/manicode"
 
-    (
-        local idle_timeout=5
-        local state_file
-        state_file=$(mktemp /tmp/freebuff-status-XXXXXX)
-        # Initialize to Running to match the initial prompt-submit status
-        echo "Running" > "$state_file"
-
-        while kill -0 $$ 2>/dev/null; do
-            # Wait for IN_MODIFY events with timeout
-            if timeout "$idle_timeout" inotifywait -r -q -e modify \
-                --include '\.jsonl$' "$manicode_dir" >/dev/null 2>&1; then
-                # Activity detected
-                local current_status
-                current_status=$(cat "$state_file" 2>/dev/null || echo "Idle")
-                if [[ "$current_status" != "Running" ]]; then
-                    echo "Running" > "$state_file"
-                    timeout 0.5 "$REAL_SEANCE" ctl freebuff-hook prompt-submit <<'EOF' >/dev/null 2>&1 || true
-{"status":"Running"}
+_fire_status() {   # $1 = Running|Idle
+    timeout 0.5 "$REAL_SEANCE" ctl freebuff-hook prompt-submit <<EOF >/dev/null 2>&1 || true
+{"status":"$1"}
 EOF
+}
+
+_start_status_monitor() {
+    (
+        local idle_timeout=5 state_file watch_pid=""
+        state_file=$(mktemp /tmp/freebuff-status-XXXXXX)
+        echo "Idle" > "$state_file"
+        # The wrapper's EXIT trap kills this subshell; reap our watch child
+        # and state file so nothing outlives the session. HUP covers pane
+        # teardown (tmux/session death) where the EXIT trap never runs.
+        trap '[[ -n "$watch_pid" ]] && kill "$watch_pid" 2>/dev/null; rm -f "$state_file"; exit 0' TERM INT HUP
+
+        _log_candidates() {   # recent log.jsonl candidates, newest first
+            local proj="$MANICODE_DIR/projects/$(basename "$PWD")/chats"
+            {
+                find "$proj" -name log.jsonl -newermt '-5 seconds' \
+                    -printf '%T@ %p\n' 2>/dev/null || true
+                find "$MANICODE_DIR/projects" -name log.jsonl \
+                    -newermt '-5 seconds' -printf '%T@ %p\n' 2>/dev/null || true
+            } | sort -rn | head -10
+        }
+
+        _cli_pids() {   # wrapper's descendant PIDs (the npm launcher spawns
+            local ppid_map frontier next pid c p depth=0
+            ppid_map=$(ps -eo pid=,ppid= 2>/dev/null || true)
+            frontier="$$"
+            while [[ -n "$frontier" ]] && (( depth < 4 )); do
+                next=""
+                for pid in $frontier; do
+                    while read -r c p; do
+                        [[ "$p" == "$pid" ]] && next+=" $c"
+                    done <<< "$ppid_map"
+                done
+                [[ -z "$next" ]] && break
+                echo "$next"
+                frontier=$next
+                depth=$((depth + 1))
+            done
+        }
+
+        _find_log() {   # candidate log whose tail carries this wrapper's CLI pid
+            local cands cand pid kids tailbuf
+            kids=$(_cli_pids)
+            cands=$(_log_candidates)
+            while IFS= read -r cand; do
+                [[ -z "$cand" ]] && continue
+                cand=${cand#* }
+                tailbuf=$(tail -c 8192 "$cand" 2>/dev/null || true)
+                for pid in $kids; do
+                    if grep -q "\"pid\":$pid[,}]" <<< "$tailbuf"; then
+                        echo "$cand"
+                        return 0
+                    fi
+                done
+            done <<< "$cands"
+            return 0
+        }
+
+        # ── discover phase ──
+        # 30s: the npm launcher does pre-flight work (fingerprint, update
+        # check) and can take ~16s before the CLI writes its first log line.
+        local logfile="" deadline=$((SECONDS + 30))
+        while kill -0 $$ 2>/dev/null && (( SECONDS < deadline )); do
+            logfile=$(_find_log)
+            [[ -n "$logfile" ]] && break
+            sleep 0.25
+        done
+        if [[ -z "$logfile" ]]; then
+            _fire_status "Idle"; rm -f "$state_file"; exit 0
+        fi
+
+        # ── watch phase ──
+        local offset=0 line activity rediscover=1
+        offset=$(wc -c < "$logfile" 2>/dev/null || echo 0)
+        while kill -0 $$ 2>/dev/null; do
+            timeout "$idle_timeout" inotifywait -q -e modify \
+                "$logfile" >/dev/null 2>&1 &
+            watch_pid=$!
+            if wait "$watch_pid"; then
+                activity=0
+                while IFS= read -r line; do
+                    case "$line" in
+                        *"Start agent "*|*"[message-queue] Processing"*)
+                            activity=1 ;;
+                        *"[chat-runtime] Freebuff session over"*)
+                            activity=0
+                            if [[ "$(cat "$state_file")" != "Idle" ]]; then
+                                echo "Idle" > "$state_file"; _fire_status "Idle"
+                            fi ;;
+                    esac
+                done < <(tail -c +$((offset + 1)) "$logfile" 2>/dev/null)
+                offset=$(wc -c < "$logfile" 2>/dev/null || echo "$offset")
+                if (( activity )) && [[ "$(cat "$state_file")" != "Running" ]]; then
+                    echo "Running" > "$state_file"; _fire_status "Running"
                 fi
             else
-                # Timeout — no activity for idle_timeout seconds
-                local current_status
-                current_status=$(cat "$state_file" 2>/dev/null || echo "Idle")
-                if [[ "$current_status" == "Running" ]]; then
-                    echo "Idle" > "$state_file"
-                    timeout 0.5 "$REAL_SEANCE" ctl freebuff-hook prompt-submit <<'EOF' >/dev/null 2>&1 || true
-{"status":"Idle"}
-EOF
+                # File vanished (shouldn't happen — pino appends, no rotation):
+                # re-discover once, then give up
+                if [[ ! -f "$logfile" ]]; then
+                    if (( rediscover )); then
+                        rediscover=0
+                        logfile=$(_find_log)
+                        [[ -n "$logfile" ]] || { rm -f "$state_file"; exit 0; }
+                        offset=$(wc -c < "$logfile" 2>/dev/null || echo 0)
+                        continue
+                    fi
+                    rm -f "$state_file"; exit 0
+                fi
+                # idle timeout with no activity
+                if [[ "$(cat "$state_file")" == "Running" ]]; then
+                    echo "Idle" > "$state_file"; _fire_status "Idle"
                 fi
             fi
         done
