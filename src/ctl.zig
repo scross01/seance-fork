@@ -146,6 +146,7 @@ fn dispatch(ctx: Ctx, command: []const u8) u8 {
     if (eql(command, "pi-hook")) return cmdPiHook(ctx);
     if (eql(command, "opencode-hook")) return cmdOpencodeHook(ctx);
     if (eql(command, "opencode-config")) return cmdOpencodeConfig(ctx);
+    if (eql(command, "pool-config")) return cmdPoolConfig(ctx);
     if (eql(command, "antigravity-config")) return cmdAntigravityConfig(ctx);
     if (eql(command, "antigravity-hook")) return cmdAntigravityHook(ctx);
     if (eql(command, "kilo-hook")) return cmdKiloHook(ctx);
@@ -1354,6 +1355,53 @@ fn cmdOpencodeConfig(ctx: Ctx) u8 {
     return 0;
 }
 
+fn cmdPoolConfig(ctx: Ctx) u8 {
+    if (ctx.rest.len != 1) {
+        werr("usage: pool-config <install|remove|status>\n");
+        return 1;
+    }
+    const action = ctx.rest[0];
+    const app_mod = @import("app.zig");
+    if (eql(action, "install")) {
+        app_mod.installPoolPlugin();
+        wout("OK\n");
+        return 0;
+    } else if (eql(action, "remove")) {
+        app_mod.removePoolPlugin();
+        wout("OK\n");
+        return 0;
+    } else if (eql(action, "status")) {
+        const home = io.getenv("HOME") orelse {
+            werr("seance: HOME not set\n");
+            return 1;
+        };
+        const settings_path = std.fmt.allocPrint(ctx.alloc, "{s}/.config/poolside/settings.yaml", .{home}) catch {
+            werr("seance: could not build settings path\n");
+            return 1;
+        };
+        const content = std.Io.Dir.openFileAbsolute(io.get(), settings_path, .{}) catch {
+            wout("NOT INSTALLED (no settings.yaml found)\n");
+            return 0;
+        };
+        defer content.close(io.get());
+        const text = io.readToEndAlloc(content, ctx.alloc, 1024 * 1024) catch {
+            werr("seance: could not read settings.yaml\n");
+            return 1;
+        };
+        defer ctx.alloc.free(text);
+        const has_start = std.mem.indexOf(u8, text, "# seance-pool-hooks-start") != null;
+        const has_end = std.mem.indexOf(u8, text, "# seance-pool-hooks-end") != null;
+        if (has_start and has_end) {
+            wout("INSTALLED (hooks present in settings.yaml)\n");
+        } else {
+            wout("NOT INSTALLED (seance hooks not found in settings.yaml)\n");
+        }
+        return 0;
+    }
+    werr("usage: pool-config <install|remove|status>\n");
+    return 1;
+}
+
 const mimocode_agent = AgentConfig{
     .name = "MiMoCode",
     .display_name = "MiMo Code",
@@ -2305,7 +2353,8 @@ fn agentHookStop(h: HookCtx) u8 {
         }
     }
 
-    const last_msg = getNestedString(h.input, "last_assistant_message");
+    const last_msg = getNestedString(h.input, "last_assistant_message") orelse
+        getNestedString(h.input, "reason");
     if (last_msg) |msg| {
         const collapsed = collapseWhitespace(h.alloc, msg);
         body = if (collapsed.len > 200) collapsed[0..200] else collapsed;
@@ -2376,7 +2425,7 @@ fn agentHookSessionEnd(h: HookCtx) u8 {
 
 fn isValidSessionDir(dir: []const u8) bool {
     const home = io.getenv("HOME") orelse return false;
-    const cache_prefixes = [_][]const u8{ "/.cache/seance-pi/" };
+    const cache_prefixes = [_][]const u8{"/.cache/seance-pi/"};
     for (cache_prefixes) |prefix| {
         // Check for $HOME/.cache/seance-<agent>/<id>
         if (std.mem.startsWith(u8, dir, home)) {
