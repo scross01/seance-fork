@@ -1,161 +1,167 @@
-// @seance-version 39
+// @seance-version 40
 
-export const SeancePlugin = async ({ $ }) => {
-  const socket = process.env.SEANCE_SOCKET_PATH;
-  if (!socket) return {};
-  if (process.env.SEANCE_MIMOCODE_HOOKS_DISABLED === "1") return {};
+const INFRA_AGENTS = new Set([
+  "main",
+  "summary",
+  "title",
+  "checkpoint-writer",
+  "dream",
+  "distill",
+  "compaction",
+]);
 
-  const seanceBin = process.env.SEANCE_OPENCODE_BIN ?? "seance";
+export default {
+  id: "seance-mimocode",
+  server: async ({ $ }) => {
+    const socket = process.env.SEANCE_SOCKET_PATH;
+    if (!socket) return {};
+    if (process.env.SEANCE_MIMOCODE_HOOKS_DISABLED === "1") return {};
 
-  const surfaceId = process.env.SEANCE_SURFACE_ID;
-  const workspaceId = process.env.SEANCE_WORKSPACE_ID;
-  let currentSessionId: string | undefined;
-  let sessionIdle = false;
-  let permissionPending = false;
-  let childSessions: Set<string> = new Set();
-  let subagentCount = 0;
-  const shEscape = (s: string) => s.replace(/'/g, "'\\''");
-  // One server process per pane launch: its cwd is the pane's launch directory.
-  const cwd = process.cwd();
+    const seanceBin = process.env.SEANCE_OPENCODE_BIN ?? "seance";
+    const surfaceId = process.env.SEANCE_SURFACE_ID;
+    const workspaceId = process.env.SEANCE_WORKSPACE_ID;
+    let currentSessionId: string | undefined;
+    let subagentCount = 0;
+    let backgroundCount = 0;
+    const childActors: Set<string> = new Set();
+    const backgroundActors: Set<string> = new Set();
+    const shEscape = (s: string) => s.replace(/'/g, "'\\''");
+    // One server process per pane launch: its cwd is the pane's launch directory.
+    const cwd = process.cwd();
 
-  async function hook(event: string, extra: Record<string, unknown> = {}) {
-    const payload = JSON.stringify({
-      session_id: currentSessionId,
-      workspace_id: workspaceId,
-      surface_id: surfaceId,
-      subagent_count: subagentCount,
-      ...extra,
-    });
-    await $`echo '${shEscape(payload)}' | ${seanceBin} ctl mimocode-hook ${event} >/dev/null`;
-  }
+    async function hook(event: string, extra: Record<string, unknown> = {}) {
+      const payload = JSON.stringify({
+        session_id: currentSessionId,
+        workspace_id: workspaceId,
+        surface_id: surfaceId,
+        subagent_count: subagentCount,
+        ...extra,
+      });
+      await $`echo '${shEscape(payload)}' | ${seanceBin} ctl mimocode-hook ${event} >/dev/null`;
+    }
 
-  async function updateCounts() {
-    const payload = JSON.stringify({
-      workspace_id: workspaceId,
-      subagent_count: subagentCount,
-      background_count: 0,
-    });
-    await $`echo '${shEscape(payload)}' | ${seanceBin} ctl subagent-update >/dev/null`;
-  }
+    async function updateCounts() {
+      const payload = JSON.stringify({
+        workspace_id: workspaceId,
+        subagent_count: subagentCount,
+        background_count: backgroundCount,
+      });
+      await $`echo '${shEscape(payload)}' | ${seanceBin} ctl subagent-update >/dev/null`;
+    }
 
-  return {
-    event: async ({ event }) => {
-      const eventSessionId = event.properties?.sessionID;
-      switch (event.type) {
-        case "session.created":
-          if (!currentSessionId) {
-            currentSessionId = event.properties.sessionID;
-            sessionIdle = false;
-            await hook("session-start", { cwd });
-            await hook("prompt-submit");
+    async function adoptSession(sessionId: string | undefined) {
+      if (!sessionId || currentSessionId) return;
+      currentSessionId = sessionId;
+      await hook("session-start", { cwd });
+      await hook("prompt-submit");
+    }
+
+    return {
+      "session.pre": async (input: { sessionID: string }) => {
+        if (input.sessionID === currentSessionId) {
+          await hook("prompt-submit");
+        }
+      },
+
+      "session.post": async (input: {
+        sessionID: string;
+        outcome: "completed" | "error" | "cancelled";
+        finalText?: string;
+      }) => {
+        if (input.sessionID !== currentSessionId) return;
+        if (input.outcome === "error") {
+          childActors.clear();
+          backgroundActors.clear();
+          subagentCount = 0;
+          backgroundCount = 0;
+          await updateCounts();
+          await hook("session-end");
+          currentSessionId = undefined;
+          return;
+        }
+        const text = typeof input.finalText === "string" ? input.finalText.trim() : "";
+        if (text) {
+          await hook("stop", { cwd, message: text.slice(0, 500) });
+        } else {
+          await hook("stop", { cwd });
+        }
+      },
+
+      "actor.postStop": {
+        // The default matcher also excludes general/build/explore, which are
+        // real subagents Séance must count, so we match explicitly instead.
+        matcher: {
+          mode: "subagent",
+          agentType: { excludeOnly: [...INFRA_AGENTS] },
+        },
+        run: async (input: { actorID: string }) => {
+          if (!childActors.has(input.actorID)) return;
+          childActors.delete(input.actorID);
+          subagentCount = Math.max(0, subagentCount - 1);
+          if (backgroundActors.delete(input.actorID)) {
+            backgroundCount = Math.max(0, backgroundCount - 1);
           }
-          break;
+          await updateCounts();
+          await hook("prompt-submit");
+        },
+      },
 
-        case "session.updated":
-          if (!currentSessionId && eventSessionId) {
-            currentSessionId = eventSessionId;
-            sessionIdle = false;
-            childSessions.clear();
-            subagentCount = 0;
-            await hook("session-start", { cwd });
-            await hook("prompt-submit");
-          }
-          break;
+      event: async ({ event }: { event: any }) => {
+        const props = event.properties ?? {};
+        const eventSessionId = props.sessionID;
+        switch (event.type) {
+          case "session.created":
+            await adoptSession(eventSessionId);
+            break;
 
-        case "session.idle":
-          if (!eventSessionId || eventSessionId === currentSessionId) {
-            if (permissionPending) {
-              permissionPending = false;
-            } else {
-              sessionIdle = true;
-              await hook("stop", { cwd });
+          case "session.updated":
+            await adoptSession(eventSessionId);
+            break;
+
+          case "permission.asked":
+            if (!eventSessionId || eventSessionId === currentSessionId) {
+              const permType = props.permission ?? "unknown";
+              const patterns = props.patterns;
+              const detail =
+                Array.isArray(patterns) && patterns.length > 0
+                  ? `${permType}: ${patterns.join(", ")}`
+                  : String(permType);
+              await hook("notification", { message: detail });
             }
-          }
-          break;
+            break;
 
-        case "session.error":
-          if (!eventSessionId || eventSessionId === currentSessionId) {
-            childSessions.clear();
-            subagentCount = 0;
-            await updateCounts();
-            await hook("session-end");
-            currentSessionId = undefined;
-          } else if (childSessions.has(eventSessionId)) {
-            childSessions.delete(eventSessionId);
-            subagentCount = Math.max(0, subagentCount - 1);
-            await updateCounts();
-          }
-          break;
-
-        case "session.status":
-          if (!eventSessionId || eventSessionId === currentSessionId) {
-            if (event.properties.status.type === "busy") {
-              sessionIdle = false;
-              permissionPending = false;
-              await hook("prompt-submit");
-            }
-          }
-          break;
-
-        case "permission.asked":
-          if (!sessionIdle && (!eventSessionId || eventSessionId === currentSessionId)) {
-            permissionPending = true;
-            const permType = event.properties?.permission ?? "unknown";
-            const patterns = event.properties?.patterns;
-            const detail = Array.isArray(patterns) && patterns.length > 0
-              ? `${permType}: ${patterns.join(", ")}`
-              : String(permType);
-            await hook("notification", {
-              message: detail,
-            });
-          }
-          break;
-
-        case "permission.replied":
-          permissionPending = false;
-          break;
-
-        case "actor.registered":
-          {
-            const mode = event.properties?.mode;
-            const agent = event.properties?.agent;
-            const actorID = event.properties?.actorID;
-            if (mode === "subagent" && agent !== "checkpoint-writer" && agent !== "compaction") {
-              if (actorID && !childSessions.has(actorID)) {
-                childSessions.add(actorID);
-                subagentCount++;
-                await updateCounts();
-                await hook("prompt-submit");
+          case "actor.registered":
+            if (
+              props.mode === "subagent" &&
+              typeof props.agent === "string" &&
+              !INFRA_AGENTS.has(props.agent) &&
+              props.actorID &&
+              !childActors.has(props.actorID)
+            ) {
+              childActors.add(props.actorID);
+              subagentCount++;
+              if (props.background === true) {
+                backgroundActors.add(props.actorID);
+                backgroundCount++;
               }
-            }
-          }
-          break;
-
-        case "actor.status":
-          {
-            const actorID = event.properties?.actorID;
-            const status = event.properties?.status;
-            if (status === "idle" && actorID && childSessions.has(actorID)) {
-              childSessions.delete(actorID);
-              subagentCount = Math.max(0, subagentCount - 1);
               await updateCounts();
               await hook("prompt-submit");
             }
-          }
-          break;
-      }
-    },
+            break;
+        }
+      },
 
-    "tool.execute.before": async (input: { tool: string; sessionID: string; callID: string }) => {
-      if (!input.sessionID || input.sessionID === currentSessionId) {
-        await hook("pre-tool-use", { tool_name: input.tool });
-      }
-    },
+      "tool.execute.before": async (input: { tool: string; sessionID: string }) => {
+        if (!input.sessionID || input.sessionID === currentSessionId) {
+          await hook("pre-tool-use", { tool_name: input.tool });
+        }
+      },
 
-    "tool.execute.after": async (input: { tool: string; sessionID: string; callID: string; args: any }) => {
-      if (!input.sessionID || input.sessionID === currentSessionId) {
-        await hook("post-tool-use", { tool_name: input.tool });
-      }
-    },
-  };
+      "tool.execute.after": async (input: { tool: string; sessionID: string }) => {
+        if (!input.sessionID || input.sessionID === currentSessionId) {
+          await hook("post-tool-use", { tool_name: input.tool });
+        }
+      },
+    };
+  },
 };

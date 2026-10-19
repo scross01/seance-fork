@@ -42,11 +42,13 @@ ${options.fail ? 'process.exitCode = 1;' : ''}
       acc + part + (i < values.length ? String(values[i]) : ''), '');
     execFile('/bin/sh', ['-c', command], (error) => (error ? reject(error) : resolve()));
   });
-  const plugin = options.source
-    ? (await import(pathToFileURL(options.source).href)).SeancePlugin
-    : SeancePlugin;
+  const mod = options.source
+    ? await import(pathToFileURL(options.source).href)
+    : { SeancePlugin };
+  const factory = mod.default?.server ?? mod.SeancePlugin;
+  if (typeof factory !== 'function') throw new Error('plugin factory missing');
   const lookups = [];
-  const hooks = await plugin({ directory: "/tmp/a 'project'", $, client: { session: { get: async ({ path }) => {
+  const hooks = await factory({ directory: "/tmp/a 'project'", $, client: { session: { get: async ({ path }) => {
     lookups.push(path.id);
     if (options.lookupFailure) throw Error('unavailable');
     return { data: { id: path.id, parentID: options.parents?.[path.id] } };
@@ -210,10 +212,11 @@ test('plugin is inert outside a wrapper launch and when disabled', async () => {
   } finally { process.env = previous; }
 });
 
+// MiMo Code moved to the modern module + session.post lifecycle hooks, so it
+// no longer answers session.idle; its coverage lives in the block below.
 for (const [agent, source, hook] of [
   ['opencode', GLOBAL_SRC, 'opencode-hook'],
   ['kilo', KILO_SRC, 'kilo-hook'],
-  ['mimocode', MIMO_SRC, 'mimocode-hook'],
 ]) {
   test(`global ${agent}: session-start and stop carry the launch directory`, async (t) => {
     const f = await fixture(t, { source });
@@ -229,3 +232,127 @@ for (const [agent, source, hook] of [
     assert.equal(stop.payload.cwd, process.cwd());
   });
 }
+
+test('mimocode is inert without a socket and when hooks are disabled', async () => {
+  const previous = { ...process.env };
+  const { default: mod } = await import(pathToFileURL(MIMO_SRC).href);
+  try {
+    delete process.env.SEANCE_SOCKET_PATH;
+    delete process.env.SEANCE_MIMOCODE_HOOKS_DISABLED;
+    assert.deepEqual(await mod.server({ $: async () => {} }), {});
+    process.env.SEANCE_SOCKET_PATH = '/tmp/seance-sock';
+    process.env.SEANCE_MIMOCODE_HOOKS_DISABLED = '1';
+    assert.deepEqual(await mod.server({ $: async () => {} }), {});
+  } finally { process.env = previous; }
+});
+
+test('mimocode session-created adopts the session with the launch directory', async (t) => {
+  const f = await fixture(t, { source: MIMO_SRC });
+  await f.emit('session.created', { sessionID: 'root' });
+  const events = await f.events();
+  assert.deepEqual(events.map((e) => e.args.at(-1)), ['session-start', 'prompt-submit']);
+  assert.ok(events.every((e) => e.args.at(-2) === 'mimocode-hook'));
+  assert.equal(events[0].payload.cwd, process.cwd());
+  assert.equal('cwd' in events[1].payload, false);
+});
+
+test('mimocode session.post completed stops with cwd and escaped final text', async (t) => {
+  const f = await fixture(t, { source: MIMO_SRC });
+  await f.emit('session.created', { sessionID: 'root' });
+  await f.hooks['session.post']({ sessionID: 'root', outcome: 'completed', finalText: "Done: 'q'" }, {});
+  const stop = await f.last();
+  assert.equal((await f.events()).at(-1).args.at(-1), 'stop');
+  assert.equal(stop.cwd, process.cwd());
+  assert.equal(stop.message, "Done: 'q'");
+
+  await f.hooks['session.post']({ sessionID: 'root', outcome: 'completed' }, {});
+  assert.equal('message' in await f.last(), false);
+});
+
+test('mimocode session.post error ends the session and resets counts', async (t) => {
+  const f = await fixture(t, { source: MIMO_SRC });
+  await f.emit('session.created', { sessionID: 'root' });
+  await f.hooks['session.post']({ sessionID: 'root', outcome: 'error', error: new Error('boom') }, {});
+  const events = await f.events();
+  assert.equal(events.at(-1).args.at(-1), 'session-end');
+  assert.equal(events.at(-2).args.at(-1), 'subagent-update');
+  assert.equal(events.at(-2).payload.subagent_count, 0);
+});
+
+test('mimocode session.post ignores a different session', async (t) => {
+  const f = await fixture(t, { source: MIMO_SRC });
+  await f.emit('session.created', { sessionID: 'root' });
+  const before = (await f.events()).length;
+  await f.hooks['session.post']({ sessionID: 'other', outcome: 'completed', finalText: 'x' }, {});
+  await f.hooks['session.post']({ sessionID: 'other', outcome: 'error' }, {});
+  assert.equal((await f.events()).length, before);
+});
+
+test('mimocode actor.registered counts subagents and skips infrastructure agents', async (t) => {
+  const f = await fixture(t, { source: MIMO_SRC });
+  await f.emit('session.created', { sessionID: 'root' });
+  await f.emit('actor.registered', { sessionID: 'root', actorID: 'a1', mode: 'subagent', agent: 'general' });
+  const afterGeneral = (await f.events()).filter((e) => e.args.at(-1) === 'subagent-update');
+  assert.equal(afterGeneral.length, 1);
+  assert.equal(afterGeneral[0].payload.subagent_count, 1);
+
+  for (const agent of ['title', 'checkpoint-writer', 'dream', 'compaction']) {
+    await f.emit('actor.registered', { sessionID: 'root', actorID: `i-${agent}`, mode: 'subagent', agent });
+  }
+  const updates = (await f.events()).filter((e) => e.args.at(-1) === 'subagent-update');
+  assert.equal(updates.length, 1);
+  assert.equal(updates.at(-1).payload.subagent_count, 1);
+});
+
+test('mimocode actor.registered background flag feeds background_count', async (t) => {
+  const f = await fixture(t, { source: MIMO_SRC });
+  await f.emit('session.created', { sessionID: 'root' });
+  await f.emit('actor.registered', { sessionID: 'root', actorID: 'b1', mode: 'subagent', agent: 'general', background: true });
+  const update = (await f.events()).find((e) => e.args.at(-1) === 'subagent-update');
+  assert.equal(update.payload.subagent_count, 1);
+  assert.equal(update.payload.background_count, 1);
+
+  await f.hooks['actor.postStop'].run({ actorID: 'b1' });
+  const after = (await f.events()).filter((e) => e.args.at(-1) === 'subagent-update').at(-1);
+  assert.equal(after.payload.subagent_count, 0);
+  assert.equal(after.payload.background_count, 0);
+});
+
+test('mimocode actor.postStop decrements and reports a subagent going idle', async (t) => {
+  const f = await fixture(t, { source: MIMO_SRC });
+  await f.emit('session.created', { sessionID: 'root' });
+  await f.emit('actor.registered', { sessionID: 'root', actorID: 'a1', mode: 'subagent', agent: 'general' });
+  await f.hooks['actor.postStop'].run({ actorID: 'a1' });
+  const events = await f.events();
+  const update = events.filter((e) => e.args.at(-1) === 'subagent-update').at(-1);
+  assert.equal(update.payload.subagent_count, 0);
+  assert.equal(events.at(-1).args.at(-1), 'prompt-submit');
+  // Unknown actors are not counted down twice.
+  await f.hooks['actor.postStop'].run({ actorID: 'nope' });
+  const second = (await f.events()).filter((e) => e.args.at(-1) === 'subagent-update');
+  assert.equal(second.length, 2);
+  assert.equal(second.at(-1).payload.subagent_count, 0);
+});
+
+test('mimocode permission.asked notifies with the permission detail', async (t) => {
+  const f = await fixture(t, { source: MIMO_SRC });
+  await f.emit('session.created', { sessionID: 'root' });
+  await f.emit('permission.asked', { sessionID: 'root', permission: 'bash', patterns: ['echo hello'] });
+  await f.emit('permission.asked', { sessionID: 'root', permission: 'edit' });
+  const notices = (await f.events()).filter((e) => e.args.at(-1) === 'notification');
+  assert.equal(notices.length, 2);
+  assert.equal(notices[0].payload.message, 'bash: echo hello');
+  assert.equal(notices[1].payload.message, 'edit');
+});
+
+test('mimocode session.pre reports busy only for the adopted session', async (t) => {
+  const f = await fixture(t, { source: MIMO_SRC });
+  await f.emit('session.created', { sessionID: 'root' });
+  const before = (await f.events()).length;
+  await f.hooks['session.pre']({ sessionID: 'other' }, {});
+  assert.equal((await f.events()).length, before);
+  await f.hooks['session.pre']({ sessionID: 'root' }, {});
+  const events = await f.events();
+  assert.equal(events.at(-1).args.at(-1), 'prompt-submit');
+  assert.equal(events.length, before + 1);
+});
