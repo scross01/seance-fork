@@ -331,6 +331,9 @@ pub fn build(b: *std.Build) void {
         .install_subdir = "share/seance/hermes-plugin",
     });
 
+    // Install bundled Pool hooks template for agent integration
+    b.installFile("resources/pool-hooks.yaml", "share/seance/pool-hooks.yaml");
+
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());
     if (b.args) |args| {

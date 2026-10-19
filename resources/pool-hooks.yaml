@@ -1,0 +1,22 @@
+# Managed by seance — do not edit. Remove via Settings → Integrations.
+hooks:
+  SessionStart:
+    - matcher: "*"
+      command: "test -n \"$SEANCE_SURFACE_ID\" && seance ctl pool-hook session-start"
+      timeout: 10
+  UserPromptSubmit:
+    - matcher: "*"
+      command: "test -n \"$SEANCE_SURFACE_ID\" && seance ctl pool-hook prompt-submit"
+      timeout: 10
+  PreToolUse:
+    - matcher: "*"
+      command: "test -n \"$SEANCE_SURFACE_ID\" && seance ctl pool-hook pre-tool-use"
+      timeout: 10
+  PostToolUse:
+    - matcher: "*"
+      command: "test -n \"$SEANCE_SURFACE_ID\" && seance ctl pool-hook post-tool-use"
+      timeout: 10
+  Stop:
+    - matcher: "*"
+      command: "test -n \"$SEANCE_SURFACE_ID\" && seance ctl pool-hook stop"
+      timeout: 10
