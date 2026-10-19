@@ -74,10 +74,14 @@ EOF
 # Requires inotify-tools.
 MANICODE_DIR="${HOME}/.config/manicode"
 
-_fire_status() {   # $1 = Running|Idle
-    timeout 0.5 "$REAL_SEANCE" ctl freebuff-hook prompt-submit <<EOF >/dev/null 2>&1 || true
-{"status":"$1"}
-EOF
+_fire_status() {   # $1 = Running|Idle — one retry for transient socket failures
+    local payload="{\"status\":\"$1\"}"
+    if ! printf '%s\n' "$payload" | timeout 0.5 "$REAL_SEANCE" ctl \
+        freebuff-hook prompt-submit >/dev/null 2>&1; then
+        sleep 1
+        printf '%s\n' "$payload" | timeout 1 "$REAL_SEANCE" ctl \
+            freebuff-hook prompt-submit >/dev/null 2>&1 || true
+    fi
 }
 
 _start_status_monitor() {
@@ -89,6 +93,12 @@ _start_status_monitor() {
         # and state file so nothing outlives the session. HUP covers pane
         # teardown (tmux/session death) where the EXIT trap never runs.
         trap '[[ -n "$watch_pid" ]] && kill "$watch_pid" 2>/dev/null; rm -f "$state_file"; exit 0' TERM INT HUP
+
+        _state() {   # last known status; recreate as Running if it vanished
+            cat "$state_file" 2>/dev/null || { echo Running > "$state_file"; printf Running; }
+        }
+
+        _set_state() { echo "$1" > "$state_file"; }
 
         _log_candidates() {   # recent log.jsonl candidates, newest first
             local proj="$MANICODE_DIR/projects/$(basename "$PWD")/chats"
@@ -151,16 +161,13 @@ _start_status_monitor() {
         fi
 
         # ── watch phase ──
-        local offset=0 line activity rediscover=1 timed_out
+        local offset=0 line activity last_marker=$SECONDS
         offset=$(wc -c < "$logfile" 2>/dev/null || echo 0)
         while kill -0 $$ 2>/dev/null; do
             timeout "$idle_timeout" inotifywait -q -e modify \
                 "$logfile" >/dev/null 2>&1 &
             watch_pid=$!
-            timed_out=1
-            if wait "$watch_pid"; then
-                timed_out=0
-            elif [[ ! -f "$logfile" ]]; then
+            if ! wait "$watch_pid" && [[ ! -f "$logfile" ]]; then
                 # File vanished (shouldn't happen — pino appends, no
                 # rotation): re-discover once, then give up
                 if (( rediscover )); then
@@ -168,31 +175,31 @@ _start_status_monitor() {
                     logfile=$(_find_log)
                     [[ -n "$logfile" ]] || { rm -f "$state_file"; exit 0; }
                     offset=$(wc -c < "$logfile" 2>/dev/null || echo 0)
+                    last_marker=$SECONDS
                     continue
                 fi
                 rm -f "$state_file"; exit 0
             fi
-            # Drain bytes appended since the last read on every wake —
-            # including idle timeouts — so a marker that raced the watch
-            # arm still counts instead of being swallowed by the Idle path
+            # Drain appended bytes on every wake. Markers — not raw
+            # writes — decide Idle: the CLI keeps emitting debug lines
+            # indefinitely, so event silence alone never means idle.
             activity=0
             while IFS= read -r line; do
                 case "$line" in
                     *"Start agent "*|*"[message-queue] Processing"*)
-                        activity=1 ;;
+                        activity=1; last_marker=$SECONDS ;;
                     *"[chat-runtime] Freebuff session over"*)
-                        activity=0
-                        if [[ "$(cat "$state_file")" != "Idle" ]]; then
-                            echo "Idle" > "$state_file"; _fire_status "Idle"
+                        activity=0; last_marker=$SECONDS
+                        if [[ "$(_state)" != "Idle" ]]; then
+                            _set_state Idle; _fire_status "Idle"
                         fi ;;
                 esac
             done < <(tail -c +$((offset + 1)) "$logfile" 2>/dev/null)
             offset=$(wc -c < "$logfile" 2>/dev/null || echo "$offset")
-            if (( activity )) && [[ "$(cat "$state_file")" != "Running" ]]; then
-                echo "Running" > "$state_file"; _fire_status "Running"
-            elif (( timed_out )) && [[ "$(cat "$state_file")" == "Running" ]]; then
-                # idle timeout with no marker activity
-                echo "Idle" > "$state_file"; _fire_status "Idle"
+            if (( activity )) && [[ "$(_state)" != "Running" ]]; then
+                _set_state Running; _fire_status "Running"
+            elif (( SECONDS - last_marker >= idle_timeout )) && [[ "$(_state)" == "Running" ]]; then
+                _set_state Idle; _fire_status "Idle"
             fi
         done
         rm -f "$state_file"
