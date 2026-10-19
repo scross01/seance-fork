@@ -35,7 +35,7 @@ sudo apt install pkg-config libgtk-4-dev libadwaita-1-dev libcanberra-dev inotif
 sudo pacman -S gtk4 libadwaita libcanberra inotify-tools
 ```
 
-`inotify-tools` is required for real-time agent status monitoring with Codebuff and Freebuff agents.
+`inotify-tools` is required for real-time agent status monitoring with Codebuff and Freebuff agents (the Freebuff monitor also uses `ps` from procps, present on any standard Linux system).
 
 ## Clone and Build
 

@@ -79,7 +79,7 @@ EOF
 ```
 
 **Note:** this is the generic recursive-watch pattern. Codebuff follows it
-(and Poolside did before its native-hooks migration in plan 079). Freebuff
+(and Poolside did before its native-hooks migration). Freebuff
 0.2.x does **not** — it creates a fresh chat directory per launch, so a
 recursive watch established before startup misses it. Freebuff uses a
 discover-then-single-file-watch variant with log-content marker parsing;
@@ -107,7 +107,7 @@ The monitor process:
 
 | Agent | Log Directory | File Pattern |
 |-------|---------------|--------------|
-| Poolside | `~/.local/state/poolside/trajectories` | `*.ndjson` (native hooks now; monitor removed by plan 079) |
+| Poolside | `~/.local/state/poolside/trajectories` | `*.ndjson` (native hooks now; monitor removed in the Pool migration) |
 | Codebuff | *(agent-specific)* | `*.jsonl` |
 | Freebuff | `~/.config/manicode/projects/<project>/chats/<timestamp>/` | log.jsonl (one active file, discovered at launch) |
 

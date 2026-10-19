@@ -26,6 +26,7 @@ Séance integrates with [Freebuff](https://freebuff.com) through session log mon
 ## Requirements
 
 - **`inotify-tools`** must be installed: `sudo apt install inotify-tools` (Ubuntu/Debian) or `sudo pacman -S inotify-tools` (Arch)
+- **`ps`** (procps) is used to match the session log to this pane; present on any standard Linux system
 
 ## Configuration
 
@@ -56,9 +57,9 @@ Freebuff uses **session log monitoring** with `inotifywait` — a Linux-specific
 
 The wrapper script starts a background process with two phases:
 
-**Discover phase** (bounded poll, 30s deadline):
-
-1. Every 0.25s, look for recent `log.jsonl` candidates (mtime within 5s) under `~/.config/manicode/projects/` — the current project's `chats/` dir first, then any project
+**Discover phase** (bounded poll, 30s deadline):1. Every 0.25s, look for recent `log.jsonl` candidates (mtime within 5s)
+   under `~/.config/manicode/projects/`, spanning the current project's
+   `chats/` dir and any other project, sorted newest first
 2. Accept a candidate only when its tail lines carry the `"pid"` field of one of the wrapper's descendant processes. Freebuff logs `pid` on every line, and the wrapper's descendants include the CLI — even through the npm launcher, which spawns the real binary as a grandchild. This ties the log to *this pane*: a sibling pane's freshly-written log can never be claimed (two panes in the same project each watch their own per-launch chat dir)
 3. The 30s deadline covers the npm launcher's pre-flight (fingerprint, update check), which can take ~16s before the CLI writes its first log line
 4. If nothing is found by the deadline: fire Idle once and exit the monitor (the wrapper's EXIT trap still guarantees `session-end`)
@@ -68,7 +69,8 @@ The wrapper script starts a background process with two phases:
 1. Initialize state to `Idle` (the wrapper's initial `prompt-submit` already set Running)
 2. Loop while the parent wrapper is alive (`kill -0 $$`)
 3. `inotifywait -q -e modify -t <idle_timeout> <logfile>` on the single resolved file — no `-r`, no `--include`
-4. On each wake, read lines appended since the last byte offset (`wc -c` + `tail -c +N`) and parse markers:
+4. On each wake (event or idle timeout), read lines appended since the
+   last byte offset (`wc -c` + `tail -c +N`) and parse markers:
 
    | Log line contains | Effect |
    |---|---|
