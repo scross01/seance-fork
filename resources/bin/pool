@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
-# seance Poolside wrapper — intercepts `pool` invocations inside seance
-# terminals and tracks the process lifecycle so seance can detect agent status.
+# seance Poolside wrapper — intercepts `pool` inside seance and fires
+# native Pool hooks (configured in ~/.config/poolside/settings.yaml)
+# for lifecycle tracking. Session-end cleanup handled via EXIT trap
+# since Pool has no SessionEnd hook event.
 set -euo pipefail
 
-# ── Find the real pool binary, skipping seance wrappers ────────────────────
+# ── Find the real pool binary ────────────────────────────────────────────────────────────
 
 WRAPPER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REAL_POOL=""
@@ -23,14 +25,13 @@ if [[ -z "$REAL_POOL" ]]; then
     exit 127
 fi
 
-# Resolve seance to an absolute path
+# Resolve seance
 REAL_SEANCE="$(PATH="$PATH" type -P seance 2>/dev/null || true)"
 if [[ -z "$REAL_SEANCE" ]]; then
-    echo "pool: seance not found — falling back to pass-through" >&2
     exec "$REAL_POOL" "$@"
 fi
 
-# ── Pass-through conditions ──────────────────────────────────────────────
+# ── Pass-through conditions ──────────────────────────────────────────────────────────────
 
 # Not inside seance
 if [[ -z "${SEANCE_SURFACE_ID:-}" ]]; then
@@ -47,7 +48,7 @@ if ! timeout 0.75 "$REAL_SEANCE" ctl --socket "${SEANCE_SOCKET_PATH:-}" ping >/d
     exec "$REAL_POOL" "$@"
 fi
 
-# ── Pass-through subcommands ─────────────────────────────────────────────
+# ── Pass-through subcommands ─────────────────────────────────────────────────────────────
 
 case "${1:-}" in
     config|login|logout|update|mcp|secrets|completion|acp)
@@ -55,79 +56,22 @@ case "${1:-}" in
         ;;
 esac
 
-# ── Export PID ─────────────────────────────────────────────────────────────
+# ── Export PID ───────────────────────────────────────────────────────────────────────────
 
 export SEANCE_POOL_PID=$$
 
-# ── Session-end cleanup trap ───────────────────────────────────────────────
-# Pool may not fire session-end on crash, forced exit, or signal, so we
-# guarantee it via a trap. This fires on EXIT (normal exit + signal exits)
-# and covers SIGTERM, SIGINT, SIGHUP, etc.
-
-_STATUS_MONITOR_PID=""
+# ── Session-end cleanup trap ─────────────────────────────────────────────────────────────
+# Pool has no SessionEnd hook event, so we guarantee cleanup via EXIT.
+# This covers normal exit, SIGTERM, SIGINT, SIGHUP, and crashes.
 _cleanup() {
-    # Kill the background status monitor first
-    kill $_STATUS_MONITOR_PID 2>/dev/null || true
-    # Then fire session-end to clear status
     timeout 0.5 "$REAL_SEANCE" ctl pool-hook session-end <<'EOF' >/dev/null 2>&1 &
 {}
 EOF
 }
 trap _cleanup EXIT
 
-# ── Set initial "Running" status ───────────────────────────────────────────
-
-seance ctl pool-hook prompt-submit <<'EOF' >/dev/null 2>&1 || true
-{}
-EOF
-
-# ── Start background status monitor ────────────────────────────────────────
-# Uses inotifywait on the trajectories directory to detect file writes.
-# Requires inotify-tools package.
-_start_status_monitor() {
-    local trajectories_dir="${HOME}/.local/state/poolside/trajectories"
-
-    (
-        local idle_timeout=5
-        local state_file
-        state_file=$(mktemp /tmp/pool-status-XXXXXX)
-        # Initialize to Running to match the initial prompt-submit status
-        echo "Running" > "$state_file"
-
-        while kill -0 $$ 2>/dev/null; do
-            # Wait for IN_MODIFY events with timeout
-            if timeout "$idle_timeout" inotifywait -r -q -e modify \
-                --include '\.ndjson$' "$trajectories_dir" >/dev/null 2>&1; then
-                # Activity detected
-                local current_status
-                current_status=$(cat "$state_file" 2>/dev/null || echo "Idle")
-                if [[ "$current_status" != "Running" ]]; then
-                    echo "Running" > "$state_file"
-                    timeout 0.5 "$REAL_SEANCE" ctl pool-hook prompt-submit <<'EOF' >/dev/null 2>&1 || true
-{"status":"Running"}
-EOF
-                fi
-            else
-                # Timeout — no activity for idle_timeout seconds
-                local current_status
-                current_status=$(cat "$state_file" 2>/dev/null || echo "Idle")
-                if [[ "$current_status" == "Running" ]]; then
-                    echo "Idle" > "$state_file"
-                    timeout 0.5 "$REAL_SEANCE" ctl pool-hook prompt-submit <<'EOF' >/dev/null 2>&1 || true
-{"status":"Idle"}
-EOF
-                fi
-            fi
-        done
-        rm -f "$state_file"
-    ) &
-    _STATUS_MONITOR_PID=$!
-}
-_start_status_monitor
-
-# ── Launch pool (no exec — wrapper must survive for cleanup) ──────────────
+# ── Launch pool (no exec — wrapper survives for cleanup trap) ────────────────────────────
 
 "$REAL_POOL" "$@"
 rc=$?
-
 exit $rc
