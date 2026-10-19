@@ -18,6 +18,8 @@ Used by: **OpenCode**, **Kilo Code**, **MiMo Code**
 
 TypeScript plugins are the most common approach. The plugin is a `.ts` file that exports a `SeancePlugin` async function receiving `$` (shell executor). It subscribes to the agent's event system and sends hooks via subprocess calls. OpenCode V2 broke that API, so its port instead exports `Plugin.define({...})` from `@opencode/plugin` and subscribes via `ctx.event.subscribe(...)`/`ctx.tool.hook(...)` — both formats speak the same `seance ctl` wire protocol.
 
+MiMo Code (as of `@seance-version 40`) instead uses the modern MiMoCode plugin module: `export default { id: "seance-mimocode", server: async (input) => ({…hooks}) }`. Path plugins loaded from `~/.config/mimocode/plugins/` must export `id`. OpenCode V1 and Kilo Code still use the named `SeancePlugin` export.
+
 **Install locations:**
 
 | Agent | Install Target | Source |

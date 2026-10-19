@@ -65,7 +65,7 @@ Current plugin versions:
 |-------|----------------|
 | OpenCode | `@seance-version 17` (V1), `@seance-version 20` (V2) |
 | Kilo Code | `@seance-version 15` |
-| MiMo Code | `@seance-version 39` |
+| MiMo Code | `@seance-version 40` |
 
 ## Wrapper Scripts
 

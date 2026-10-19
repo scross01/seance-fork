@@ -1,27 +1,26 @@
 # MiMo Code Integration
 
-Séance integrates with [MiMo Code](https://github.com/XiaoMi/mimo-code) through a TypeScript plugin that auto-installs to `~/.config/mimocode/plugins/`. MiMo Code is a fork of OpenCode with additional subagent orchestration features.
+Séance integrates with [MiMo Code](https://github.com/XiaomiMiMo/MiMo-Code) through a TypeScript plugin that auto-installs to `~/.config/mimocode/plugins/`. MiMo Code is a fork of OpenCode with additional subagent orchestration features.
 
 ## How It Works
 
 1. **Plugin auto-installs** on Séance startup (if `~/.config/mimocode` exists)
-2. **Plugin hooks into** MiMo Code's event system, forwarding lifecycle events to Séance
-3. **Wrapper script** intercepts `mimo` launches, tracks PID, and fires `session-end` on exit
+2. **Plugin hooks into** MiMo Code's lifecycle hooks and event bus, forwarding them to Séance as `seance ctl` events. Idle/end state comes from the harness's guaranteed `session.post` lifecycle hook.
+3. **Wrapper script** intercepts `mimo` launches, tracks PID, and fires `session-end` on exit as a crash safety net
 
 ## Events Handled
 
-| MiMo Code Event | Séance Hook | What It Shows |
-|-----------------|-------------|---------------|
-| `session.created` | `session-start` | Running |
-| `session.status` (busy) | `prompt-submit` | Running |
-| `session.status` (idle) | `stop` | Idle |
+| Harness Source | Séance Hook | What It Shows |
+|----------------|-------------|---------------|
+| `session.created` / `session.updated` | `session-start` + `prompt-submit` | Running |
+| `session.pre` | `prompt-submit` | Running |
+| `session.post` (`completed` / `cancelled`) | `stop` | Idle |
+| `session.post` (`error`) | `session-end` | (cleared) |
 | `tool.execute.before` | `pre-tool-use` | Running |
 | `tool.execute.after` | `post-tool-use` | Running |
 | `permission.asked` | `notification` | Needs input |
-| `session.idle` | `stop` | Idle |
-| `session.error` | `session-end` | (cleared) |
-| `actor.registered` | `prompt-submit` | Running |
-| `actor.status` (idle) | `prompt-submit` | Running |
+| `actor.registered` | `prompt-submit` + `subagent-update` | Running |
+| `actor.postStop` | `prompt-submit` + `subagent-update` | Running |
 
 ## Features
 
@@ -29,7 +28,7 @@ Séance integrates with [MiMo Code](https://github.com/XiaoMi/mimo-code) through
 - **Permission detection** — shows "Waiting for permission" when MiMo Code asks to run a command
 - **Desktop notifications** — notifies on completion and permission requests
 - **Session directory tracking** — hook payloads carry the pane's launch directory, so the session record stores it and completion notifications read "Completed in `<project>`" (same as OpenCode and Kilo Code)
-- **Subagent tracking** — MiMo Code can run multiple concurrent sessions; the plugin detects subagents via `tool.execute.before` session ID mismatches and tracks them separately
+- **Subagent tracking** — MiMo Code's actor registry reports subagents registering and stopping; the plugin counts them and reports both `subagent_count` and `background_count`
 - **Activity indicators** — the sidebar icon changes based on subagent activity:
 
 | Subtasks Active | Background Active | Icon |
@@ -53,28 +52,34 @@ mimocode-hooks = true
 
 ### Integration Approach
 
-MiMo Code uses a **TypeScript plugin** (`plugins/seance-mimocode/index.ts`) auto-installed to `~/.config/mimocode/plugins/`. MiMo Code is a fork of OpenCode with additional subagent orchestration extensions, so the plugin shares the same base architecture but adds dedicated subagent lifecycle handling.
+MiMo Code uses a **TypeScript plugin** (`plugins/seance-mimocode/index.ts`) auto-installed to `~/.config/mimocode/plugins/`. Since `@seance-version 40` it uses the modern MiMoCode plugin module shape:
 
-A wrapper script (`resources/bin/mimo`) intercepts launches for PID tracking and `session-end` on exit.
+```ts
+export default { id: "seance-mimocode", server: async (input) => ({ /* hooks */ }) };
+```
 
-**Version:** `@seance-version 39` (higher than OpenCode/Kilo due to subagent extensions)
+Path plugins loaded from `~/.config/mimocode/plugins/` **must** export `id` with this shape. The plugin uses MiMo Code 0.1.15's typed lifecycle hooks (`session.pre`, `session.post`, `actor.postStop`) instead of event-stream heuristics, and still subscribes to the event bus for session identity, permissions, and actor registration.
+
+A wrapper script (`resources/bin/mimo`) intercepts launches for PID tracking and `session-end` on exit as a crash safety net.
+
+**Version:** `@seance-version 40` (higher than OpenCode/Kilo due to subagent extensions)
 
 ### Event Mapping
 
-| MiMo Code Event | Seance Hook | UI Status |
+| Harness Source | Seance Hook | UI Status |
 |---|---|---|
-| `session.created` | `session-start` | Running |
-| `session.status` (busy) | `prompt-submit` | Running |
-| `session.status` (idle) | (handled by `session.idle`) | — |
-| `session.idle` | `stop` | Idle |
-| `session.error` | `session-end` | (cleared) |
-| `session.updated` | `session-start` | Running |
+| `session.created` / `session.updated` | `session-start` + `prompt-submit` | Running |
+| `session.pre` (adopted session only) | `prompt-submit` | Running |
+| `session.post` `completed` | `stop` (+ `message` from `finalText`) | Idle |
+| `session.post` `cancelled` | `stop` | Idle |
+| `session.post` `error` | `session-end` | (cleared) |
+| `permission.asked` | `notification` | Needs input |
+| `actor.registered` (subagent, non-infrastructure) | `prompt-submit` + `subagent-update` | Running |
+| `actor.postStop` (matched subagent) | `prompt-submit` + `subagent-update` | Running |
 | `tool.execute.before` | `pre-tool-use` | Running |
 | `tool.execute.after` | `post-tool-use` | Running |
-| `permission.asked` | `notification` | Needs input |
-| `permission.replied` | (no-op) | — |
-| `actor.registered` | `prompt-submit` | Running |
-| `actor.status` (idle) | `prompt-submit` | Running |
+
+There is no `permissionPending` guard: a permission request fires `notification`, and the completion that follows fires `stop` as usual.
 
 **Unhandled events:** Same as OpenCode (session.deleted, message events, file events, LSP events, etc.).
 
@@ -84,14 +89,13 @@ A wrapper script (`resources/bin/mimo`) intercepts launches for PID tracking and
 - `clear_status_on_end` is `true`.
 - `has_notification_hook` is `true`.
 - **Auto-install target:** `~/.config/mimocode/plugins/seance-mimocode.ts`
-- **Disabled check:** `SEANCE_MIMOCODE_HOOKS_DISABLED=1`.
+- **Disabled check:** `SEANCE_MIMOCODE_HOOKS_DISABLED=1` (or an unset `SEANCE_SOCKET_PATH`) makes `server()` return no hooks.
+- **Session identity:** `currentSessionId` is adopted from `session.created`/`session.updated`; `session.pre`/`session.post` and tool hooks only fire for that session, so subagent slices never idle or end the main pane.
 
 ### Subagent Tracking
 
-MiMo Code is the only agent with dedicated subagent lifecycle events:
-
-- **`actor.registered`:** When `mode === "subagent"` and the agent is not `"checkpoint-writer"` or `"compaction"`, adds the actor to `childSessions`, increments `subagentCount`, and fires `updateCounts()` + `prompt-submit`.
-- **`actor.status` (idle):** When the actorID is in `childSessions`, removes it and decrements the count, firing `updateCounts()` + `prompt-submit`.
+- **Increment:** `actor.registered` with `mode === "subagent"` and an agent **not** in the infrastructure set `["main", "summary", "title", "checkpoint-writer", "dream", "distill", "compaction"]`. `general`, `build`, and `explore` are real user-facing subagents and **are** counted. The actor is added to `childActors`, `subagentCount` is incremented, and `background_count` is set from the event's `background` flag.
+- **Decrement:** the `actor.postStop` typed hook, replacing the old actor-status idle heuristic. It carries a custom matcher — `{ mode: "subagent", agentType: { excludeOnly: <infrastructure set> } }` — because the default matcher excludes *all* built-in agents, including `general`/`build`/`explore`. Background actors tracked at register time decrement `backgroundCount` too, so the count does not leak.
 
 This is more reliable than the session ID mismatch heuristic used by OpenCode/Kilo.
 
@@ -108,10 +112,12 @@ The sidebar icon changes based on subagent/background activity:
 
 ### Key Differences from OpenCode
 
-- **No `completedSessions` set.** MiMo Code uses dedicated `actor.registered`/`actor.status` events instead of session ID mismatch heuristics.
+- **Modern module shape.** `export default { id, server }` rather than the named `SeancePlugin` export OpenCode/Kilo still use.
+- **Typed lifecycle hooks.** `session.post` (guaranteed once via `Effect.onExit`) drives idle/end and `actor.postStop` drives subagent completion; no event-stream heuristics.
+- **No `permissionPending` guard** and no `sessionIdle` flag.
+- **No `completedSessions` set.** Subagents are tracked in `childActors` from the actor registry instead of session ID mismatch heuristics.
 - **Session ID extraction.** Uses `event.properties?.sessionID` directly (no fallback to `event.properties?.info?.id`).
-- **Session status mapping.** Maps both busy and idle `session.status` events (idle handled by `session.idle`).
-- **Multiple concurrent sessions.** MiMo Code can fire events from multiple concurrent sessions (foreground + background indexing), tracked via `currentSessionId` plus a `childSessions` map.
+- **Multiple concurrent sessions.** MiMo Code can fire events from multiple concurrent sessions (foreground + background indexing), tracked via `currentSessionId` plus the `childActors` set.
 
 ### Subagent Update Command
 
@@ -121,7 +127,7 @@ The plugin sends a `subagent-update` command with `workspace_id`, `subagent_coun
 
 **Source:** [github.com/XiaomiMiMo/MiMo-Code](https://github.com/XiaomiMiMo/MiMo-Code)
 
-MiMo Code is a fork of OpenCode, so it inherits all OpenCode events plus adds its own extensions for subagent management:
+MiMo Code 0.1.15 exposes lifecycle hooks as a first-class part of the plugin API (`@mimo-ai/plugin`). Its `BUILT_IN_AGENTS` list is `["main", "general", "build", "explore", "summary", "title", "checkpoint-writer", "dream", "distill", "compaction"]`; Séance excludes the infrastructure subset of that list from the sidebar count while still counting `general`/`build`/`explore`.
 
 #### Inherited from OpenCode
 
@@ -129,16 +135,17 @@ All OpenCode/Kilo Code events (see [OpenCode Integration](./opencode.md#upstream
 
 #### MiMo Code Extensions
 
-| Event | Description | Séance Handles? |
-|-------|-------------|-----------------|
-| `actor.registered` | New actor/subagent registered | Yes |
-| `actor.status` | Actor status changed | Yes |
+| Source | Description | Séance Handles? |
+|--------|-------------|-----------------|
+| `actor.registered` (event) | New actor/subagent registered | Yes (count) |
+| `actor.postStop` (hook) | Subagent delivered its final output | Yes (count) |
+| `session.pre` / `session.post` (hooks) | Main turn started / finished exactly once | Yes |
 
-**Note:** MiMo Code adds actor lifecycle events that are not in the base OpenCode framework. These appear to be custom extensions for the subagent orchestration system.
+**Note:** the typed hooks are the primary status source; the event bus is only used for session adoption, permissions, and actor registration.
 
 ### Missing Event Coverage
 
-Events that MiMo Code can emit but Séance does not currently handle (same as OpenCode, plus):
+Events that MiMo Code can emit but Séance does not currently handle (optional follow-ups only — idle/end no longer depend on any of them):
 
 | Event | Potential Use for Séance |
 |-------|--------------------------|
@@ -148,5 +155,3 @@ Events that MiMo Code can emit but Séance does not currently handle (same as Op
 | `file.edited` | Show file modification activity |
 | `lsp.client.diagnostics` | Show error/warning counts in status |
 | `todo.updated` | Track task completion progress |
-
-**Impact:** MiMo Code inherits OpenCode's events but Séance's plugin doesn't leverage the additional actor events for richer subagent status.

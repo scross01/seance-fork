@@ -5,6 +5,8 @@
 ### Changed
 - Mistral Vibe hooks updated to use stable hook type names (post_agent, pre_tool, post_tool).
 - Pool integration now uses native Pool CLI hooks (v1.0.16+) instead of inotify-based trajectory monitoring. The `inotify-tools` system dependency is no longer required for Pool (Codebuff and Freebuff still use it).
+- MiMo Code integration rewritten against the 0.1.15 plugin API: idle/end detection uses the guaranteed `session.post` lifecycle hook, subagent completion uses `actor.postStop`, infrastructure agents (title, summary, dream, distill, …) no longer inflate the sidebar subagent count, and `background_count` is reported from MiMo Code's actor registry.
+- MiMo Code plugin now ships as a modern `{ id, server }` module (`@seance-version 40`).
 
 ### Fixed
 - Freebuff sidebar status now tracks the agent again: the monitor discovers
