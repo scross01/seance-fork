@@ -57,7 +57,9 @@ Freebuff uses **session log monitoring** with `inotifywait` — a Linux-specific
 
 The wrapper script starts a background process with two phases:
 
-**Discover phase** (bounded poll, 30s deadline):1. Every 0.25s, look for recent `log.jsonl` candidates (mtime within 5s)
+**Discover phase** (bounded poll, 30s deadline):
+
+1. Every 0.25s, look for recent `log.jsonl` candidates (mtime within 5s)
    under `~/.config/manicode/projects/`, spanning the current project's
    `chats/` dir and any other project, sorted newest first
 2. Accept a candidate only when its tail lines carry the `"pid"` field of one of the wrapper's descendant processes. Freebuff logs `pid` on every line, and the wrapper's descendants include the CLI — even through the npm launcher, which spawns the real binary as a grandchild. This ties the log to *this pane*: a sibling pane's freshly-written log can never be claimed (two panes in the same project each watch their own per-launch chat dir)
