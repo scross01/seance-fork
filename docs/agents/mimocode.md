@@ -95,7 +95,7 @@ There is no `permissionPending` guard: a permission request fires `notification`
 ### Subagent Tracking
 
 - **Increment:** `actor.registered` with `mode === "subagent"` and an agent **not** in the infrastructure set `["main", "summary", "title", "checkpoint-writer", "dream", "distill", "compaction"]`. `general`, `build`, and `explore` are real user-facing subagents and **are** counted. The actor is added to `childActors`, `subagentCount` is incremented, and `background_count` is set from the event's `background` flag.
-- **Decrement:** the `actor.postStop` typed hook, replacing the old actor-status idle heuristic. It carries a custom matcher — `{ mode: "subagent", agentType: { excludeOnly: <infrastructure set> } }` — because the default matcher excludes *all* built-in agents, including `general`/`build`/`explore`. Background actors tracked at register time decrement `backgroundCount` too, so the count does not leak.
+- **Decrement:** the `actor.postStop` typed hook, replacing the old idle heuristic. It carries a custom matcher — `{ mode: "subagent", agentType: { excludeOnly: <infrastructure set> } }` — because the default matcher excludes *all* built-in agents, including `general`/`build`/`explore`. Background actors tracked at register time decrement `backgroundCount` too, so the count does not leak.
 
 This is more reliable than the session ID mismatch heuristic used by OpenCode/Kilo.
 
