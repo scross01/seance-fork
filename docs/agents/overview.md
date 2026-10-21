@@ -20,6 +20,7 @@ Agent Framework → Plugin/Hook → Séance Hook → Socket API → Sidebar UI
 | [Claude Code](./claude-code.md) | Wrapper script + shell hooks | — (always on) | Session-level |
 | [Codebuff](./codebuff.md) | Session log monitoring (inotifywait) | `codebuff-hooks` | Per-surface |
 | [Codex](./codex.md) | Built-in wrapper | `codex-hooks` | Per-surface |
+| [Command Code](./commandcode.md) | JSON config hooks | `commandcode-hooks` | Per-surface |
 | [Freebuff](./freebuff.md) | Session log monitoring (inotifywait) | `freebuff-hooks` | Per-surface |
 | [Hermes Agent](./hermes.md) | Python plugin | `hermes-hooks` | Per-surface |
 | [Kilo Code](./kilo.md) | TypeScript plugin | `kilo-hooks` | Per-surface |

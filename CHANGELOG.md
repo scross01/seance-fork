@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Added
+- Command Code (`cmd`) agent integration: sidebar status tracking via Command
+  Code's hooks harness (`~/.commandcode/settings.json`), plus a
+  `commandcode-hooks` config toggle and Settings UI switch.
+
 ### Changed
 - Mistral Vibe hooks updated to use stable hook type names (post_agent, pre_tool, post_tool).
 - Pool integration now uses native Pool CLI hooks (v1.0.16+) instead of inotify-based trajectory monitoring. The `inotify-tools` system dependency is no longer required for Pool (Codebuff and Freebuff still use it).

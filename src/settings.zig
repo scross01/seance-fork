@@ -59,6 +59,7 @@ const Widgets = struct {
     pool_hooks: ?*c.GtkWidget = null,
     codebuff_hooks: ?*c.GtkWidget = null,
     freebuff_hooks: ?*c.GtkWidget = null,
+    commandcode_hooks: ?*c.GtkWidget = null,
 
     // Combos
     notification_sound: ?*c.GtkWidget = null,
@@ -503,6 +504,7 @@ fn buildIntegrationsSection(page: *c.GtkWidget, cfg: *const config_mod.Config) v
     w.pool_hooks = addSwitchRow(g2, "Poolside pool integration", if (cfg.pool_hooks) "Sidebar shows Poolside pool session status and tool use." else "Poolside pool runs without seance integration.", cfg.pool_hooks);
     w.codebuff_hooks = addSwitchRow(g2, "Codebuff integration", if (cfg.codebuff_hooks) "Sidebar shows Codebuff session status and tool use." else "Codebuff runs without seance integration.", cfg.codebuff_hooks);
     w.freebuff_hooks = addSwitchRow(g2, "Freebuff integration", if (cfg.freebuff_hooks) "Sidebar shows Freebuff session status and tool use." else "Freebuff runs without seance integration.", cfg.freebuff_hooks);
+    w.commandcode_hooks = addSwitchRow(g2, "Command Code integration", if (cfg.commandcode_hooks) "Sidebar shows Command Code session status and tool use." else "Command Code runs without seance integration.", cfg.commandcode_hooks);
     addToPage(page, g2);
 
     // Card 3: Port Configuration
@@ -833,6 +835,9 @@ fn onSwitchChanged(obj: *c.GObject, _: *c.GParamSpec, _: c.gpointer) callconv(.c
         cfg.codebuff_hooks = active;
     } else if (widget == w.freebuff_hooks) {
         cfg.freebuff_hooks = active;
+    } else if (widget == w.commandcode_hooks) {
+        cfg.commandcode_hooks = active;
+        if (active) app.installCommandCodeHooks() else app.removeCommandCodeHooks();
     } else return;
 
     saveAndReload();
@@ -1311,6 +1316,7 @@ fn onResetResponse(_: *c.AdwAlertDialog, response: [*:0]const u8, _: c.gpointer)
     app.syncPlugin(.mimocode, cfg.mimocode_hooks);
     app.syncPlugin(.vibe, cfg.vibe_hooks);
     app.syncPlugin(.hermes, cfg.hermes_hooks);
+    if (cfg.commandcode_hooks) app.installCommandCodeHooks() else app.removeCommandCodeHooks();
 
     // Reset keybinds
     keybinds.resetToDefaults();

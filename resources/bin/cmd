@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+# seance Command Code wrapper — intercepts `cmd` inside seance terminals.
+# Status tracking rides on Command Code's own hooks harness, configured in
+# ~/.commandcode/settings.json. Command Code has no SessionEnd hook event,
+# so session-end cleanup is guaranteed via an EXIT trap.
+set -euo pipefail
+
+# ── Find the real cmd binary ────────────────────────────────────────────────────
+
+WRAPPER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REAL_CMD=""
+IFS=: read -ra PATH_DIRS <<< "$PATH"
+for dir in "${PATH_DIRS[@]}"; do
+    [[ -z "$dir" ]] && continue
+    resolved="$(cd "$dir" 2>/dev/null && pwd)" || continue
+    [[ "$resolved" == "$WRAPPER_DIR" ]] && continue
+    if [[ -x "$dir/cmd" ]]; then
+        REAL_CMD="$dir/cmd"
+        break
+    fi
+done
+
+if [[ -z "$REAL_CMD" ]]; then
+    echo "cmd: command not found" >&2
+    exit 127
+fi
+
+# ── Pass-through conditions ──────────────────────────────────────────────────────
+
+# Not inside seance
+if [[ -z "${SEANCE_SURFACE_ID:-}" ]]; then
+    exec "$REAL_CMD" "$@"
+fi
+
+# Hooks explicitly disabled
+if [[ "${SEANCE_COMMANDCODE_HOOKS_DISABLED:-}" == "1" ]]; then
+    exec "$REAL_CMD" "$@"
+fi
+
+# Resolve seance
+REAL_SEANCE="$(PATH="$PATH" type -P seance 2>/dev/null || true)"
+if [[ -z "$REAL_SEANCE" ]]; then
+    exec "$REAL_CMD" "$@"
+fi
+
+# Socket health check (0.75s timeout)
+if ! timeout 0.75 "$REAL_SEANCE" ctl --socket "${SEANCE_SOCKET_PATH:-}" ping >/dev/null 2>&1; then
+    exec "$REAL_CMD" "$@"
+fi
+
+# ── Pass-through subcommands ──────────────────────────────────────────────────────
+# These never start an interactive session, so they fire no lifecycle hooks.
+
+case "${1:-}" in
+    info|status|help|whoami|update|feedback|issue|taste|learn-taste|mcp|cloud|skills|mods|login|logout|acp|-v|--version|-h|--help)
+        exec "$REAL_CMD" "$@"
+        ;;
+esac
+
+# ── Export PID ────────────────────────────────────────────────────────────────────
+
+export SEANCE_COMMANDCODE_PID=$$
+
+# ── Session-end cleanup trap ──────────────────────────────────────────────────────
+# Command Code has no SessionEnd hook event, so we guarantee cleanup via EXIT.
+# This covers normal exit, SIGTERM, SIGINT, SIGHUP, and crashes.
+_cleanup() {
+    timeout 0.5 "$REAL_SEANCE" ctl commandcode-hook session-end <<<'{}' >/dev/null 2>&1 || true
+}
+trap _cleanup EXIT
+
+# ── Launch cmd (no exec — wrapper survives for cleanup trap) ──────────────────────
+
+"$REAL_CMD" "$@"
+rc=$?
+exit $rc

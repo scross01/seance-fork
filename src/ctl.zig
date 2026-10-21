@@ -156,6 +156,7 @@ fn dispatch(ctx: Ctx, command: []const u8) u8 {
     if (eql(command, "pool-hook")) return cmdPoolHook(ctx);
     if (eql(command, "codebuff-hook")) return cmdCodebuffHook(ctx);
     if (eql(command, "freebuff-hook")) return cmdFreebuffHook(ctx);
+    if (eql(command, "commandcode-hook")) return cmdCommandcodeHook(ctx);
     if (eql(command, "subagent-update")) return cmdSubagentUpdate(ctx);
     if (eql(command, "set-idle")) return cmdSetIdle(ctx);
     if (eql(command, "browser-open")) return cmdBrowserOpen(ctx);
@@ -1513,6 +1514,23 @@ const freebuff_agent = AgentConfig{
     .session_dir_env = null,
 };
 
+// Command Code parses hook stdout as JSON; a non-JSON body is logged as a
+// warning on every tool call. "{}" is a valid no-opinion response.
+const commandcode_agent = AgentConfig{
+    .name = "CommandCode",
+    .display_name = "Command Code",
+    .usage = "usage: commandcode-hook <session-start|session-end|prompt-submit|pre-tool-use|post-tool-use|stop>\n",
+    .pid_env = "SEANCE_COMMANDCODE_PID",
+    .response = "{}\n",
+    .status_key_prefix = "commandcode",
+    .status_key_mode = .surface,
+    .has_ask_user_handling = false,
+    .has_notification_hook = false,
+    .has_post_tool_hook = true,
+    .clear_status_on_end = true,
+    .session_dir_env = null,
+};
+
 fn cmdClaudeHook(ctx: Ctx) u8 {
     return cmdAgentHook(ctx, claude_agent);
 }
@@ -1555,6 +1573,10 @@ fn cmdCodebuffHook(ctx: Ctx) u8 {
 
 fn cmdFreebuffHook(ctx: Ctx) u8 {
     return cmdAgentHook(ctx, freebuff_agent);
+}
+
+fn cmdCommandcodeHook(ctx: Ctx) u8 {
+    return cmdAgentHook(ctx, commandcode_agent);
 }
 
 fn cmdSubagentUpdate(ctx: Ctx) u8 {
@@ -2505,6 +2527,12 @@ fn toolDescription(alloc: Allocator, tool_name: ?[]const u8, data: JsonValue) []
     if (eql(tn, "websearch")) return tiQueryDesc(alloc, ti_obj, "Searching web");
     if (eql(tn, "question")) return "Question";
     if (eql(tn, "skill")) return "Skill";
+
+    // Command Code canonical tool ids.
+    if (eql(tn, "shell_command")) return tiCommandDesc(alloc, ti_obj);
+    if (eql(tn, "read_file")) return tiFileDesc(alloc, ti_obj, "Reading");
+    if (eql(tn, "write_file")) return tiFileDesc(alloc, ti_obj, "Writing");
+    if (eql(tn, "edit_file")) return tiFileDesc(alloc, ti_obj, "Editing");
     return tn;
 }
 
@@ -2531,8 +2559,9 @@ fn tiTaskDesc(obj: ?std.json.ObjectMap, fallback: []const u8) []const u8 {
 
 fn tiFileDesc(alloc: Allocator, obj: ?std.json.ObjectMap, verb: []const u8) []const u8 {
     if (obj) |o| {
-        // Claude sends `file_path`; the OpenCode family sends `filePath`/`path`.
-        for ([_][]const u8{ "file_path", "filePath", "path" }) |key| {
+        // Claude sends `file_path`; the OpenCode family sends `filePath`/`path`;
+        // Command Code sends `absolute_path` for reads and `file_path` for writes.
+        for ([_][]const u8{ "file_path", "filePath", "path", "absolute_path" }) |key| {
             if (o.get(key)) |fp| {
                 if (fp == .string) return std.fmt.allocPrint(alloc, "{s} {s}", .{ verb, std.fs.path.basename(fp.string) }) catch verb;
             }
@@ -3101,6 +3130,11 @@ fn printUsage() void {
         \\
         \\Freebuff Hooks:
         \\
+        \\Command Code Hooks:
+        \\  commandcode-hook <event>  Handle Command Code lifecycle event
+        \\    Events: session-start, session-end, prompt-submit,
+        \\            pre-tool-use, post-tool-use, stop
+        \\
         \\Antigravity CLI Hooks:
         \\  antigravity-hook <state|session-end>  Track Antigravity CLI status
         \\  antigravity-config <settings.json>   Install its status callback
@@ -3525,4 +3559,33 @@ test "isValidSessionDir: accepts pi paths, rejects others" {
     try std.testing.expect(!isValidSessionDir(empty_id));
 
     try std.testing.expect(!isValidSessionDir("/tmp/.cache/seance-pi/12345"));
+}
+
+test "toolDescription: Command Code canonical tool ids" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer _ = arena.deinit();
+    const alloc = arena.allocator();
+
+    const shell = try std.json.parseFromSliceLeaky(JsonValue, alloc, "{\"tool_input\":{\"command\":\"git status\"}}", .{});
+    try std.testing.expectEqualStrings("Running git status", toolDescription(alloc, "shell_command", shell));
+
+    // Command Code reports reads with absolute_path, writes and edits with file_path.
+    const read = try std.json.parseFromSliceLeaky(JsonValue, alloc, "{\"tool_input\":{\"absolute_path\":\"/etc/hosts\"}}", .{});
+    try std.testing.expectEqualStrings("Reading hosts", toolDescription(alloc, "read_file", read));
+
+    const write = try std.json.parseFromSliceLeaky(JsonValue, alloc, "{\"tool_input\":{\"file_path\":\"/tmp/out.txt\"}}", .{});
+    try std.testing.expectEqualStrings("Writing out.txt", toolDescription(alloc, "write_file", write));
+
+    const edit = try std.json.parseFromSliceLeaky(JsonValue, alloc, "{\"tool_input\":{\"file_path\":\"/tmp/out.txt\"}}", .{});
+    try std.testing.expectEqualStrings("Editing out.txt", toolDescription(alloc, "edit_file", edit));
+}
+
+test "commandcode_agent: reports a JSON no-opinion response" {
+    // Command Code parses hook stdout as JSON and warns on anything else.
+    try std.testing.expectEqualStrings("{}\n", commandcode_agent.response);
+    try std.testing.expectEqualStrings("commandcode", commandcode_agent.status_key_prefix);
+    try std.testing.expectEqualStrings("SEANCE_COMMANDCODE_PID", commandcode_agent.pid_env);
+    // Command Code has no Notification event and no ask-user event.
+    try std.testing.expect(!commandcode_agent.has_notification_hook);
+    try std.testing.expect(!commandcode_agent.has_ask_user_handling);
 }

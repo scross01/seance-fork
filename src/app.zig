@@ -762,6 +762,315 @@ pub fn removePoolPlugin() void {
 
 pub const PluginAgent = enum { opencode, kilo, mimocode, vibe, hermes, pool };
 
+// ── Command Code hooks ─────────────────────────────────────────────────────
+
+// Command Code reads hooks from ~/.commandcode/settings.json. Its schema
+// nests handlers under each event: a HookDefinition picks the tools it
+// applies to (via `matcher`) and owns the `hooks` array of handlers.
+//
+// The matcher is a case-insensitive regex tested against the tool's display
+// name (SHELL, READ, WRITE, EDIT) — never against the canonical tool id.
+const commandcode_hook_marker = "seance ctl commandcode-hook";
+
+const CommandCodeEvent = struct {
+    name: []const u8,
+    slug: []const u8,
+    /// Null omits the matcher. Events that carry no tool (SessionStart,
+    /// Stop) must omit it: a matcher there never matches, so the hook would
+    /// silently never fire.
+    matcher: ?[]const u8,
+};
+
+const commandcode_events = [_]CommandCodeEvent{
+    .{ .name = "SessionStart", .slug = "session-start", .matcher = null },
+    .{ .name = "PreToolUse", .slug = "pre-tool-use", .matcher = "SHELL|READ|WRITE|EDIT" },
+    .{ .name = "PostToolUse", .slug = "post-tool-use", .matcher = "SHELL|READ|WRITE|EDIT" },
+    .{ .name = "Stop", .slug = "stop", .matcher = null },
+};
+
+/// Serialize seance's own writes to the settings file. Command Code does not
+/// take this lock, so it only keeps two seance instances — or a settings
+/// toggle racing the startup install — from interleaving.
+fn lockCommandCodeSettings(alloc: std.mem.Allocator, path: []const u8) ?std.Io.File {
+    const lock_path = std.fmt.allocPrint(alloc, "{s}.seance.lock", .{path}) catch return null;
+    defer alloc.free(lock_path);
+    return std.Io.Dir.createFileAbsolute(io.get(), lock_path, .{
+        .truncate = false,
+        .lock = .exclusive,
+        .permissions = .fromMode(0o600),
+    }) catch null;
+}
+
+/// True when the file on disk still holds what we read. `expected` is null
+/// when the file was absent.
+fn commandCodeSettingsUnchanged(alloc: std.mem.Allocator, path: []const u8, expected: ?[]const u8) bool {
+    const current = readCommandCodeSettings(alloc, path);
+    defer if (current) |data| alloc.free(data);
+    if (expected) |text| {
+        const now = current orelse return false;
+        return std.mem.eql(u8, text, now);
+    }
+    return current == null;
+}
+
+/// Merge seance's hooks into ~/.commandcode/settings.json. Every other key the
+/// user has set (model, theme, ...) is preserved: the file is parsed as JSON,
+/// only the "hooks" object is touched, and it is written back atomically.
+///
+/// Re-running is a no-op. An event that already carries a seance handler is
+/// left alone, so toggling the setting off and on cannot duplicate entries.
+pub fn installCommandCodeHooks() void {
+    const home = io.getenv("HOME") orelse return;
+    const alloc = std.heap.page_allocator;
+
+    const dir_path = std.fmt.allocPrint(alloc, "{s}/.commandcode", .{home}) catch return;
+    defer alloc.free(dir_path);
+    const settings_path = std.fmt.allocPrint(alloc, "{s}/settings.json", .{dir_path}) catch return;
+    defer alloc.free(settings_path);
+
+    std.Io.Dir.createDirAbsolute(io.get(), dir_path, .default_dir) catch |err| {
+        if (err != error.PathAlreadyExists) return;
+    };
+
+    const lock = lockCommandCodeSettings(alloc, settings_path) orelse return;
+    defer lock.close(io.get());
+
+    var arena_state = std.heap.ArenaAllocator.init(alloc);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const existing = readCommandCodeSettings(alloc, settings_path);
+    defer if (existing) |data| alloc.free(data);
+    const source = existing orelse "{}";
+
+    var config: std.json.Value = .{ .object = .empty };
+    if (std.json.parseFromSliceLeaky(std.json.Value, arena, source, .{})) |value| {
+        if (value == .object) config = value;
+    } else |_| {
+        // Unparseable. The original is backed up before we replace it below.
+        config = .{ .object = .empty };
+    }
+
+    var hooks: std.json.Value = .{ .object = .empty };
+    if (config.object.get("hooks")) |value| {
+        // A malformed "hooks" value is replaced below; every other key the
+        // user set is kept.
+        if (value == .object) hooks = value;
+    }
+
+    for (commandcode_events) |event| {
+        var definitions: std.json.Array = std.json.Array.init(arena);
+        if (hooks.object.get(event.name)) |value| {
+            // An event we cannot parse is left exactly as the user wrote it.
+            if (value != .array) continue;
+            definitions = value.array;
+        }
+        if (commandCodeEventHasSeanceHandler(definitions)) continue;
+        const definition = buildCommandCodeHookDefinition(arena, event) catch continue;
+        definitions.append(definition) catch continue;
+        hooks.object.put(arena, event.name, .{ .array = definitions }) catch continue;
+    }
+
+    config.object.put(arena, "hooks", hooks) catch return;
+    const output = std.json.Stringify.valueAlloc(arena, config, .{ .whitespace = .indent_2 }) catch return;
+    // The file already says what we would write — leave it alone.
+    if (std.mem.eql(u8, source, output)) return;
+    // Keep the pre-seance file, once, before we rewrite it.
+    if (existing != null) backupCommandCodeSettings(settings_path, source);
+    writeCommandCodeSettings(alloc, settings_path, existing, output);
+    std.log.info("commandcode: installed hooks in {s}", .{settings_path});
+}
+
+/// Remove seance's handlers from ~/.commandcode/settings.json. Handlers the
+/// user added are kept, including ones that share a definition with ours.
+pub fn removeCommandCodeHooks() void {
+    const home = io.getenv("HOME") orelse return;
+    const alloc = std.heap.page_allocator;
+
+    const dir_path = std.fmt.allocPrint(alloc, "{s}/.commandcode", .{home}) catch return;
+    defer alloc.free(dir_path);
+    const settings_path = std.fmt.allocPrint(alloc, "{s}/settings.json", .{dir_path}) catch return;
+    defer alloc.free(settings_path);
+
+    const lock = lockCommandCodeSettings(alloc, settings_path) orelse return;
+    defer lock.close(io.get());
+
+    const source = readCommandCodeSettings(alloc, settings_path) orelse return;
+    defer alloc.free(source);
+
+    var arena_state = std.heap.ArenaAllocator.init(alloc);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, source, .{}) catch return;
+    if (parsed != .object) return;
+    var config = parsed;
+
+    const hooks_value = config.object.get("hooks") orelse return;
+    if (hooks_value != .object) return;
+    var hooks = hooks_value;
+
+    for (commandcode_events) |event| {
+        const existing = hooks.object.get(event.name) orelse continue;
+        if (existing != .array) continue;
+        const kept = filterOutSeanceHandlers(arena, existing.array) catch continue;
+        if (kept.items.len == 0) {
+            _ = hooks.object.orderedRemove(event.name);
+        } else {
+            hooks.object.put(arena, event.name, .{ .array = kept }) catch continue;
+        }
+    }
+
+    if (hooks.object.count() == 0) {
+        _ = config.object.orderedRemove("hooks");
+    } else {
+        config.object.put(arena, "hooks", hooks) catch return;
+    }
+
+    if (config.object.count() == 0) {
+        // Nothing of the user's is left. Drop the file — but only if it has
+        // not changed under us in the meantime.
+        if (!commandCodeSettingsUnchanged(alloc, settings_path, source)) return;
+        std.Io.Dir.deleteFileAbsolute(io.get(), settings_path) catch {};
+        std.log.info("commandcode: removed hooks from {s}", .{settings_path});
+        return;
+    }
+
+    const output = std.json.Stringify.valueAlloc(arena, config, .{ .whitespace = .indent_2 }) catch return;
+    // The file already says what we would write — leave it alone.
+    if (std.mem.eql(u8, source, output)) return;
+    writeCommandCodeSettings(alloc, settings_path, source, output);
+    std.log.info("commandcode: removed hooks from {s}", .{settings_path});
+}
+
+fn buildCommandCodeHookDefinition(arena: std.mem.Allocator, event: CommandCodeEvent) !std.json.Value {
+    // The settings file is user-scoped, so these hooks fire for every `cmd`
+    // run on the machine. The guard keeps them inert outside seance, and the
+    // trailing `|| exit 0` keeps a failed lookup from being reported as a
+    // hook error: status tracking must never block a tool call.
+    const command = try std.fmt.allocPrint(
+        arena,
+        "test -n \"$SEANCE_SURFACE_ID\" && seance ctl commandcode-hook {s} || exit 0",
+        .{event.slug},
+    );
+
+    var handler: std.json.ObjectMap = .empty;
+    try handler.put(arena, "type", .{ .string = "command" });
+    try handler.put(arena, "command", .{ .string = command });
+    try handler.put(arena, "timeout", .{ .integer = 10 });
+
+    var handlers: std.json.Array = std.json.Array.init(arena);
+    try handlers.append(.{ .object = handler });
+
+    var definition: std.json.ObjectMap = .empty;
+    if (event.matcher) |matcher| try definition.put(arena, "matcher", .{ .string = matcher });
+    try definition.put(arena, "hooks", .{ .array = handlers });
+
+    return .{ .object = definition };
+}
+
+fn commandCodeHandlerIsSeance(handler: std.json.Value) bool {
+    if (handler != .object) return false;
+    const command = handler.object.get("command") orelse return false;
+    if (command != .string) return false;
+    return std.mem.indexOf(u8, command.string, commandcode_hook_marker) != null;
+}
+
+fn commandCodeEventHasSeanceHandler(definitions: std.json.Array) bool {
+    for (definitions.items) |definition| {
+        if (definition != .object) continue;
+        const handlers = definition.object.get("hooks") orelse continue;
+        if (handlers != .array) continue;
+        for (handlers.array.items) |handler| {
+            if (commandCodeHandlerIsSeance(handler)) return true;
+        }
+    }
+    return false;
+}
+
+/// Drop the handlers seance owns, keeping every other handler. A definition
+/// that also owns user handlers survives with just those.
+fn filterOutSeanceHandlers(arena: std.mem.Allocator, definitions: std.json.Array) !std.json.Array {
+    var kept: std.json.Array = std.json.Array.init(arena);
+    for (definitions.items) |definition| {
+        if (definition != .object) {
+            try kept.append(definition);
+            continue;
+        }
+        const handlers = definition.object.get("hooks");
+        var user_handlers: std.json.Array = std.json.Array.init(arena);
+        var has_seance = false;
+        if (handlers) |value| {
+            if (value != .array) {
+                try user_handlers.append(value);
+            } else {
+                for (value.array.items) |handler| {
+                    if (commandCodeHandlerIsSeance(handler)) {
+                        has_seance = true;
+                        continue;
+                    }
+                    try user_handlers.append(handler);
+                }
+            }
+        }
+        if (!has_seance) {
+            try kept.append(definition);
+            continue;
+        }
+        if (user_handlers.items.len == 0) continue;
+        var updated = definition.object;
+        try updated.put(arena, "hooks", .{ .array = user_handlers });
+        try kept.append(.{ .object = updated });
+    }
+    return kept;
+}
+
+fn readCommandCodeSettings(alloc: std.mem.Allocator, path: []const u8) ?[]u8 {
+    const file = std.Io.Dir.openFileAbsolute(io.get(), path, .{}) catch return null;
+    defer file.close(io.get());
+    return io.readToEndAlloc(file, alloc, 1024 * 1024) catch null;
+}
+
+/// Keep the file we are about to replace next to it. The backup is written
+/// once — a later install never clobbers the first copy.
+fn backupCommandCodeSettings(path: []const u8, source: []const u8) void {
+    const alloc = std.heap.page_allocator;
+    const backup_path = std.fmt.allocPrint(alloc, "{s}.seance-backup", .{path}) catch return;
+    defer alloc.free(backup_path);
+    const file = std.Io.Dir.createFileAbsolute(io.get(), backup_path, .{
+        .exclusive = true,
+        .permissions = .fromMode(0o600),
+    }) catch return;
+    defer file.close(io.get());
+    file.writeStreamingAll(io.get(), source) catch {};
+}
+
+/// Write `content` to `path`, but only if the file still holds `expected`
+/// (null means "was absent"). Command Code writes this file itself — e.g.
+/// `cmd mods add` persists a mod source — so a change that landed while we
+/// prepared the write means the newer content is someone else's. Leaving it
+/// alone beats clobbering it.
+fn writeCommandCodeSettings(alloc: std.mem.Allocator, path: []const u8, expected: ?[]const u8, content: []const u8) void {
+    // Never replace a symlink: that would write through the link. The stat
+    // must not follow it, or the link's target is reported instead.
+    var permissions: std.Io.File.Permissions = .fromMode(0o600);
+    if (std.Io.Dir.cwd().statFile(io.get(), path, .{ .follow_symlinks = false })) |stat| {
+        if (stat.kind == .sym_link) return;
+        permissions = stat.permissions;
+    } else |_| {}
+
+    var output = std.Io.Dir.cwd().createFileAtomic(io.get(), path, .{
+        .replace = true,
+        .permissions = permissions,
+    }) catch return;
+    defer output.deinit(io.get());
+    output.file.writeStreamingAll(io.get(), content) catch return;
+
+    // Re-read before the rename: the file may have changed under us.
+    if (!commandCodeSettingsUnchanged(alloc, path, expected)) return;
+    output.replace(io.get()) catch return;
+}
+
 /// Auto-install Hermes plugin if ~/.hermes exists.
 pub fn installHermesPlugin() void {
     const home = io.getenv("HOME") orelse return;
@@ -1414,6 +1723,7 @@ fn onActivate(app: *c.AdwApplication) callconv(.c) void {
         syncPlugin(.vibe, config_mod.get().vibe_hooks);
         syncPlugin(.hermes, config_mod.get().hermes_hooks);
         syncPlugin(.pool, config_mod.get().pool_hooks);
+        if (config_mod.get().commandcode_hooks) installCommandCodeHooks() else removeCommandCodeHooks();
 
         // Keybinds are fully resolved now (defaults + config overrides), so
         // publish them as GtkApplication accels for menu shortcut display.

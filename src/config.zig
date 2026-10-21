@@ -96,6 +96,9 @@ pub const Config = struct {
     // Freebuff integration
     freebuff_hooks: bool = true,
 
+    // Command Code integration
+    commandcode_hooks: bool = true,
+
     // Notifications
     notification_sound: NotificationSound = .default,
 
@@ -317,6 +320,7 @@ pub fn saveConfig(cfg: *const Config) void {
     writeBool(w, "pool-hooks", cfg.pool_hooks) catch return;
     writeBool(w, "codebuff-hooks", cfg.codebuff_hooks) catch return;
     writeBool(w, "freebuff-hooks", cfg.freebuff_hooks) catch return;
+    writeBool(w, "commandcode-hooks", cfg.commandcode_hooks) catch return;
 
     // [notifications]
     w.print("\n[notifications]\n", .{}) catch return;
@@ -556,6 +560,9 @@ fn applyValue(config: *Config, section: []const u8, key: []const u8, raw_val: []
             return true;
         } else if (eql(key, "freebuff-hooks")) {
             config.freebuff_hooks = parseBool(val) orelse config.freebuff_hooks;
+            return true;
+        } else if (eql(key, "commandcode-hooks")) {
+            config.commandcode_hooks = parseBool(val) orelse config.commandcode_hooks;
             return true;
         }
     } else if (eql(section, "notifications")) {
