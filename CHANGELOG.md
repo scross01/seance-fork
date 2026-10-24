@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.7.0]
+
 ### Added
 - Command Code (`cmd`) agent integration: sidebar status tracking via Command
   Code's hooks harness (`~/.commandcode/settings.json`), plus a
