@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Fixed
+- Agent launch wrappers no longer print the hook response (`OK`) into the pane
+  when the agent exits. The Hermes, Pi, MiMo Code, Kilo Code, and Mistral Vibe
+  wrappers fired their `session-end` hook without suppressing stdout, so every
+  agent exit leaked `OK` into the terminal.
+
 ## [0.7.0]
 
 ### Added

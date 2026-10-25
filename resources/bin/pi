@@ -122,7 +122,7 @@ rc=$?
 # ── Session-end cleanup ─────────────────────────────────────────────────
 # Pi may not fire session_shutdown, so we always run it from the wrapper.
 
-seance ctl pi-hook session-end <<< "{}" 2>/dev/null || true
+seance ctl pi-hook session-end <<< "{}" >/dev/null 2>&1 || true
 rm -rf "$SESSION_DIR"
 
 exit $rc

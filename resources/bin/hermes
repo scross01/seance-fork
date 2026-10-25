@@ -67,7 +67,7 @@ export SEANCE_HERMES_PID=$$
 
 _session_end_cleanup() {
     # Fire-and-forget with a hard timeout to avoid blocking hermes teardown
-    timeout 0.5 "$REAL_SEANCE" ctl hermes-hook session-end 2>/dev/null &
+    timeout 0.5 "$REAL_SEANCE" ctl hermes-hook session-end >/dev/null 2>&1 &
 }
 trap _session_end_cleanup EXIT
 

@@ -53,7 +53,7 @@ rc=$?
 # Kilo plugin may not fire session-end on crash or forced exit, so we
 # always run it from the wrapper.
 
-seance ctl kilo-hook session-end <<EOF 2>/dev/null || true
+seance ctl kilo-hook session-end <<EOF >/dev/null 2>&1 || true
 {"workspace_id":${SEANCE_WORKSPACE_ID:-null},"surface_id":${SEANCE_SURFACE_ID:-null}}
 EOF
 
