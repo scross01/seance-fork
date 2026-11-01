@@ -60,16 +60,18 @@ fi
 
 export SEANCE_HERMES_PID=$$
 
-# ── Session-end cleanup on any exit ───────────────────────────────────────
-# Hermes may not fire session-end on crash, forced exit, or signal, so we
-# guarantee it via a trap. This fires on EXIT (normal exit + signal exits)
-# and covers SIGTERM, SIGINT, SIGHUP, etc.
+# ── Process-exit cleanup on any exit ──────────────────────────────────────
+# Hermes fires on_session_end between turns (mapped to `session-end`), which
+# must not clear sidebar status, so that event cannot signal a real process
+# exit. This trap fires on EXIT (normal exit + signal exits, covering
+# SIGTERM, SIGINT, SIGHUP, etc.) and reports `process-exit`, clearing the
+# surface's status entry once no hermes process remains.
 
-_session_end_cleanup() {
+_process_exit_cleanup() {
     # Fire-and-forget with a hard timeout to avoid blocking hermes teardown
-    timeout 0.5 "$REAL_SEANCE" ctl hermes-hook session-end >/dev/null 2>&1 &
+    timeout 1.0 "$REAL_SEANCE" ctl hermes-hook process-exit >/dev/null 2>&1 &
 }
-trap _session_end_cleanup EXIT
+trap _process_exit_cleanup EXIT
 
 # ── Launch hermes (no exec — wrapper must survive for cleanup) ────────────
 

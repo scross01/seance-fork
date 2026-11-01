@@ -7,6 +7,11 @@
   when the agent exits. The Hermes, Pi, MiMo Code, Kilo Code, and Mistral Vibe
   wrappers fired their `session-end` hook without suppressing stdout, so every
   agent exit leaked `OK` into the terminal.
+- Hermes no longer leaves a stale "Idle" row in the workspace status panel after
+  the process exits. Hermes fires `session-end` between turns, so that event
+  cannot clear status without wiping the per-turn Idle state; the launch wrapper
+  now reports a dedicated `process-exit` event that clears the surface's entry
+  once no hermes process remains.
 
 ## [0.7.0]
 

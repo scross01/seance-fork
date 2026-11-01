@@ -6,7 +6,7 @@ Séance integrates with [Hermes Agent](https://hermes-agent.nousresearch.com) th
 
 1. **Plugin auto-installs** on Séance startup to `~/.hermes/plugins/seance/`
 2. **Plugin registers hooks** with Hermes's callback system, forwarding events to Séance
-3. **Wrapper script** intercepts `hermes` launches, tracks PID, and fires `session-end` on exit
+3. **Wrapper script** intercepts `hermes` launches, tracks PID, and fires `process-exit` on exit so the surface's status entry is cleared
 
 ## Hook Event Mapping
 
@@ -19,8 +19,9 @@ Séance integrates with [Hermes Agent](https://hermes-agent.nousresearch.com) th
 | `post_llm_call` | turn finalizer | `llm-complete` | Idle |
 | `pre_approval_request` | approval tools | `approval-request` | Needs input |
 | `post_approval_response` | approval tools | `approval-response` | (no-op) |
-| `on_session_end` | session finalize | `session-end` | (cleared) |
+| `on_session_end` | session finalize | `session-end` | (no change) |
 | `on_session_reset` | slash commands | `interrupt` | Idle |
+| (wrapper exit trap) | process exit | `process-exit` | (cleared) |
 
 ## Features
 
@@ -41,7 +42,10 @@ hermes-hooks = true
 
 - **No session directory** — Hermes doesn't expose session directory information
 - **Interrupt coverage** — a raw Ctrl-C cancel without `/reset` may not reset status, since Hermes doesn't fire a hook for that path
-- **TUI session persistence** — in TUI mode, status persists after Hermes exits because the session outlives individual agent processes
+- **TUI between turns** — in TUI mode `session-end` fires between turns, so
+  `clear_status_on_end` stays off and the status holds at "Idle" (set by
+  `llm-complete`); the wrapper's `process-exit` event clears the entry once the
+  process actually exits.
 
 ---
 
@@ -53,7 +57,7 @@ Hermes uses a **Python plugin** (`~/.hermes/plugins/seance/`) with `plugin.yaml`
 
 **Why Python instead of TypeScript:** Hermes's plugin callbacks fire from the shared core, covering CLI, TUI, gateway, desktop, and dashboard surfaces. An earlier shell-hooks design only worked on the CLI surface because the TUI backend never called `register_from_config`.
 
-A wrapper script (`resources/bin/hermes`) intercepts launches for PID tracking and `session-end` on exit.
+A wrapper script (`resources/bin/hermes`) intercepts launches for PID tracking and fires `process-exit` on exit.
 
 ### Event Mapping
 
@@ -66,10 +70,11 @@ A wrapper script (`resources/bin/hermes`) intercepts launches for PID tracking a
 | `post_llm_call` | `llm-complete` | Idle |
 | `pre_approval_request` | `approval-request` | Needs input |
 | `post_approval_response` | `approval-response` | (no-op) |
-| `on_session_end` | `session-end` | (cleared) |
+| `on_session_end` | `session-end` | (no change) |
 | `on_session_reset` | `interrupt` | Idle |
+| (wrapper exit trap) | `process-exit` | (cleared) |
 
-**Note:** Hermes uses custom hook types (`llm-complete`, `approval-request`, `approval-response`, `interrupt`) rather than the standard set used by other agents.
+**Note:** Hermes uses custom hook types (`llm-complete`, `approval-request`, `approval-response`, `interrupt`, `process-exit`) rather than the standard set used by other agents.
 
 ### Custom Hook Types
 
@@ -81,6 +86,7 @@ Hermes uses four custom hook types not found in other agents:
 | `approval-request` | Permission requested — sets status to Needs input |
 | `approval-response` | Permission granted/denied — no-op |
 | `interrupt` | Session reset via `/reset` or `/new` — sets status to Idle |
+| `process-exit` | Agent process exited (wrapper EXIT trap) — clears the surface's status |
 
 ### Clarify Tool Detection
 
@@ -92,10 +98,11 @@ Hermes has a `clarify` tool that asks the user for clarification. The plugin det
 - `clear_status_on_end` is `false` — unique among all agents.
 - `has_notification_hook` is `true`.
 - **Auto-install target:** `~/.hermes/plugins/seance/` directory with `plugin.yaml` + `__init__.py`.
+- **Process exit:** the `resources/bin/hermes` wrapper fires `process-exit` from its EXIT trap, which clears the surface's status entry.
 
 ### Why `clear_status_on_end = false`
 
-Hermes sessions outlive individual agent processes. The session continues after the agent exits, so clearing status on `session-end` would incorrectly clear status for a session that may restart. Instead, `llm-complete` is used for idle detection — when the LLM finishes a call, the status goes to Idle regardless of session lifecycle.
+Hermes sessions outlive individual agent processes. The session continues after the agent exits, so clearing status on `session-end` would incorrectly clear status for a session that may restart. Instead, `llm-complete` is used for idle detection — when the LLM finishes a call, the status goes to Idle regardless of session lifecycle. Clearing on a real process exit is handled separately by the wrapper's `process-exit` event.
 
 ### Upstream Framework Events
 

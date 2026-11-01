@@ -172,7 +172,7 @@ const opencode_agent = AgentConfig{
 
 #### 3. Status Clearing on Session End
 
-Most agents clear status on `session-end`. Hermes does not — it uses `llm-complete` for idle detection because sessions outlive individual agent processes.
+Most agents clear status on `session-end`. Hermes does not — it fires `session-end` between turns, so it uses `llm-complete` for idle detection instead, and its launch wrapper sends a dedicated `process-exit` event to clear status when the process actually exits.
 
 | Agent | clear_status_on_end |
 |-------|---------------------|

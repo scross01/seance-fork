@@ -1451,7 +1451,7 @@ const vibe_agent = AgentConfig{
 const hermes_agent = AgentConfig{
     .name = "Hermes",
     .display_name = "Hermes Agent",
-    .usage = "usage: hermes-hook <session-start|session-end|prompt-submit|pre-tool-use|post-tool-use|llm-complete|approval-request|approval-response|interrupt>\n",
+    .usage = "usage: hermes-hook <session-start|session-end|process-exit|prompt-submit|pre-tool-use|post-tool-use|llm-complete|approval-request|approval-response|interrupt>\n",
     .pid_env = "SEANCE_HERMES_PID",
     .response = "OK\n",
     .status_key_prefix = "hermes",
@@ -2059,6 +2059,7 @@ fn cmdAgentHook(ctx: Ctx, agent: AgentConfig) u8 {
     if (eql(hook_cmd, "approval-request")) return agentHookApprovalRequest(h);
     if (eql(hook_cmd, "approval-response")) return agentHookApprovalResponse(h);
     if (eql(hook_cmd, "interrupt")) return agentHookInterrupt(h);
+    if (eql(hook_cmd, "process-exit")) return agentHookProcessExit(h);
     if (eql(agent.name, "OpenCode") and eql(hook_cmd, "state")) return agentHookOpenCodeState(h);
 
     wfmt("seance: unknown hook '{s}'\n", .{hook_cmd});
@@ -2149,6 +2150,7 @@ fn agentHookSessionStart(h: HookCtx) u8 {
         if (h.workspace) |w| fields.putInt("workspace_id", w);
         if (h.surface) |s| fields.putInt("surface_id", s);
         fields.putInt("pid", pid);
+        fields.putStr("agent", h.agent.name);
         fields.putFloat("started_at", @floatFromInt(io.timestamp()));
         if (cwd) |c| fields.putStr("cwd", c);
         h.store.upsert(sid, fields);
@@ -2417,16 +2419,95 @@ fn agentHookStop(h: HookCtx) u8 {
     return 0;
 }
 
+fn clearAgentStatus(h: HookCtx) void {
+    if (h.workspace) |ws| {
+        const sk = jsonEscapeAlloc(h.alloc, h.getStatusKey());
+        const cp = std.fmt.allocPrint(h.alloc, "{{\"workspace_id\":{d},\"key\":\"{s}\"}}", .{ ws, sk }) catch null;
+        _ = apiCall(h.alloc, h.socket_path, "workspace.clear_status", cp) catch {};
+    }
+}
+
+/// Fired by the launch wrapper when the agent process exits. Hermes also fires
+/// `session-end` between turns (from its `on_session_end` hook), so that signal
+/// must not clear status — `clear_status_on_end` stays false to keep the
+/// per-turn "Idle" the `llm-complete` hook sets. This explicit process-exit
+/// signal is what removes the surface's status entry once no agent process
+/// remains.
+fn isProcessAlive(pid: u64) bool {
+    std.posix.kill(@intCast(pid), @enumFromInt(0)) catch |err| {
+        return err != error.ProcessNotFound;
+    };
+    return true;
+}
+
+fn agentHookProcessExit(h: HookCtx) u8 {
+    if (!eql(h.agent.name, "Hermes")) {
+        wfmt("seance: unknown hook 'process-exit'\n", .{});
+        return 1;
+    }
+
+    const pid = envInt(h.agent.pid_env) orelse @as(u64, @intCast(std.c.getpid()));
+
+    var should_clear = true;
+
+    if (h.store.readStore()) |data| {
+        const sessions_ptr = data.object.getPtr("sessions");
+        if (sessions_ptr) |sp| {
+            if (sp.* == .object) {
+                var to_remove: std.ArrayList([]const u8) = .empty;
+                var it = sp.object.iterator();
+                while (it.next()) |entry| {
+                    if (entry.value_ptr.* != .object) continue;
+                    const rec = entry.value_ptr.*;
+                    const rec_pid = getJsonInt(rec, "pid") orelse continue;
+                    if (rec_pid == 0) continue;
+
+                    const rec_surface = getJsonInt(rec, "surface_id");
+                    const rec_workspace = getJsonInt(rec, "workspace_id");
+                    const same_surface = if (h.surface) |sf|
+                        (rec_surface != null and rec_surface.? == sf)
+                    else
+                        (rec_surface == null);
+                    const same_workspace = if (h.workspace) |ws|
+                        (rec_workspace != null and rec_workspace.? == ws)
+                    else
+                        (rec_workspace == null);
+
+                    if (rec_pid == pid) {
+                        to_remove.append(h.alloc, entry.key_ptr.*) catch {};
+                    } else if (same_surface and same_workspace) {
+                        const agent_name = getJsonStr(rec, "agent");
+                        const is_hermes = agent_name.len == 0 or eql(agent_name, "Hermes");
+                        if (is_hermes and isProcessAlive(rec_pid)) {
+                            should_clear = false;
+                        }
+                    }
+                }
+
+                for (to_remove.items) |key| {
+                    _ = sp.object.fetchSwapRemove(key);
+                }
+                if (to_remove.items.len > 0) {
+                    h.store.writeStore(data);
+                }
+            }
+        }
+    }
+
+    if (should_clear) {
+        clearAgentStatus(h);
+    }
+
+    wout(h.agent.response);
+    return 0;
+}
+
 fn agentHookSessionEnd(h: HookCtx) u8 {
     if (h.session_id) |sid| {
         _ = h.store.consume(sid);
     }
     if (h.agent.clear_status_on_end) {
-        if (h.workspace) |ws| {
-            const sk = jsonEscapeAlloc(h.alloc, h.getStatusKey());
-            const cp = std.fmt.allocPrint(h.alloc, "{{\"workspace_id\":{d},\"key\":\"{s}\"}}", .{ ws, sk }) catch null;
-            _ = apiCall(h.alloc, h.socket_path, "workspace.clear_status", cp) catch {};
-        }
+        clearAgentStatus(h);
     }
 
     if (h.agent.session_dir_env) |env_name| {
