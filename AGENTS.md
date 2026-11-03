@@ -124,4 +124,4 @@ Key source files:
 - System fontconfig must be linked once per process (ELF interposition crash). See `build.zig` system_library_options.
 - C imports go through the `translate-c` build module (`src/c.h`), not `@cImport` — Zig 0.16's bundled `@cImport` cannot translate current GTK headers.
 - `LOCAL.md` is gitignored — local dev notes only.
-- `plans/` is gitignored — implementation plans from `/improve` skill.
+- `plans/` is local-only and intentionally NOT gitignored (AI tools skip gitignored paths, so it would be hidden from review). Never stage or commit it — implementation plans from the `/improve` skill live here.
