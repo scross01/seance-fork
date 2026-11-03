@@ -98,10 +98,12 @@ chmod +x seance-*-x86_64.AppImage
 
 Requires `libfuse2` on the host. Uses the host's `libGL`/`libEGL`, so Mesa or proprietary GPU drivers must be installed.
 
-To use `seance ctl` from your shell, move the AppImage onto your `PATH`:
+The AppImage bundles a transparent PNG icon that appimaged will use for thumbnails and desktop entries regardless of where you place the file. When updating, move the fully-written new AppImage into the watched folder as a replacement — never overwrite it while the file is still being written, because appimaged may cache stale or partial icons.
+
+To use `seance ctl` from your shell, symlink the AppImage onto your `PATH`:
 
 ```bash
-mv seance-*-x86_64.AppImage ~/.local/bin/seance
+ln -sf /path/to/seance-*-x86_64.AppImage ~/.local/bin/seance
 ```
 
 ### Building from source

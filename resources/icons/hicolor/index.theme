@@ -2,10 +2,15 @@
 Name=Hicolor
 Comment=Bundled icons
 Inherits=Adwaita
-Directories=16x16/apps,24x24/apps,48x48/apps,128x128/apps,256x256/apps,scalable/apps,scalable/actions
+Directories=16x16/apps,22x22/apps,24x24/apps,32x32/apps,36x36/apps,48x48/apps,64x64/apps,72x72/apps,96x96/apps,128x128/apps,192x192/apps,256x256/apps,512x512/apps,scalable/actions
 
 [16x16/apps]
 Size=16
+Context=Apps
+Type=Fixed
+
+[22x22/apps]
+Size=22
 Context=Apps
 Type=Fixed
 
@@ -14,8 +19,33 @@ Size=24
 Context=Apps
 Type=Fixed
 
+[32x32/apps]
+Size=32
+Context=Apps
+Type=Fixed
+
+[36x36/apps]
+Size=36
+Context=Apps
+Type=Fixed
+
 [48x48/apps]
 Size=48
+Context=Apps
+Type=Fixed
+
+[64x64/apps]
+Size=64
+Context=Apps
+Type=Fixed
+
+[72x72/apps]
+Size=72
+Context=Apps
+Type=Fixed
+
+[96x96/apps]
+Size=96
 Context=Apps
 Type=Fixed
 
@@ -24,17 +54,20 @@ Size=128
 Context=Apps
 Type=Fixed
 
+[192x192/apps]
+Size=192
+Context=Apps
+Type=Fixed
+
 [256x256/apps]
 Size=256
 Context=Apps
 Type=Fixed
 
-[scalable/apps]
-Size=128
+[512x512/apps]
+Size=512
 Context=Apps
-Type=Scalable
-MinSize=128
-MaxSize=256
+Type=Fixed
 
 [scalable/actions]
 Size=16

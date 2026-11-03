@@ -88,7 +88,8 @@ jobs:
             appstream \
             file \
             zsync \
-            squashfs-tools
+            squashfs-tools \
+            python3-pil
 
       - name: Log GTK / libadwaita versions
         run: |
@@ -101,7 +102,8 @@ jobs:
       - name: Stage AppImage top-level files
         run: |
           cp resources/com.seance-fork.app.desktop AppDir/com.seance-fork.app.desktop
-          cp resources/icons/hicolor/256x256/apps/com.seance-fork.app.png AppDir/com.seance-fork.app.png
+          # Stage icon: install transparent PNG into hicolor and create symlinks
+          ./scripts/appimage-icon.sh stage AppDir
 
       - name: Download linuxdeploy and GTK plugin
         run: |
@@ -123,6 +125,15 @@ jobs:
             --plugin gtk \
             --desktop-file AppDir/com.seance-fork.app.desktop \
             --icon-file AppDir/com.seance-fork.app.png
+
+      - name: Finalize icon packaging
+        run: |
+          # Finalize icon: ensure root links are correct and remove any stale SVG
+          ./scripts/appimage-icon.sh finalize AppDir
+
+      - name: Verify icon packaging
+        run: |
+          python3 scripts/verify-appimage-icon.py AppDir resources/icons/hicolor/256x256/apps/com.seance-fork.app.png
 
       - name: Verify glibc floor
         run: |
@@ -158,6 +169,10 @@ jobs:
       - name: Extract AppImage for verification
         run: |
           ./seance-fork-${VERSION}-x86_64.AppImage --appimage-extract >/dev/null
+
+      - name: Verify AppImage icon in extracted image
+        run: |
+          python3 scripts/verify-appimage-icon.py squashfs-root resources/icons/hicolor/256x256/apps/com.seance-fork.app.png
 
       - name: Verify no host-coupled libraries
         run: |
