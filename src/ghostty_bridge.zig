@@ -562,61 +562,28 @@ fn handleAction(target: c.ghostty_target_s, action: c.ghostty_action_s) bool {
             const url_data = action.action.open_url;
             if (url_data.url) |url_ptr| {
                 if (url_data.len > 0 and url_data.len < 4096) {
-                    var buf: [4096]u8 = undefined;
-                    @memcpy(buf[0..url_data.len], url_ptr[0..url_data.len]);
-                    buf[url_data.len] = 0;
-                    const url_slice = buf[0..url_data.len];
+                    // ghostty dispatches this action from its mouse handler
+                    // while the surface's renderer lock is held. Opening a URL
+                    // can block for a long time (D-Bus app activation, browser
+                    // cold start), which would freeze the main loop, so defer
+                    // all of it to the GLib idle queue.
+                    const dup = c.g_malloc(url_data.len + 1) orelse return true;
+                    const dup_bytes: [*c]u8 = @ptrCast(dup);
+                    @memcpy(dup_bytes[0..url_data.len], url_ptr[0..url_data.len]);
+                    dup_bytes[url_data.len] = 0;
 
-                    // Check if we should open in the browser panel
-                    const cfg = config_mod.get();
-                    if (cfg.open_url_in_browser) {
-                        const Window = @import("window.zig");
-                        if (paneFromTarget(target)) |pane| {
-                            if (Window.window_manager) |wm| {
-                                if (wm.findByWorkspaceId(pane.workspace_id)) |state| {
-                                    if (state.activeWorkspace()) |ws| {
-                                        // Find the source terminal's column index
-                                        const src_col_idx: ?usize = blk: {
-                                            for (ws.columns.items, 0..) |*col, i| {
-                                                if (col.closing) continue;
-                                                for (col.groups.items) |grp| {
-                                                    for (grp.panels.items) |p| {
-                                                        if (p.asTerminal()) |term| {
-                                                            if (term.id == pane.id) break :blk i;
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                            break :blk null;
-                                        };
-
-                                        if (src_col_idx) |src_idx| {
-                                            // Look for a browser panel to the RIGHT of the source terminal
-                                            if (ws.findBrowserPanelRightOf(src_idx)) |wp| {
-                                                wp.navigate(url_slice);
-                                            } else {
-                                                // No browser to the right — create one next to the source terminal
-                                                _ = ws.addBrowserColumnRightOf(src_idx, url_slice) catch {};
-                                            }
-                                        } else {
-                                            // Fallback: terminal not found, use focused column
-                                            if (ws.findBrowserPanelRightOf(ws.focused_column)) |wp| {
-                                                wp.navigate(url_slice);
-                                            } else {
-                                                _ = ws.addBrowserColumn(url_slice) catch {};
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    } else {
-                        _ = c.g_app_info_launch_default_for_uri(
-                            @as([*c]const u8, @ptrCast(&buf)),
-                            null,
-                            null,
-                        );
-                    }
+                    const air_ctx = c.g_malloc(@sizeOf(OpenUrlCtx)) orelse {
+                        c.g_free(@ptrCast(dup));
+                        return true;
+                    };
+                    const ctx: *OpenUrlCtx = @ptrCast(@alignCast(air_ctx));
+                    const pane = paneFromTarget(target);
+                    ctx.* = .{
+                        .pane_id = if (pane) |p| p.id else null,
+                        .workspace_id = if (pane) |p| p.workspace_id else null,
+                        .uri = @ptrCast(dup),
+                    };
+                    _ = c.g_idle_add_full(c.G_PRIORITY_DEFAULT, openUrlIdleCb, air_ctx, null);
                 }
             }
             return true;
@@ -660,6 +627,107 @@ fn handleAction(target: c.ghostty_target_s, action: c.ghostty_action_s) bool {
             return false;
         },
     }
+}
+
+/// Context for deferred OPEN_URL handling, passed to the GLib idle queue.
+/// Pane identity is captured by id and resolved at idle time because the
+/// pane may have closed between the click and the callback (same pattern as
+/// ClipboardReadCtx below).
+const OpenUrlCtx = struct {
+    pane_id: ?u64,
+    workspace_id: ?u64,
+    uri: [*:0]u8,
+};
+
+/// GLib idle callback performing the deferred URL opening. Runs on the main
+/// loop after ghostty has released the surface's renderer lock, so it may do
+/// GUI work without blocking that lock.
+fn openUrlIdleCb(user_data: c.gpointer) callconv(.c) c.gboolean {
+    const ctx: *OpenUrlCtx = @ptrCast(@alignCast(user_data));
+    defer c.g_free(@ptrCast(ctx));
+
+    // Check if we should open in the browser panel
+    const cfg = config_mod.get();
+    if (cfg.open_url_in_browser) {
+        const url = std.mem.sliceTo(ctx.uri, 0);
+        const Window = @import("window.zig");
+        if (ctx.workspace_id) |workspace_id| {
+            if (ctx.pane_id) |pane_id| {
+                if (Window.window_manager) |wm| {
+                    if (wm.findByWorkspaceId(workspace_id)) |state| {
+                        if (state.activeWorkspace()) |ws| {
+                            // Find the source terminal's column index
+                            const src_col_idx: ?usize = blk: {
+                                for (ws.columns.items, 0..) |*col, i| {
+                                    if (col.closing) continue;
+                                    for (col.groups.items) |grp| {
+                                        for (grp.panels.items) |p| {
+                                            if (p.asTerminal()) |term| {
+                                                if (term.id == pane_id) break :blk i;
+                                            }
+                                        }
+                                    }
+                                }
+                                break :blk null;
+                            };
+
+                            if (src_col_idx) |src_idx| {
+                                // Look for a browser panel to the RIGHT of the source terminal
+                                if (ws.findBrowserPanelRightOf(src_idx)) |wp| {
+                                    wp.navigate(url);
+                                } else {
+                                    // No browser to the right — create one next to the source terminal
+                                    _ = ws.addBrowserColumnRightOf(src_idx, url) catch {};
+                                }
+                            } else {
+                                // Fallback: terminal not found, use focused column
+                                if (ws.findBrowserPanelRightOf(ws.focused_column)) |wp| {
+                                    wp.navigate(url);
+                                } else {
+                                    _ = ws.addBrowserColumn(url) catch {};
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        c.g_free(@ptrCast(ctx.uri));
+    } else {
+        // Launch asynchronously so the main thread never blocks (the launch
+        // may wait on D-Bus activation and the external app's cold start).
+        // The uri is freed by the completion callback instead of here.
+        c.g_app_info_launch_default_for_uri_async(
+            ctx.uri,
+            null,
+            null,
+            launchDefaultForUriDone,
+            @ptrCast(ctx.uri),
+        );
+    }
+    return c.G_SOURCE_REMOVE;
+}
+
+fn launchDefaultForUriDone(
+    source_object: ?*c.GObject,
+    res: ?*c.GAsyncResult,
+    user_data: c.gpointer,
+) callconv(.c) void {
+    _ = source_object;
+    const uri: [*:0]const u8 = @ptrCast(user_data);
+    defer c.g_free(@ptrCast(@constCast(uri)));
+    var err: ?*c.GError = null;
+    const launched = c.g_app_info_launch_default_for_uri_finish(res, &err) != 0;
+    if (!launched) {
+        if (err) |e| {
+            if (e.message) |msg| {
+                std.log.warn("ghostty_bridge: failed to open URL {s}: {s}", .{ std.mem.sliceTo(uri, 0), std.mem.sliceTo(msg, 0) });
+            } else {
+                std.log.warn("ghostty_bridge: failed to open URL {s}", .{std.mem.sliceTo(uri, 0)});
+            }
+        }
+    }
+    if (err) |e| c.g_error_free(e);
 }
 
 /// Context passed through the GDK async clipboard read callback.
