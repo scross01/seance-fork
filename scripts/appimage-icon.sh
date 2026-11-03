@@ -118,7 +118,7 @@ finalize() {
 
   # Reassert root icon symlink
   ROOT_PNG="$APP_DIR/$ROOT_ICON"
-  if [ -e "$ROOT_PNG" ]; then
+  if [ -e "$ROOT_PNG" ] || [ -L "$ROOT_PNG" ]; then
     if [ -d "$ROOT_PNG" ]; then
       echo "Error: unexpected directory at $ROOT_PNG" >&2
       exit 1

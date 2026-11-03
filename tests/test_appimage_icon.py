@@ -225,6 +225,24 @@ class TestAppImageIconHelper(unittest.TestCase):
         self.assertTrue(old_png.exists())
         self.assertTrue(old_png.is_symlink())
 
+    def test_finalize_repairs_dangling_root_symlink(self):
+        """Test that finalize replaces a dangling root icon symlink."""
+        if not SOURCE_PNG.exists():
+            self.skipTest(f"Source PNG not found: {SOURCE_PNG}")
+        
+        run_helper(self.appdir, "stage")
+        
+        # Emulate a tool (e.g. linuxdeploy) leaving a dangling root symlink
+        root_icon = self.appdir / "com.seance-fork.app.png"
+        root_icon.unlink()
+        root_icon.symlink_to("nonexistent-icon.png")
+        
+        returncode, stdout, stderr = run_helper(self.appdir, "finalize")
+        self.assertEqual(returncode, 0, f"Helper failed: {stderr}")
+        self.assertTrue(root_icon.is_symlink(), "Root icon should be a symlink after finalize")
+        expected_target = (self.appdir / "usr/share/icons/hicolor/256x256/apps/com.seance-fork.app.png").resolve()
+        self.assertEqual(root_icon.resolve(), expected_target)
+
 
 class TestAppImageIconVerifier(unittest.TestCase):
     """Test the verify-appimage-icon.py script."""
