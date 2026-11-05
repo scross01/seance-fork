@@ -1,6 +1,10 @@
+// Node >= 22.18 is required by these suites: the global/mimocode cases import
+// the plugins' TypeScript sources directly, and only unflagged type stripping
+// (Node 22.18+, stable since 24.12) makes that import work. Pin this version in
+// CI explicitly instead of relying on the runner's default Node.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, writeFile, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, writeFile, readFile, rm, stat } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -12,6 +16,78 @@ const GLOBAL_SRC = join(HERE, '..', 'plugins', 'seance-opencode', 'index.ts');
 const KILO_SRC = join(HERE, '..', 'plugins', 'seance-kilo', 'index.ts');
 const MIMO_SRC = join(HERE, '..', 'plugins', 'seance-mimocode', 'index.ts');
 
+// Spawns a bridge the way the production plugin does: execFile without a
+// shell, payload on stdin, bounded runtime, killed on timeout.
+function runBridge(binary, args, payload, { timeout = 5000, env = process.env } = {}) {
+  return new Promise((resolve) => {
+    const child = execFile(binary, args, {
+      encoding: 'utf8', maxBuffer: 4096, timeout, killSignal: 'SIGKILL', env,
+    }, (error, stdout, stderr) => resolve({ error, stdout, stderr }));
+    child.stdin.on('error', () => {});
+    child.stdin.end(JSON.stringify(payload));
+  });
+}
+
+// Executing the generated fixture bridge once at setup turns a broken child
+// environment (node missing from PATH for the shebang, noexec /tmp, unwritable
+// capture target) into one diagnosed failure with captured stderr instead of a
+// cascade of ENOENTs when tests later read the events file. SEANCE_TEST_CAPTURE
+// keeps the preflight emission out of the capture every assertion reads.
+async function preflight(t, dir, capture, options = {}) {
+  const binary = join(dir, 'seance');
+  t.after(() => rm(binary, { force: true }));
+  if (!options.missing) {
+    const record = options.malformed
+      ? `appendFileSync(process.env.SEANCE_TEST_CAPTURE || ${JSON.stringify(capture)}, 'not-json\\n');`
+      : `appendFileSync(process.env.SEANCE_TEST_CAPTURE || ${JSON.stringify(capture)}, JSON.stringify({args: process.argv.slice(2), payload: JSON.parse(text), surface: process.env.SEANCE_SURFACE_ID}) + '\\n');`;
+    const source = `#!/usr/bin/env node
+const { appendFileSync } = require('node:fs');
+(async () => {
+let text = '';
+for await (const chunk of process.stdin) text += chunk;
+${record}
+${options.hang ? 'setInterval(() => {}, 1000);' : ''}
+${options.fail ? 'process.exitCode = 1;' : ''}
+})();
+`;
+    await writeFile(binary, source, { mode: 0o755 });
+    // The shebang, trailing newline and exec bit are exactly what the kernel
+    // resolves when production code execs the bridge without a shell.
+    if (!source.startsWith('#!/usr/bin/env node\n'))
+      throw new Error(`fixture bridge shebang is broken: ${JSON.stringify(source.slice(0, 32))}`);
+    if (!source.endsWith('\n')) throw new Error('fixture bridge source lost its trailing newline');
+    if (!((await stat(binary)).mode & 0o100))
+      throw new Error(`fixture bridge is not owner-executable: ${binary}`);
+  }
+  const { error, stderr } = await runBridge(binary, ['ctl', 'opencode-hook', 'state'],
+    { state: 'Fixture preflight' }, { timeout: options.hang ? 600 : 5000,
+      env: { ...process.env, SEANCE_TEST_CAPTURE: `${capture}.preflight` } });
+  const despawn = `fixture bridge ${binary} preflight failed: ` +
+    (error ? `${error.code ?? 'no exit code'}${error.killed ? ` killed (${error.signal})` : ''}; ` : 'child exited cleanly; ') +
+    `stderr: ${stderr.trim() || 'empty'}`;
+  if (error && (error.code === 'ENOENT' || error.code === 'EACCES'))
+    throw new Error(`${despawn} — could not execute the bridge`);
+  if (options.hang ? !error?.killed : error && !options.fail)
+    throw new Error(despawn);
+  if (options.fail && (!error || error.code !== 1))
+    throw new Error(`fail bridge exited ${error?.code ?? 0} instead of the expected 1; stderr: ${stderr.trim() || 'empty'}`);
+  const raw = await readFile(`${capture}.preflight`, 'utf8').catch((readError) => {
+    throw new Error(`fixture bridge preflight record unreadable (${readError.code ?? readError.message}); ${despawn}`);
+  });
+  let emission;
+  try {
+    emission = JSON.parse(raw.trim());
+  } catch {
+    throw new Error(`fixture bridge preflight output is malformed: ${JSON.stringify(raw.trim())}`);
+  }
+  // The child env snapshot is process.env at preflight time, whatever surface
+  // fixture() assigned; missing contexts just compare undefined.
+  if (emission.payload.state !== 'Fixture preflight' || emission.surface !== process.env.SEANCE_SURFACE_ID ||
+      JSON.stringify(emission.args) !== '["ctl","opencode-hook","state"]')
+    throw new Error(`fixture bridge preflight record lost the representative invocation: ${JSON.stringify(emission)}`);
+  return binary;
+}
+
 async function fixture(t, options = {}) {
   const root = await mkdtemp(join(tmpdir(), "seance-plugin-' "));
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -20,47 +96,83 @@ async function fixture(t, options = {}) {
   // it cannot share the quoted directory the payload-escaping tests rely on.
   const binRoot = options.source ? await mkdtemp(join(tmpdir(), 'seance-plugin-')) : root;
   t.after(() => rm(binRoot, { recursive: true, force: true }));
-  const binary = join(binRoot, 'seance');
-  await writeFile(binary, `#!/usr/bin/env node
-const { appendFileSync } = require('node:fs');
-(async () => {
-let text = '';
-for await (const chunk of process.stdin) text += chunk;
-appendFileSync(${JSON.stringify(capture)}, JSON.stringify({args: process.argv.slice(2), payload: JSON.parse(text), surface: process.env.SEANCE_SURFACE_ID}) + '\\n');
-${options.hang ? 'setInterval(() => {}, 1000);' : ''}
-${options.fail ? 'process.exitCode = 1;' : ''}
-})();
-`, { mode: 0o755 });
   const previous = { ...process.env };
-  Object.assign(process.env, { SEANCE_OPENCODE_BIN: binary, SEANCE_SOCKET_PATH: join(root, 'sock'),
-    SEANCE_SURFACE_ID: options.surface ?? '3', SEANCE_WORKSPACE_ID: '1' });
-  delete process.env.SEANCE_OPENCODE_HOOKS_DISABLED;
-  delete process.env.SEANCE_KILO_HOOKS_DISABLED;
-  delete process.env.SEANCE_MIMOCODE_HOOKS_DISABLED;
-  const $ = (strings, ...values) => new Promise((resolve, reject) => {
-    const command = strings.reduce((acc, part, i) =>
-      acc + part + (i < values.length ? String(values[i]) : ''), '');
-    execFile('/bin/sh', ['-c', command], (error) => (error ? reject(error) : resolve()));
-  });
-  const mod = options.source
-    ? await import(pathToFileURL(options.source).href)
-    : { SeancePlugin };
-  const factory = mod.default?.server ?? mod.SeancePlugin;
-  if (typeof factory !== 'function') throw new Error('plugin factory missing');
-  const lookups = [];
-  const hooks = await factory({ directory: "/tmp/a 'project'", $, client: { session: { get: async ({ path }) => {
-    lookups.push(path.id);
-    if (options.lookupFailure) throw Error('unavailable');
-    return { data: { id: path.id, parentID: options.parents?.[path.id] } };
-  } } } });
-  process.env = previous;
-  const events = async () => (await readFile(capture, 'utf8')).trim().split('\n').map(JSON.parse);
-  const emit = (type, properties) => hooks.event({ event: { type, properties } });
-  const status = (id, type) => emit('session.status', { sessionID: id, status: { type } });
-  const notices = async () => (await events()).filter((e) => e.payload.title);
-  const last = async () => (await events()).at(-1).payload;
-  return { hooks, events, emit, status, notices, last, lookups, root, binary };
+  try {
+    Object.assign(process.env, { SEANCE_OPENCODE_BIN: join(binRoot, 'seance'), SEANCE_SOCKET_PATH: join(root, 'sock'),
+      SEANCE_SURFACE_ID: options.surface ?? '3', SEANCE_WORKSPACE_ID: '1' });
+    delete process.env.SEANCE_OPENCODE_HOOKS_DISABLED;
+    delete process.env.SEANCE_KILO_HOOKS_DISABLED;
+    delete process.env.SEANCE_MIMOCODE_HOOKS_DISABLED;
+    await preflight(t, binRoot, capture, options);
+    const $ = (strings, ...values) => new Promise((resolve, reject) => {
+      const command = strings.reduce((acc, part, i) =>
+        acc + part + (i < values.length ? String(values[i]) : ''), '');
+      execFile('/bin/sh', ['-c', command], (error) => (error ? reject(error) : resolve()));
+    });
+    const mod = options.source
+      ? await import(pathToFileURL(options.source).href)
+      : options.bootFailure ? await import(pathToFileURL(options.bootFailure).href)
+      : { SeancePlugin };
+    const factory = mod.default?.server ?? mod.SeancePlugin;
+    if (typeof factory !== 'function') throw new Error('plugin factory missing');
+    const lookups = [];
+    const hooks = await factory({ directory: "/tmp/a 'project'", $, client: { session: { get: async ({ path }) => {
+      lookups.push(path.id);
+      if (options.lookupFailure) throw Error('unavailable');
+      return { data: { id: path.id, parentID: options.parents?.[path.id] } };
+    } } } });
+    const events = async () => (await readFile(capture, 'utf8')).trim().split('\n').map(JSON.parse);
+    const emit = (type, properties) => hooks.event({ event: { type, properties } });
+    const status = (id, type) => emit('session.status', { sessionID: id, status: { type } });
+    const notices = async () => (await events()).filter((e) => e.payload.title);
+    const last = async () => (await events()).at(-1).payload;
+    return { hooks, events, emit, status, notices, last, lookups, root, binary: join(binRoot, 'seance') };
+  } finally {
+    // A failed import or factory must not leak the SEANCE_* knobs into the
+    // next fixture, which would silently flip later hook scaffolding.
+    process.env = previous;
+  }
 }
+
+test('the fixture preflight proves the bridge serves one representative invocation', async (t) => {
+  const previous = { ...process.env };
+  try {
+    Object.assign(process.env, { SEANCE_SURFACE_ID: '6' });
+    const root = await mkdtemp(join(tmpdir(), "seance-preflight-' "));
+    t.after(() => rm(root, { recursive: true, force: true }));
+    const binary = await preflight(t, root, join(root, 'events'), { surface: '6' });
+    assert.ok(binary.endsWith('seance'));
+  } finally { process.env = previous; }
+});
+
+test('a missing fixture executable fails the preflight with a spawn diagnostic', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'seance-preflight-missing-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await assert.rejects(preflight(t, root, join(root, 'events'), { missing: true }),
+    ({ message }) => message.includes('ENOENT') && message.includes(join(root, 'seance')));
+});
+
+test('malformed fixture output fails the preflight with the raw emission', async (t) => {
+  const previous = { ...process.env };
+  try {
+    const root = await mkdtemp(join(tmpdir(), "seance-preflight-bad-' "));
+    t.after(() => rm(root, { recursive: true, force: true }));
+    await assert.rejects(preflight(t, root, join(root, 'events'), { malformed: true, surface: '3' }),
+      ({ message }) => message.includes('not-json') && message.includes('malformed'));
+  } finally { process.env = previous; }
+});
+
+test('failed fixture setup restores the captured environment', async (t) => {
+  const previous = { ...process.env };
+  try {
+    for (const key of ['SEANCE_OPENCODE_BIN', 'SEANCE_SOCKET_PATH', 'SEANCE_SURFACE_ID', 'SEANCE_WORKSPACE_ID'])
+      delete process.env[key];
+    await assert.rejects(fixture(t, { bootFailure: '/this/path/does/not/exist.ts' }), /ENOENT|Cannot find module/);
+    assert.deepEqual(
+      ['SEANCE_OPENCODE_BIN', 'SEANCE_SOCKET_PATH', 'SEANCE_SURFACE_ID', 'SEANCE_WORKSPACE_ID']
+        .filter((key) => key in process.env), []);
+  } finally { process.env = previous; }
+});
 
 test('starts idle, tracks resumed sessions, and emits one completion with literal text', async (t) => {
   const f = await fixture(t);

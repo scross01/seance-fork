@@ -19,6 +19,17 @@ jobs:
         with:
           version: 0.16.0
 
+      - name: Install Node
+        # The plugin suites import the plugins' TypeScript sources directly,
+        # which needs unflagged type stripping (Node >= 22.18; stable in 24.12+).
+        # Pin the major line the suites are exercised on locally (26.13.0) instead
+        # of whatever Node the runner image happens to put on PATH. Any future
+        # bump must rerun both suites in normal isolation mode, not merely under
+        # --test-isolation=none diagnostics.
+        uses: actions/setup-node@v7
+        with:
+          node-version: '26'
+
       - name: Install system dependencies
         run: |
           # Chrome is not a build dependency; its index can block apt updates.
