@@ -14,35 +14,18 @@ pub const AUTOSAVE_INTERVAL_SECS: u32 = 8;
 pub const SESSION_VERSION: u32 = 1;
 
 var load_error: ErrorBuf("Session restore error (details too long)") = .{};
-var write_in_flight: std.atomic.Value(bool) = std.atomic.Value(bool).init(false);
 
-const AsyncWrite = struct {
-    json: []u8,
-    alloc: Allocator,
-    path: [std.fs.max_path_bytes]u8 = undefined,
-    path_len: usize,
-};
+const session_storage = @import("session_storage.zig");
 
-fn writeWorker(aw: *AsyncWrite) void {
-    defer {
-        aw.alloc.free(aw.json);
-        aw.alloc.destroy(aw);
-        write_in_flight.store(false, .release);
-    }
-    const path = aw.path[0..aw.path_len];
-    if (std.fs.path.dirname(path)) |dir| {
-        std.Io.Dir.cwd().createDirPath(io.get(), dir) catch |e| {
-            std.log.warn("session: failed to create session dir: {s}", .{@errorName(e)});
-        };
-    }
-    const file = std.Io.Dir.cwd().createFile(io.get(), path, .{}) catch |e| {
-        std.log.warn("session: failed to create session file: {s}", .{@errorName(e)});
-        return;
-    };
-    defer file.close(io.get());
-    file.writeStreamingAll(io.get(), aw.json) catch |e| {
-        std.log.warn("session: failed to write session file: {s}", .{@errorName(e)});
-    };
+/// Snapshot writer coordination. saveAll is only ever called from the GTK
+/// main thread, so the store's handle field is single-threaded; the
+/// background writer touches only its own atomics and file IO.
+var storage: session_storage.Store = .{ .alloc = std.heap.page_allocator };
+
+/// Wait for any background snapshot write to finish. Shutdown calls this
+/// before the forced process exit so storage coordination is complete.
+pub fn storageDrain() void {
+    storage.joinAll();
 }
 
 pub fn getLoadError() ?[*:0]const u8 {
@@ -68,68 +51,263 @@ pub fn saveAll(wm: anytype, include_scrollback: bool, async_write: bool) void {
     };
 
     const alloc = wm.allocator;
-    var json_buf: std.ArrayList(u8) = .empty;
-    defer json_buf.deinit(alloc);
 
-    writeMultiWindowJson(&json_buf, alloc, wm, include_scrollback) catch |e| {
-        std.log.warn("session: failed to serialize session: {s}", .{@errorName(e)});
+    if (async_write) {
+        // Admission happens before capture: a busy store skips the
+        // expensive history export entirely, and a rejection never alters
+        // the state of the writer that owns the file.
+        storage.admit() catch return;
+        const composed = composeSnapshot(alloc, wm, include_scrollback) catch |e| {
+            std.log.warn("session: failed to compose snapshot: {s}", .{@errorName(e)});
+            storage.release();
+            return;
+        };
+        defer alloc.free(composed);
+        const payload = std.heap.page_allocator.dupe(u8, composed) catch {
+            std.log.warn("session: failed to allocate snapshot payload", .{});
+            storage.release();
+            return;
+        };
+        // spawnAsync takes over admission and payload ownership from here:
+        // the worker releases and frees both when its file work finishes,
+        // and every failure path does the same itself.
+        storage.spawnAsync(path, payload) catch |e| {
+            std.log.warn("session: failed to start session write: {s}", .{@errorName(e)});
+        };
+        return;
+    }
+
+    // Synchronous write used for shutdown / window close: let any
+    // in-flight background commit finish first so this newer snapshot is
+    // the last rename on disk, then replace atomically.
+    storage.joinAll();
+    storage.admit() catch |e| {
+        std.log.warn("session: cannot save — {s}", .{@errorName(e)});
         return;
     };
+    defer storage.release();
+    const composed = composeSnapshot(alloc, wm, include_scrollback) catch |e| {
+        std.log.warn("session: failed to compose snapshot: {s}", .{@errorName(e)});
+        return;
+    };
+    defer alloc.free(composed);
+    storage.replace(path, composed) catch |e| {
+        std.log.warn("session: failed to write session file: {s}", .{@errorName(e)});
+    };
+}
 
-    // Ensure directory exists
-    if (std.fs.path.dirname(path)) |dir| {
-        std.Io.Dir.cwd().createDirPath(io.get(), dir) catch |e| {
-            std.log.warn("session: failed to create session dir: {s}", .{@errorName(e)});
-        };
+/// Per-terminal-pane scrollback data threaded through serialization.
+/// `items` is in exact traversal order (null = no history); `allowance`
+/// caps each entry's JSON-escaped cost. The cursor is consumed as terminal
+/// panels are written, so capture and serialization must walk the same
+/// tree in the same order.
+const HistoryContext = struct {
+    items: []const ?[]u8,
+    allowance: []const usize,
+    cursor: usize = 0,
+};
+
+/// The loader reads snapshots with `.limited(MAX_SNAPSHOT_BYTES + 1)`, so
+/// a file above MAX_SNAPSHOT_BYTES would be written but never restored.
+/// Rejecting here preserves the previous snapshot instead.
+fn enforceSnapshotBudget(len: usize) error{SnapshotTooLarge}!void {
+    if (len > session_storage.MAX_SNAPSHOT_BYTES) return error.SnapshotTooLarge;
+}
+
+/// Exact byte cost of `s` once JSON-escaped — must stay in lockstep with
+/// `writeJsonEscaped` so budget math never under-allocates.
+fn jsonEscapedLen(s: []const u8) usize {
+    var n: usize = 0;
+    for (s) |ch| n += escapeCost(ch);
+    return n;
+}
+
+fn escapeCost(ch: u8) usize {
+    return switch (ch) {
+        '"', '\\', '\n', '\r', '\t' => 2,
+        else => if (ch < 0x20) 6 else 1,
+    };
+}
+
+/// Newest suffix of `text` whose escaped form costs at most `max_escaped`
+/// bytes. The slice always ends at the file end (the newest output); its
+/// start is snapped off partial UTF-8 characters and ANSI sequences, which
+/// only shrinks the cost further.
+fn sliceNewestEscaped(text: []const u8, max_escaped: usize) []const u8 {
+    if (max_escaped == 0) return "";
+    var cost: usize = 0;
+    var i = text.len;
+    while (i > 0) {
+        i -= 1;
+        cost += escapeCost(text[i]);
+        if (cost > max_escaped) {
+            i += 1;
+            break;
+        }
     }
+    return ansiSafeTruncationStart(utf8SafeStart(text[i..]));
+}
 
-    // Synchronous write used for shutdown / immediate saves.
-    if (!async_write) {
-        const file = std.Io.Dir.cwd().createFile(io.get(), path, .{}) catch |e| {
-            std.log.warn("session: failed to create session file: {s}", .{@errorName(e)});
-            return;
-        };
-        file.writeStreamingAll(io.get(), json_buf.items) catch |e| {
-            std.log.warn("session: failed to write session file: {s}", .{@errorName(e)});
-            file.close(io.get());
-            return;
-        };
+/// Deterministically divide `available` bytes across per-history costs:
+/// every allowance is ≤ its cost and the total never exceeds `available`.
+/// When everything fits, full costs pass through unchanged; otherwise each
+/// pane gets an equal share of what remains, left to right. Starved panes
+/// fall back to no history — never to a truncated layout.
+fn distributeHistoryBudget(available: usize, costs: []const usize, out: []usize) void {
+    std.debug.assert(costs.len == out.len);
+    var total: usize = 0;
+    for (costs) |cost| total +|= cost;
+    if (total <= available) {
+        @memcpy(out, costs);
+        return;
+    }
+    var remaining = available;
+    for (costs, 0..) |cost, i| {
+        const share = remaining / (costs.len - i);
+        const take = @min(cost, share);
+        out[i] = take;
+        remaining -= take;
+    }
+}
+
+/// Export and read one pane's scrollback into owned bytes (null when there
+/// is nothing to replay). Runs on the main thread only: the ghostty export
+/// callback fills bridge.captured_clipboard synchronously.
+fn capturePaneScrollback(pane: *Pane, alloc: Allocator) ?[]u8 {
+    const surface = pane.surface orelse return null;
+
+    const bridge = @import("ghostty_bridge.zig");
+
+    // Export scrollback with palette-indexed colors (not resolved to RGB)
+    // so that theme changes after restore update the colors correctly.
+    // Ghostty writes to a temp file and calls writeClipboardCb with the
+    // path. We read the path from the bridge's captured_clipboard
+    // (bypassing GDK, which fails on Wayland).
+    bridge.captured_clipboard_len = 0;
+    const action = "write_screen_file:copy,vt_indexed";
+    const ok = c.ghostty_surface_binding_action(surface, action, action.len);
+
+    if (!ok or bridge.captured_clipboard_len == 0) return null;
+
+    const file_path = bridge.captured_clipboard[0..bridge.captured_clipboard_len];
+    if (file_path.len == 0 or file_path[0] != '/') return null;
+
+    const file = std.Io.Dir.openFileAbsolute(io.get(), file_path, .{}) catch return null;
+    defer {
         file.close(io.get());
+        std.Io.Dir.deleteFileAbsolute(io.get(), file_path) catch {};
     }
 
-    // Asynchronous file write: serialize synchronously (must read live GTK
-    // state) but write off the main loop to avoid stalling it.
-    if (async_write) {
-        if (write_in_flight.cmpxchgStrong(false, true, .acq_rel, .acquire)) |prev| {
-            // Previous value was true — already in flight; skip this autosave.
-            _ = prev; // suppress "unused capture"
-            write_in_flight.store(false, .release);
-        } else {
-            // Previous value was false; we are the writer. Proceed async.
-            if (std.heap.page_allocator.create(AsyncWrite) catch null) |aw| {
-                const maybe_json = std.heap.page_allocator.dupe(u8, json_buf.items) catch null;
-                if (maybe_json) |json_copy| {
-                    const plen = @min(path.len, aw.path.len);
-                    aw.* = .{ .json = json_copy, .alloc = std.heap.page_allocator, .path_len = plen };
-                    @memcpy(aw.path[0..plen], path[0..plen]);
-                    if (std.Thread.spawn(.{}, writeWorker, .{aw})) |thread| {
-                        thread.detach();
-                    } else |_| {
-                        std.heap.page_allocator.free(json_copy);
-                        std.heap.page_allocator.destroy(aw);
-                        write_in_flight.store(false, .release);
+    const window = readScrollbackWindow(file, alloc) catch return null;
+    defer alloc.free(window.buffer);
+    if (window.text.len == 0) return null;
+    return alloc.dupe(u8, window.text) catch return null;
+}
+
+/// Walk the window tree in serialization order and capture every terminal
+/// pane's scrollback exactly once (null entries keep the list aligned with
+/// the serializer's cursor). History is captured before any budgeting so no
+/// path can re-run the ghostty export in a retry loop.
+fn captureHistories(alloc: Allocator, wm: anytype, out: *std.ArrayList(?[]u8)) !void {
+    for (wm.windows.items) |state| {
+        for (state.workspaces.items) |ws| {
+            for (ws.columns.items) |col| {
+                for (col.groups.items) |grp| {
+                    for (grp.panels.items) |panel| {
+                        switch (panel) {
+                            .terminal => |pane| {
+                                const text = capturePaneScrollback(pane, alloc);
+                                out.append(alloc, text) catch |err| {
+                                    if (text) |bytes| alloc.free(bytes);
+                                    return err;
+                                };
+                            },
+                            .webkit => {},
+                        }
                     }
-                    return;
-                } else {
-                    std.heap.page_allocator.destroy(aw);
-                    write_in_flight.store(false, .release);
                 }
             }
         }
     }
 }
 
-fn writeMultiWindowJson(buf: *std.ArrayList(u8), alloc: Allocator, wm: anytype, include_scrollback: bool) !void {
+fn freeHistories(alloc: Allocator, list: *std.ArrayList(?[]u8)) void {
+    for (list.items) |maybe| {
+        if (maybe) |bytes| alloc.free(bytes);
+    }
+    list.deinit(alloc);
+}
+
+/// Capture histories once, measure the layout floor, and compose final
+/// snapshot bytes that fit MAX_SNAPSHOT_BYTES. If the layout alone exceeds
+/// the limit the error propagates without touching the previous snapshot;
+/// if history cannot be afforded, entries become null (layout-only
+/// fallback) — panes are never dropped. Caller owns the result.
+fn composeSnapshot(alloc: Allocator, wm: anytype, include_scrollback: bool) ![]u8 {
+    var histories: std.ArrayList(?[]u8) = .empty;
+    defer freeHistories(alloc, &histories);
+    if (include_scrollback) try captureHistories(alloc, wm, &histories);
+
+    // Pass 1: layout with null scrollbacks — the floor every snapshot
+    // must fit.
+    var layout_buf: std.ArrayList(u8) = .empty;
+    defer layout_buf.deinit(alloc);
+    try writeMultiWindowJson(&layout_buf, alloc, wm, null);
+    try enforceSnapshotBudget(layout_buf.items.len);
+
+    var any_history = false;
+    for (histories.items) |maybe| {
+        if (maybe != null) {
+            any_history = true;
+            break;
+        }
+    }
+    // Nothing captured: the layout pass is already the final snapshot.
+    if (!any_history) return layout_buf.toOwnedSlice(alloc);
+
+    // Budget the remainder by exact escaped cost, deterministically.
+    const costs = try alloc.alloc(usize, histories.items.len);
+    defer alloc.free(costs);
+    for (histories.items, 0..) |maybe, i| {
+        costs[i] = if (maybe) |text| 2 + jsonEscapedLen(text) else 0;
+    }
+    const allowances = try alloc.alloc(usize, histories.items.len);
+    defer alloc.free(allowances);
+    const available = session_storage.MAX_SNAPSHOT_BYTES - layout_buf.items.len;
+    distributeHistoryBudget(available, costs, allowances);
+
+    // Pass 2: compose with allowance-sliced histories.
+    var ctx = HistoryContext{ .items = histories.items, .allowance = allowances };
+    var final_buf: std.ArrayList(u8) = .empty;
+    defer final_buf.deinit(alloc);
+    try writeMultiWindowJson(&final_buf, alloc, wm, &ctx);
+    // The conservative costs above make this unreachable; keep the
+    // invariant explicit so an unreadable snapshot can never be committed.
+    try enforceSnapshotBudget(final_buf.items.len);
+    return final_buf.toOwnedSlice(alloc);
+}
+
+/// Write one terminal pane's consumed history slot: slice it to its
+/// escaped-cost allowance and fall back to `null` when there is nothing
+/// affordable to replay.
+fn writeHistory(w: anytype, ctx: *HistoryContext) !void {
+    const idx = ctx.cursor;
+    ctx.cursor += 1;
+    const maybe = if (idx < ctx.items.len) ctx.items[idx] else null;
+    const text = maybe orelse {
+        try writeKvNull(w, "scrollback", false);
+        return;
+    };
+    const allowance = if (idx < ctx.allowance.len) ctx.allowance[idx] else 0;
+    const slice = sliceNewestEscaped(text, allowance);
+    if (slice.len == 0) {
+        try writeKvNull(w, "scrollback", false);
+        return;
+    }
+    try writeKvStr(w, "scrollback", slice, false);
+}
+
+fn writeMultiWindowJson(buf: *std.ArrayList(u8), alloc: Allocator, wm: anytype, histories: ?*HistoryContext) !void {
     var output: std.Io.Writer.Allocating = .fromArrayList(alloc, buf);
     defer buf.* = output.toArrayList();
     const w = &output.writer;
@@ -140,13 +318,13 @@ fn writeMultiWindowJson(buf: *std.ArrayList(u8), alloc: Allocator, wm: anytype, 
 
     for (wm.windows.items, 0..) |state, i| {
         if (i > 0) try w.writeByte(',');
-        try writeWindowJson(w, state, include_scrollback);
+        try writeWindowJson(w, state, histories);
     }
 
     try w.writeAll("]}");
 }
 
-fn writeWindowJson(w: anytype, state: anytype, include_scrollback: bool) !void {
+fn writeWindowJson(w: anytype, state: anytype, histories: ?*HistoryContext) !void {
     try w.writeAll("{");
     try writeKvBool(w, "sidebar_visible", state.sidebar_visible, true);
     try writeKvInt(w, "active_workspace", @intCast(state.active_workspace), false);
@@ -159,12 +337,12 @@ fn writeWindowJson(w: anytype, state: anytype, include_scrollback: bool) !void {
     try w.writeAll(",\"workspaces\":[");
     for (state.workspaces.items, 0..) |ws, i| {
         if (i > 0) try w.writeByte(',');
-        try writeWorkspace(w, ws, include_scrollback);
+        try writeWorkspace(w, ws, histories);
     }
     try w.writeAll("]}");
 }
 
-fn writeWorkspace(w: anytype, ws: *Workspace, include_scrollback: bool) !void {
+fn writeWorkspace(w: anytype, ws: *Workspace, histories: ?*HistoryContext) !void {
     try w.writeAll("{");
     try writeKvStr(w, "title", ws.getTitle(), true);
     if (ws.title_is_custom) {
@@ -181,11 +359,11 @@ fn writeWorkspace(w: anytype, ws: *Workspace, include_scrollback: bool) !void {
     try writeKvInt(w, "port_ordinal", @intCast(ws.port_ordinal), false);
     try writeKvFloat(w, "camera", ws.camera, false);
     try w.writeAll(",\"layout\":");
-    try writeLayout(w, ws, include_scrollback);
+    try writeLayout(w, ws, histories);
     try w.writeByte('}');
 }
 
-fn writeLayout(w: anytype, ws: *Workspace, include_scrollback: bool) !void {
+fn writeLayout(w: anytype, ws: *Workspace, histories: ?*HistoryContext) !void {
     try w.writeAll("{\"type\":\"columns\"");
     try writeKvInt(w, "focused_column", @intCast(ws.focused_column), false);
     try w.writeAll(",\"columns\":[");
@@ -199,7 +377,7 @@ fn writeLayout(w: anytype, ws: *Workspace, include_scrollback: bool) !void {
         try w.writeAll(",\"groups\":[");
         for (col.groups.items, 0..) |grp, gi| {
             if (gi > 0) try w.writeByte(',');
-            try writeGroup(w, grp, include_scrollback);
+            try writeGroup(w, grp, histories);
         }
         try w.writeAll("]}");
     }
@@ -214,18 +392,18 @@ fn writeKvFloat(w: anytype, key: []const u8, val: f64, first: bool) !void {
     try w.print("{d:.4}", .{val});
 }
 
-fn writeGroup(w: anytype, grp: *PaneGroup, include_scrollback: bool) !void {
+fn writeGroup(w: anytype, grp: *PaneGroup, histories: ?*HistoryContext) !void {
     try w.writeAll("{");
     try writeKvInt(w, "active_panel", @intCast(grp.active_panel), true);
     try w.writeAll(",\"panels\":[");
     for (grp.panels.items, 0..) |panel, i| {
         if (i > 0) try w.writeByte(',');
-        try writePanel(w, panel, include_scrollback);
+        try writePanel(w, panel, histories);
     }
     try w.writeAll("]}");
 }
 
-fn writePanel(w: anytype, panel: Panel, include_scrollback: bool) !void {
+fn writePanel(w: anytype, panel: Panel, histories: ?*HistoryContext) !void {
     switch (panel) {
         .terminal => |pane| {
             try w.writeAll("{\"type\":\"terminal\"");
@@ -240,8 +418,8 @@ fn writePanel(w: anytype, panel: Panel, include_scrollback: bool) !void {
             if (pane.height_weight != 1.0) {
                 try writeKvFloat(w, "height_weight", pane.height_weight, false);
             }
-            if (include_scrollback) {
-                try writeScrollback(w, pane);
+            if (histories) |ctx| {
+                try writeHistory(w, ctx);
             } else {
                 try writeKvNull(w, "scrollback", false);
             }
@@ -256,70 +434,33 @@ fn writePanel(w: anytype, panel: Panel, include_scrollback: bool) !void {
     }
 }
 
-fn writeScrollback(w: anytype, pane: *Pane) !void {
-    const surface = pane.surface orelse {
-        try writeKvNull(w, "scrollback", false);
-        return;
-    };
+/// Owned result of a bounded scrollback read: `buffer` must be freed with
+/// the same allocator; `text` is a view into it.
+const ScrollbackWindow = struct {
+    buffer: []u8,
+    text: []const u8,
+};
 
-    const bridge = @import("ghostty_bridge.zig");
-
-    // Export scrollback with palette-indexed colors (not resolved to RGB)
-    // so that theme changes after restore update the colors correctly.
-    // Ghostty writes to a temp file and calls writeClipboardCb with the
-    // path. We read the path from the bridge's captured_clipboard
-    // (bypasses GDK which fails on Wayland).
-    bridge.captured_clipboard_len = 0;
-    const action = "write_screen_file:copy,vt_indexed";
-    const ok = c.ghostty_surface_binding_action(surface, action, action.len);
-
-    if (!ok or bridge.captured_clipboard_len == 0) {
-        try writeKvNull(w, "scrollback", false);
-        return;
-    }
-
-    const file_path = bridge.captured_clipboard[0..bridge.captured_clipboard_len];
-
-    if (file_path.len == 0 or file_path[0] != '/') {
-        try writeKvNull(w, "scrollback", false);
-        return;
-    }
-
-    // Read the VT-formatted scrollback content from the temp file
-    const file = std.Io.Dir.openFileAbsolute(io.get(), file_path, .{}) catch {
-        try writeKvNull(w, "scrollback", false);
-        return;
-    };
-    defer {
-        file.close(io.get());
-        std.Io.Dir.deleteFileAbsolute(io.get(), file_path) catch {};
-    }
-
+/// Read the newest bounded window of a scrollback export. Only the last
+/// `MAX_SCROLLBACK_CHARS + 64 KiB` bytes are ever read (file size + seek),
+/// so a huge history yields its actual newest output instead of an old
+/// prefix; `truncateScrollback` then applies the line/char caps and snaps
+/// the start off partial UTF-8 characters and ANSI sequences.
+fn readScrollbackWindow(file: std.Io.File, alloc: Allocator) !ScrollbackWindow {
     const max_read = MAX_SCROLLBACK_CHARS + 64 * 1024;
-    const read_buf = std.heap.page_allocator.alloc(u8, max_read) catch {
-        try writeKvNull(w, "scrollback", false);
-        return;
-    };
-    defer std.heap.page_allocator.free(read_buf);
-    const n = io.readAll(file, read_buf) catch {
-        try writeKvNull(w, "scrollback", false);
-        return;
-    };
+    const stat = try file.stat(io.get());
+    const size: usize = @intCast(stat.size);
+    const start = if (size > max_read) size - max_read else 0;
 
-    if (n == 0) {
-        try writeKvNull(w, "scrollback", false);
-        return;
-    }
+    const buffer = try alloc.alloc(u8, max_read);
+    errdefer alloc.free(buffer);
 
-    const full_text = read_buf[0..n];
-    const text = truncateScrollback(full_text);
+    var fr = file.reader(io.get(), &.{});
+    try fr.seekTo(start);
+    const n = try fr.interface.readSliceShort(buffer);
+    if (n == 0) return .{ .buffer = buffer, .text = "" };
 
-    if (text.len == 0) {
-        try writeKvNull(w, "scrollback", false);
-        return;
-    }
-
-    try writeKvStr(w, "scrollback", text, false);
+    return .{ .buffer = buffer, .text = truncateScrollback(buffer[0..n]) };
 }
 
 fn truncateScrollback(text: []const u8) []const u8 {
@@ -339,8 +480,9 @@ fn truncateScrollback(text: []const u8) []const u8 {
             }
         }
     }
-    // Ensure truncation didn't land inside an ANSI escape sequence
-    return ansiSafeTruncationStart(t);
+    // Ensure truncation didn't land inside a multi-byte UTF-8 character
+    // or an ANSI escape sequence
+    return ansiSafeTruncationStart(utf8SafeStart(t));
 }
 
 /// If `text` starts inside an ANSI escape sequence (ESC [ ... final_byte),
@@ -383,6 +525,14 @@ fn ansiSafeTruncationStart(text: []const u8) []const u8 {
     }
 
     return text;
+}
+
+/// Advance past leading UTF-8 continuation bytes so a truncation that
+/// landed inside a multi-byte character starts on a character boundary.
+fn utf8SafeStart(text: []const u8) []const u8 {
+    var i: usize = 0;
+    while (i < text.len and (text[i] & 0xC0) == 0x80) : (i += 1) {}
+    return text[i..];
 }
 
 // ── Scrollback replay file helpers ────────────────────────────────────
@@ -576,7 +726,11 @@ pub fn loadAndRestoreAll(wm: anytype) bool {
     };
 
     const alloc = wm.allocator;
-    const data = std.Io.Dir.cwd().readFileAlloc(io.get(), path, alloc, .limited(10 * 1024 * 1024)) catch |e| {
+    // The writer guarantees snapshots ≤ MAX_SNAPSHOT_BYTES; `.limited`
+    // fails when the size reaches its argument, so read one byte past the
+    // limit to accept exactly-at-limit files while still rejecting larger
+    // ones.
+    const data = std.Io.Dir.cwd().readFileAlloc(io.get(), path, alloc, .limited(session_storage.MAX_SNAPSHOT_BYTES + 1)) catch |e| {
         if (e != error.FileNotFound) {
             std.log.err("session: failed to read session file: {s}", .{@errorName(e)});
             load_error.set("Could not read session file: {s}", .{@errorName(e)});
@@ -1315,4 +1469,259 @@ test "writeJsonEscaped: NUL character" {
     var fbs = std.Io.Writer.fixed(&buf);
     try writeJsonEscaped(&fbs, "\x00");
     try testing.expectEqualStrings("\\u0000", fbs.buffered());
+}
+
+// --- readScrollbackWindow ---
+
+fn writeFixture(tmp: *testing.TmpDir, name: []const u8, bytes: []const u8) !void {
+    const file = try tmp.dir.createFile(io.get(), name, .{});
+    defer file.close(io.get());
+    try file.writeStreamingAll(io.get(), bytes);
+}
+
+fn readWindowFixture(tmp: *testing.TmpDir, name: []const u8, alloc: Allocator) !ScrollbackWindow {
+    const file = try tmp.dir.openFile(io.get(), name, .{});
+    defer file.close(io.get());
+    return readScrollbackWindow(file, alloc);
+}
+
+test "readScrollbackWindow: keeps the newest suffix of a huge history" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const max_read = MAX_SCROLLBACK_CHARS + 64 * 1024;
+
+    // Fixture exceeds the read window; the head marker falls out of range
+    // while the newest tail marker must be retained.
+    var list: std.ArrayList(u8) = .empty;
+    defer list.deinit(testing.allocator);
+    try list.appendSlice(testing.allocator, "OLDEST_HEAD_MARKER\n");
+    const filler_line = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\n";
+    while (list.items.len < max_read + 1000) {
+        try list.appendSlice(testing.allocator, filler_line);
+    }
+    try list.appendSlice(testing.allocator, "NEWEST_TAIL_MARKER\n");
+    try writeFixture(&tmp, "big.txt", list.items);
+
+    const window = try readWindowFixture(&tmp, "big.txt", testing.allocator);
+    defer testing.allocator.free(window.buffer);
+
+    try testing.expect(window.text.len > 0);
+    try testing.expect(window.text.len <= MAX_SCROLLBACK_CHARS);
+    try testing.expect(std.mem.indexOf(u8, window.text, "NEWEST_TAIL_MARKER") != null);
+    try testing.expect(std.mem.indexOf(u8, window.text, "OLDEST_HEAD_MARKER") == null);
+}
+
+test "readScrollbackWindow: snaps a mid-CSI cut onto the next sequence" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const max_read = MAX_SCROLLBACK_CHARS + 64 * 1024;
+    const size = max_read + 500; // exceeds the window so the suffix path seeks
+    // The char cut keeps file index `size - MAX_SCROLLBACK_CHARS`; place
+    // "\x1b[31m" so that index lands on its parameter bytes.
+    const cut_index = size - MAX_SCROLLBACK_CHARS;
+    const csi_and_tail = "\x1b[31mTAIL_AFTER_CSI\n";
+
+    var list: std.ArrayList(u8) = .empty;
+    defer list.deinit(testing.allocator);
+    try list.appendNTimes(testing.allocator, 'A', cut_index - 2);
+    try list.appendSlice(testing.allocator, csi_and_tail);
+    try list.appendNTimes(testing.allocator, 'B', size - (cut_index - 2 + csi_and_tail.len));
+    try writeFixture(&tmp, "csi.txt", list.items);
+
+    const window = try readWindowFixture(&tmp, "csi.txt", testing.allocator);
+    defer testing.allocator.free(window.buffer);
+
+    try testing.expect(std.mem.startsWith(u8, window.text, "TAIL_AFTER_CSI"));
+    try testing.expect(!std.mem.startsWith(u8, window.text, "31m"));
+}
+
+test "readScrollbackWindow: snaps a mid-character cut onto a UTF-8 boundary" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const max_read = MAX_SCROLLBACK_CHARS + 64 * 1024;
+    const size = max_read; // read whole: cut happens inside the file
+    const cut_index = size - MAX_SCROLLBACK_CHARS;
+    // Straddle the cut with a two-byte character: keep its lead byte
+    // before the cut and land the cut on the continuation byte.
+    const marker_and_tail = "\xC3\xA9TAIL_UTF8_BOUNDARY\n";
+
+    var list: std.ArrayList(u8) = .empty;
+    defer list.deinit(testing.allocator);
+    try list.appendNTimes(testing.allocator, 'A', cut_index - 1);
+    try list.appendSlice(testing.allocator, marker_and_tail);
+    try list.appendNTimes(testing.allocator, 'B', size - (cut_index - 1 + marker_and_tail.len));
+    try writeFixture(&tmp, "utf8.txt", list.items);
+
+    const window = try readWindowFixture(&tmp, "utf8.txt", testing.allocator);
+    defer testing.allocator.free(window.buffer);
+
+    try testing.expect(std.mem.startsWith(u8, window.text, "TAIL_UTF8_BOUNDARY"));
+    try testing.expect(std.unicode.utf8ValidateSlice(window.text));
+}
+
+test "readScrollbackWindow: short and empty files are read whole" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try writeFixture(&tmp, "short.txt", "line one\nline two\n");
+    const window = try readWindowFixture(&tmp, "short.txt", testing.allocator);
+    defer testing.allocator.free(window.buffer);
+    try testing.expectEqualStrings("line one\nline two\n", window.text);
+
+    try writeFixture(&tmp, "empty.txt", "");
+    const empty = try readWindowFixture(&tmp, "empty.txt", testing.allocator);
+    defer testing.allocator.free(empty.buffer);
+    try testing.expectEqual(@as(usize, 0), empty.text.len);
+}
+
+// --- snapshot size budget ---
+
+test "jsonEscapedLen: matches the writer's escaped output exactly" {
+    const samples = [_][]const u8{
+        "",
+        "plain text",
+        "quote\" back\\slash",
+        "new\nline\ttab\rret",
+        "\x01\x1f\x7f",
+        "ünïcödé ✓ 日本語",
+    };
+    for (samples) |s| {
+        var buf: [256]u8 = undefined;
+        var fbs = std.Io.Writer.fixed(&buf);
+        try writeJsonEscaped(&fbs, s);
+        try testing.expectEqual(fbs.buffered().len, jsonEscapedLen(s));
+    }
+    // Control-heavy: every byte costs the six-byte \u00XX form.
+    const heavy = try testing.allocator.alloc(u8, 1_000);
+    defer testing.allocator.free(heavy);
+    @memset(heavy, 0x01);
+    var heavy_buf: [6_000]u8 = undefined;
+    var heavy_fbs = std.Io.Writer.fixed(&heavy_buf);
+    try writeJsonEscaped(&heavy_fbs, heavy);
+    try testing.expectEqual(@as(usize, 6_000), heavy_fbs.buffered().len);
+    try testing.expectEqual(heavy_fbs.buffered().len, jsonEscapedLen(heavy));
+}
+
+test "sliceNewestEscaped: exact-at-limit keeps the text, over-limit keeps only the newest suffix" {
+    const text = "line1\nline2\nquote\"done\"";
+    const full = jsonEscapedLen(text);
+    try testing.expectEqualStrings(text, sliceNewestEscaped(text, full));
+
+    const sliced = sliceNewestEscaped(text, full - 1);
+    try testing.expect(sliced.len < text.len);
+    try testing.expect(std.mem.endsWith(u8, text, sliced));
+    try testing.expect(jsonEscapedLen(sliced) <= full - 1);
+}
+
+test "sliceNewestEscaped: a budget cut inside a character snaps to a valid boundary" {
+    const text = "AAAAéTAIL";
+    // Budget 5 lands the backward walk on the continuation byte of "é".
+    const sliced = sliceNewestEscaped(text, 5);
+    try testing.expect(std.mem.startsWith(u8, sliced, "TAIL"));
+    try testing.expect(std.unicode.utf8ValidateSlice(sliced));
+    try testing.expect(jsonEscapedLen(sliced) <= 5);
+}
+
+test "distributeHistoryBudget: passes full costs through when everything fits" {
+    const costs = [_]usize{ 5, 10, 15 };
+    var out: [3]usize = undefined;
+    distributeHistoryBudget(100, &costs, &out);
+    try testing.expectEqualSlices(usize, &costs, &out);
+}
+
+test "distributeHistoryBudget: many over-budget histories stay bounded and deterministic" {
+    var costs: [37]usize = undefined;
+    for (&costs, 0..) |*cost, i| cost.* = 1_000 + i * 17;
+    const available = 20_000; // total is ~48k: forced over budget
+    var out: [37]usize = undefined;
+    distributeHistoryBudget(available, &costs, &out);
+
+    var total: usize = 0;
+    for (out, costs) |allowance, cost| {
+        try testing.expect(allowance <= cost);
+        total += allowance;
+    }
+    try testing.expect(total <= available);
+
+    var again: [37]usize = undefined;
+    distributeHistoryBudget(available, &costs, &again);
+    try testing.expectEqualSlices(usize, &out, &again);
+}
+
+test "enforceSnapshotBudget: rejects anything above the shared limit" {
+    try testing.expectError(error.SnapshotTooLarge, enforceSnapshotBudget(session_storage.MAX_SNAPSHOT_BYTES + 1));
+    try enforceSnapshotBudget(session_storage.MAX_SNAPSHOT_BYTES);
+    try enforceSnapshotBudget(0);
+}
+
+test "budgeted histories: a many-pane snapshot parses, fits and keeps every entry" {
+    const n = 33;
+    const text_len = 500_000;
+    const text = try testing.allocator.alloc(u8, text_len);
+    defer testing.allocator.free(text);
+    @memset(text, 'A');
+
+    // Metadata-heavy layout floor with null histories.
+    var layout: std.ArrayList(u8) = .empty;
+    defer layout.deinit(testing.allocator);
+    try layout.appendSlice(testing.allocator, "{\"version\":1,\"created_at\":0,\"pad\":\"");
+    try layout.appendNTimes(testing.allocator, 'A', 100_000);
+    try layout.appendSlice(testing.allocator, "\",\"windows\":[");
+    for (0..n) |i| {
+        if (i > 0) try layout.appendSlice(testing.allocator, ",");
+        var id_buf: [48]u8 = undefined;
+        const head = try std.fmt.bufPrint(&id_buf, "{{\"id\":{d},\"history\":null}}", .{i});
+        try layout.appendSlice(testing.allocator, head);
+    }
+    try layout.appendSlice(testing.allocator, "]}");
+    try enforceSnapshotBudget(layout.items.len);
+
+    // The full histories (~16.5 MB) exceed the remaining budget, so the
+    // deterministic division must slice every one of them.
+    var costs: [n]usize = undefined;
+    for (&costs) |*cost| cost.* = 2 + jsonEscapedLen(text);
+    var allowances: [n]usize = undefined;
+    const available = session_storage.MAX_SNAPSHOT_BYTES - layout.items.len;
+    distributeHistoryBudget(available, &costs, &allowances);
+
+    var doc: std.ArrayList(u8) = .empty;
+    defer doc.deinit(testing.allocator);
+    try doc.appendSlice(testing.allocator, "{\"version\":1,\"created_at\":0,\"pad\":\"");
+    try doc.appendNTimes(testing.allocator, 'A', 100_000);
+    try doc.appendSlice(testing.allocator, "\",\"windows\":[");
+    for (0..n) |i| {
+        if (i > 0) try doc.appendSlice(testing.allocator, ",");
+        var id_buf: [48]u8 = undefined;
+        const head = try std.fmt.bufPrint(&id_buf, "{{\"id\":{d},\"history\":\"", .{i});
+        try doc.appendSlice(testing.allocator, head);
+        const slice = sliceNewestEscaped(text, allowances[i]);
+        try testing.expect(slice.len > 0);
+        try doc.appendSlice(testing.allocator, slice);
+        try doc.appendSlice(testing.allocator, "\"}");
+    }
+    try doc.appendSlice(testing.allocator, "]}");
+
+    try testing.expect(doc.items.len <= session_storage.MAX_SNAPSHOT_BYTES);
+    try enforceSnapshotBudget(doc.items.len);
+
+    const parsed = try std.json.parseFromSlice(std.json.Value, testing.allocator, doc.items, .{});
+    defer parsed.deinit();
+    const wins = switch (parsed.value) {
+        .object => |o| o.get("windows") orelse return error.TestUnexpectedResult,
+        else => return error.TestUnexpectedResult,
+    };
+    const arr = switch (wins) {
+        .array => |a| a,
+        else => return error.TestUnexpectedResult,
+    };
+    try testing.expectEqual(@as(usize, n), arr.items.len);
+    for (arr.items) |wv| {
+        const obj = switch (wv) {
+            .object => |o| o,
+            else => return error.TestUnexpectedResult,
+        };
+        const hist = obj.get("history") orelse return error.TestUnexpectedResult;
+        try testing.expect(hist == .string);
+        try testing.expect(hist.string.len > 0);
+    }
 }

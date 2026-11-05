@@ -1853,6 +1853,10 @@ fn onShutdown(_: *c.AdwApplication) callconv(.c) void {
         }
     }
 
+    // Finish any background snapshot write before the forced exit below so
+    // storage coordination is complete when the process disappears.
+    session.storageDrain();
+
     // Clean up scrollback replay temp files
     session.cleanupReplayDir();
 
