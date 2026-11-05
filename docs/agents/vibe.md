@@ -4,7 +4,7 @@ Séance integrates with [Mistral Vibe](https://github.com/mistralai/mistral-vibe
 
 ## How It Works
 
-1. **Hooks auto-install** on Séance startup — appends to `~/.vibe/hooks.toml`
+1. **Hooks auto-install** on Séance startup — a marker-delimited managed block is merged into `~/.vibe/hooks.toml`; user hooks elsewhere in the file are never rewritten
 2. **Wrapper script** intercepts `vibe` launches, tracks PID, and fires `session-end` on exit
 3. **Vibe calls hooks** during tool execution and turn completion
 
@@ -50,7 +50,7 @@ vibe-hooks = true
 
 Vibe uses a **config-based approach** instead of a TypeScript plugin:
 
-1. **TOML config hooks** — Séance appends hook definitions to `~/.vibe/hooks.toml`. Uses an **append strategy** (not overwrite), checking for an `"Auto-installed by"` marker to avoid duplicate installs and preserve user-authored hooks.
+1. **TOML config hooks** — Séance installs a marker-delimited managed block into `~/.vibe/hooks.toml`. The file is rewritten atomically: Séance-owned regions (the `# --- seance managed hooks: begin/end ---` pair plus any legacy managed entries matched by exact hook name) are removed in memory, the fresh managed block is appended, and the result replaces the file through an exclusive temp file and rename. User-authored hooks outside the managed region are preserved byte-for-byte.
 2. **Wrapper script** (`resources/bin/vibe`) — intercepts `vibe` launches, sets `VIBE_ENABLE_EXPERIMENTAL_HOOKS=1` (required for hooks to function), exports `SEANCE_VIBE_PID`, and fires `session-end` on exit.
 
 No TypeScript plugin or Python plugin is involved — Vibe's hook system is configured entirely through TOML.
@@ -75,7 +75,7 @@ No TypeScript plugin or Python plugin is involved — Vibe's hook system is conf
 - `clear_status_on_end` is `true`.
 - `has_notification_hook` is `false`.
 - **Config toggle:** `vibe-hooks = true` in `config.toml`.
-- **Append strategy.** The install function appends to `~/.vibe/hooks.toml` and checks for the `"Auto-installed by"` marker to avoid duplicates. User-authored hooks above the marker are preserved.
+- **Managed block strategy.** Install and disable both transform the file through the same ownership editor (`src/vibe_hooks.zig`): owned regions are removed, user content is kept exactly. Fresh edits are committed with an atomic temp-file + rename; the pre-install original is backed up once to `~/.vibe/hooks.toml.seance-original` (never overwritten, never deleted). If any step fails (transform, backup, temp creation, rename), the live file is left untouched and the install retries on the next launch — fail-open for the user's config.
 - **Wrapper special case.** The Vibe wrapper is the only one that sets an additional environment variable (`VIBE_ENABLE_EXPERIMENTAL_HOOKS=1`) beyond the standard PID export.
 
 ### Upstream Framework Events

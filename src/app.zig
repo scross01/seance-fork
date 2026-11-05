@@ -9,12 +9,13 @@ const WindowManager = @import("window_manager.zig").WindowManager;
 const socket_server = @import("socket_server.zig");
 const ghostty_bridge = @import("ghostty_bridge.zig");
 const config_mod = @import("config.zig");
+const vibe_hooks = @import("vibe_hooks.zig");
 const blur_mod = @import("blur.zig");
 const kde_decoration = @import("kde_decoration.zig");
 
 const is_linux = builtin.os.tag == .linux;
 
-const SEANCE_VIBE_VERSION: u32 = 2;
+const SEANCE_VIBE_VERSION: u32 = 3;
 const SEANCE_HERMES_PLUGIN_VERSION: u32 = 1;
 pub const SEANCE_POOL_VERSION: u32 = 1;
 
@@ -387,92 +388,158 @@ pub fn installVibeHooks() void {
     const bundled_content = io.readToEndAlloc(bundled_file, alloc, 64 * 1024) catch return;
     defer alloc.free(bundled_content);
 
-    // Check if hooks.toml already exists
     const hooks_path = std.fmt.allocPrint(alloc, "{s}/.vibe/hooks.toml", .{home}) catch return;
     defer alloc.free(hooks_path);
-
-    // Strip existing seance block first (idempotent upgrade)
-    removeVibeHooks();
-
-    // Write fresh hooks.toml (always create, since remove may have deleted it)
-    const dst = std.Io.Dir.createFileAbsolute(io.get(), hooks_path, .{}) catch return;
-    errdefer std.Io.Dir.deleteFileAbsolute(io.get(), hooks_path) catch {};
-    _ = dst.writeStreamingAll(io.get(), bundled_content) catch return;
-    dst.close(io.get());
-    std.log.info("vibe: installed hooks.toml", .{});
-    writeVersionMarker(config_dir_path, SEANCE_VIBE_VERSION);
+    installVibeHooksPath(hooks_path, config_dir_path, bundled_content) catch |err| {
+        std.log.warn("vibe: hooks install failed, existing configuration untouched: {s}", .{@errorName(err)});
+    };
 }
 
-/// Remove Vibe hooks from ~/.vibe/hooks.toml.
+/// Transactional install for one hooks.toml target. Transforms the original
+/// bytes in memory, backs the original up once, then swaps via an exclusive
+/// same-directory temp file. Any failure leaves the live file and version
+/// marker untouched.
+fn installVibeHooksPath(hooks_path: []const u8, config_dir_path: []const u8, bundled_content: []const u8) !void {
+    const alloc = std.heap.page_allocator;
+    const prev = try readVibeFile(hooks_path);
+
+    const replacement = try vibe_hooks.mergeBundledHooks(alloc, prev.original, bundled_content);
+    defer alloc.free(replacement);
+
+    try writeHooksFile(hooks_path, prev, replacement, .install);
+    // Advance the marker only after the replacement is committed so a failed
+    // write still retries on the next launch.
+    writeVersionMarker(config_dir_path, SEANCE_VIBE_VERSION);
+    std.log.info("vibe: installed hooks.toml", .{});
+}
+
+/// Transactional remove: strips Séance-owned entries through the same
+/// transformation install uses, replacing the file only when ownership could
+/// be proven and at least one owned byte was removed. The original backup is
+/// never touched, so uninstall keeps the only recovery copy. The install
+/// version marker is dropped so a later re-enable performs a full install.
 pub fn removeVibeHooks() void {
     const home = io.getenv("HOME") orelse return;
     const alloc = std.heap.page_allocator;
+    const config_dir_path = std.fmt.allocPrint(alloc, "{s}/.vibe", .{home}) catch return;
+    defer alloc.free(config_dir_path);
     const hooks_path = std.fmt.allocPrint(alloc, "{s}/.vibe/hooks.toml", .{home}) catch return;
     defer alloc.free(hooks_path);
 
-    const file = std.Io.Dir.openFileAbsolute(io.get(), hooks_path, .{}) catch return;
-    defer file.close(io.get());
-    const content = io.readToEndAlloc(file, alloc, 64 * 1024) catch return;
-    defer alloc.free(content);
-
-    // Find the seance section by marker
-    const marker = "# Auto-installed by";
-    const start = std.mem.indexOf(u8, content, marker) orelse return;
-
-    // Find the start of the marker line (go back to beginning of line)
-    var line_start = start;
-    while (line_start > 0 and content[line_start - 1] != '\n') : (line_start -= 1) {}
-
-    // Find where seance content ends: look for next [[hooks]] that isn't a seance hook
-    var end: usize = content.len;
-    {
-        var pos = line_start;
-        while (pos < content.len) {
-            const eol = std.mem.indexOfScalar(u8, content[pos..], '\n') orelse content.len;
-            const line = std.mem.trimEnd(u8, content[pos .. pos + eol], " \t\r");
-            // If we hit a [[hooks]] block (non-seance), stop here
-            if (std.mem.startsWith(u8, line, "[[hooks]]")) {
-                // Check if this line references seance
-                if (std.mem.indexOf(u8, content[pos .. pos + eol], "seance") != null) {
-                    pos += eol + 1;
-                    continue;
-                }
-                end = pos;
-                break;
-            }
-            pos += eol + 1;
-        }
-    }
-
-    const before = content[0..line_start];
-    const after = if (end < content.len) content[end..] else "";
-    const before_trimmed = std.mem.trimEnd(u8, before, " \t\r\n");
-    const after_trimmed = std.mem.trimStart(u8, after, " \t\r\n");
-
-    if (before_trimmed.len == 0 and after_trimmed.len == 0) {
-        std.Io.Dir.deleteFileAbsolute(io.get(), hooks_path) catch {};
-        return;
-    }
-
-    const tmp_path = std.fmt.allocPrint(alloc, "{s}.tmp", .{hooks_path}) catch return;
-    defer alloc.free(tmp_path);
-    // Use exclusive creation to prevent following an existing symlink at the tmp path
-    const dst = std.Io.Dir.createFileAbsolute(io.get(), tmp_path, .{ .exclusive = true }) catch return;
-    errdefer std.Io.Dir.deleteFileAbsolute(io.get(), tmp_path) catch {};
-    if (before_trimmed.len > 0) {
-        _ = dst.writeStreamingAll(io.get(), before_trimmed) catch return;
-        _ = dst.writeStreamingAll(io.get(), "\n") catch return;
-    }
-    if (after_trimmed.len > 0) {
-        _ = dst.writeStreamingAll(io.get(), after_trimmed) catch return;
-    }
-    dst.close(io.get());
-    // Verify destination is not a symlink before renaming
-    if (std.Io.Dir.cwd().statFile(io.get(), hooks_path, .{})) |stat| {
-        if (stat.kind == .sym_link) return;
-    } else |_| {}
-    std.Io.Dir.renameAbsolute(tmp_path, hooks_path, io.get()) catch {};
+    removeVibeHooksPath(config_dir_path, hooks_path) catch |err| {
+        std.log.warn("vibe: hooks remove failed, existing configuration untouched: {s}", .{@errorName(err)});
+    };
 }
+
+fn removeVibeHooksPath(config_dir_path: []const u8, hooks_path: []const u8) !void {
+    const alloc = std.heap.page_allocator;
+    const prev = try readVibeFile(hooks_path);
+    if (!prev.exists or prev.original.len == 0) return; // missing or empty file: nothing to remove
+
+    const stripped = try vibe_hooks.stripOwnedHooks(alloc, prev.original);
+    defer alloc.free(stripped);
+    if (std.mem.eql(u8, stripped, prev.original)) return; // nothing owned present: user config is authoritative
+
+    if (stripped.len == 0) {
+        // Removing the remainder of a file that contained only managed hooks
+        // restores the pre-integration state: gone. The original backup is
+        // never deleted here.
+        std.Io.Dir.deleteFileAbsolute(io.get(), hooks_path) catch {};
+    } else {
+        try writeHooksFile(hooks_path, prev, stripped, .remove);
+    }
+    // Remove our install marker (not the user's original backup) so a later
+    // re-enable runs the full install instead of trusting this stale marker.
+    const marker_path = std.fmt.allocPrint(alloc, "{s}/.seance-version", .{config_dir_path}) catch return;
+    defer alloc.free(marker_path);
+    std.Io.Dir.deleteFileAbsolute(io.get(), marker_path) catch {};
+}
+
+const HooksWriteIntent = enum { install, remove };
+
+const HooksFile = struct {
+    original: []const u8,
+    exists: bool,
+    permissions: std.Io.File.Permissions,
+};
+
+fn readVibeFile(path: []const u8) !HooksFile {
+    const alloc = std.heap.page_allocator;
+    const file = std.Io.Dir.openFileAbsolute(io.get(), path, .{}) catch |err| switch (err) {
+        error.FileNotFound => return .{ .original = "", .exists = false, .permissions = .default_file },
+        else => return err,
+    };
+    defer file.close(io.get());
+    const stat = try file.stat(io.get());
+    const bytes = try io.readToEndAlloc(file, alloc, 1024 * 1024);
+    return .{ .original = bytes, .exists = true, .permissions = stat.permissions };
+}
+
+/// Writes `replacement` over `path` after securing a first-install original
+/// backup. Temp files are exclusive and uniquely named in the target
+/// directory; rename is the only step that touches the live path. The live
+/// path is refused when it is a symlink so replacement cannot write through a
+/// link the user controls.
+fn writeHooksFile(hooks_path: []const u8, prev: HooksFile, replacement: []const u8, intent: HooksWriteIntent) !void {
+    if (prev.exists) {
+        if (std.Io.Dir.cwd().statFile(io.get(), hooks_path, .{ .follow_symlinks = false })) |stat| {
+            if (stat.kind == .sym_link) return error.SymlinkNotAllowed;
+        } else |_| {}
+    }
+
+    if (intent == .install and prev.exists) {
+        try createOriginalBackupOnce(hooks_path, prev);
+    }
+
+    var tmp_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const tmp_path = std.fmt.bufPrint(
+        &tmp_buf,
+        "{s}.seance-{d}-{d}.tmp",
+        .{ hooks_path, io.milliTimestamp(), tmp_counter.fetchAdd(1, .monotonic) },
+    ) catch return error.NameTooLong;
+
+    const tmp_file = std.Io.Dir.createFileAbsolute(io.get(), tmp_path, .{
+        .exclusive = true,
+        .permissions = if (prev.exists) prev.permissions else .default_file,
+    }) catch |err| return err;
+    // Close exactly once via the defer: success renames the still-open file,
+    // failure deletes it; a second close could hit a recycled descriptor.
+    var renamed = false;
+    defer {
+        tmp_file.close(io.get());
+        if (!renamed) std.Io.Dir.deleteFileAbsolute(io.get(), tmp_path) catch {};
+    }
+
+    try tmp_file.writeStreamingAll(io.get(), replacement);
+    // Creation options pass permissions through the process umask; set them
+    // explicitly so preserved modes are exact.
+    try tmp_file.setPermissions(io.get(), prev.permissions);
+
+    try std.Io.Dir.renameAbsolute(tmp_path, hooks_path, io.get());
+    renamed = true;
+}
+
+/// Writes the pre-install copy once, exclusively, so an existing valid backup
+/// produced by an earlier install is never overwritten.
+fn createOriginalBackupOnce(hooks_path: []const u8, prev: HooksFile) !void {
+    if (prev.original.len == 0) return;
+
+    var backup_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const backup_path = std.fmt.bufPrint(&backup_buf, "{s}.seance-original", .{hooks_path}) catch return error.NameTooLong;
+
+    const backup = std.Io.Dir.createFileAbsolute(io.get(), backup_path, .{
+        .exclusive = true,
+        .permissions = prev.permissions,
+    }) catch |err| switch (err) {
+        error.PathAlreadyExists => return, // first backup wins
+        else => return err,
+    };
+    defer backup.close(io.get());
+    try backup.writeStreamingAll(io.get(), prev.original);
+    try backup.setPermissions(io.get(), prev.permissions);
+}
+
+var tmp_counter: std.atomic.Value(u64) = .init(0);
 
 // ── Pool hooks ─────────────────────────────────────────────────────────────
 

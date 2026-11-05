@@ -1,6 +1,9 @@
 # Séance integration hooks for Mistral Vibe
 # Auto-installed by Séance - do not edit manually
-
+# Everything between the begin/end markers below is managed by Séance and is
+# rewritten on install; user hooks in their own [[hooks]] tables elsewhere in
+# this file are preserved.
+# --- seance managed hooks: begin ---
 [[hooks]]
 name = "seance-post-agent"
 type = "post_agent"
@@ -23,3 +26,4 @@ match = "*"
 command = "seance ctl vibe-hook post-tool-use"
 timeout = 5.0
 description = "Séance: Track tool usage completion"
+# --- seance managed hooks: end ---

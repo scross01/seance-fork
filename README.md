@@ -143,7 +143,7 @@ Claude Code, Codex, Pi, OpenCode, Kilo Code, MiMo Code, Mistral Vibe, and Antigr
 - **OpenCode**: On first launch, Séance auto-installs a plugin to `~/.config/opencode/plugins/` if the OpenCode config directory exists. Séance detects the installed OpenCode major version with `opencode --version` and installs the matching plugin for V1 or V2 (V1 on any detection failure).
 - **Kilo Code**: On first launch, Séance auto-installs a plugin to `~/.config/kilo/plugins/` if the Kilo config directory exists.
 - **MiMo Code**: On first launch, Séance auto-installs a plugin to the MiMo Code config directory if it exists.
-- **Mistral Vibe**: Tracked through TOML config hooks appended to `~/.vibe/hooks.toml` by the wrapper on first launch.
+- **Mistral Vibe**: Tracked through TOML config hooks installed into `~/.vibe/hooks.toml` on startup. Existing user hooks are preserved byte-for-byte; the pre-install original is backed up to `~/.vibe/hooks.toml.seance-original` and never overwritten.
 - **Hermes Agent**: Tracked through a Python plugin auto-installed to `~/.hermes/plugins/seance/`.
 - **Antigravity CLI**: Tracked through its status-line callback, added by the wrapper on first launch. See above for details.
 - **Poolside**: Tracked via native Pool hooks (requires Pool CLI v1.0.16+).
