@@ -9,6 +9,7 @@ const WindowManager = @import("window_manager.zig").WindowManager;
 const socket_server = @import("socket_server.zig");
 const ghostty_bridge = @import("ghostty_bridge.zig");
 const config_mod = @import("config.zig");
+const hermes_config_file = @import("hermes_config_file.zig");
 const vibe_hooks = @import("vibe_hooks.zig");
 const blur_mod = @import("blur.zig");
 const kde_decoration = @import("kde_decoration.zig");
@@ -16,7 +17,7 @@ const kde_decoration = @import("kde_decoration.zig");
 const is_linux = builtin.os.tag == .linux;
 
 const SEANCE_VIBE_VERSION: u32 = 3;
-const SEANCE_HERMES_PLUGIN_VERSION: u32 = 1;
+const SEANCE_HERMES_PLUGIN_VERSION: u32 = 2;
 pub const SEANCE_POOL_VERSION: u32 = 1;
 
 const OpenCodeMajor = enum(u8) { v1 = 1, v2 = 2 };
@@ -1327,8 +1328,14 @@ fn ensureHermesPluginEnabled(home: []const u8) bool {
         new_content.appendSlice(alloc, "\n  enabled:\n    - seance\n") catch return false;
         new_content.appendSlice(alloc, content[insert_at..]) catch return false;
 
-        backupHermesConfig(alloc, config_path);
-        writeAtomicConfig(alloc, config_path, new_content.items) catch return false;
+        hermes_config_file.backupOriginal(config_path, alloc) catch |err| {
+            std.log.warn("hermes: config backup failed, config left untouched: {s}", .{@errorName(err)});
+            return false;
+        };
+        hermes_config_file.writeAtomic(config_path, new_content.items, .{}) catch |err| {
+            std.log.warn("hermes: failed to write config: {s}", .{@errorName(err)});
+            return false;
+        };
         return true;
     };
 
@@ -1362,8 +1369,14 @@ fn ensureHermesPluginEnabled(home: []const u8) bool {
         new_content.appendSlice(alloc, content[insert_pos..]) catch return false;
 
         // Backup user config before mutating
-        backupHermesConfig(alloc, config_path);
-        writeAtomicConfig(alloc, config_path, new_content.items) catch return false;
+        hermes_config_file.backupOriginal(config_path, alloc) catch |err| {
+            std.log.warn("hermes: config backup failed, config left untouched: {s}", .{@errorName(err)});
+            return false;
+        };
+        hermes_config_file.writeAtomic(config_path, new_content.items, .{}) catch |err| {
+            std.log.warn("hermes: failed to write config: {s}", .{@errorName(err)});
+            return false;
+        };
     } else {
         // Scalar non-list value (e.g. "enabled: true/null/yes"): bail instead
         // of appending "- seance" to a scalar line, which would corrupt YAML.
@@ -1402,76 +1415,16 @@ fn ensureHermesPluginEnabled(home: []const u8) bool {
         new_content.appendSlice(alloc, content[line_end..]) catch return false;
 
         // Backup user config before mutating
-        backupHermesConfig(alloc, config_path);
-        writeAtomicConfig(alloc, config_path, new_content.items) catch return false;
+        hermes_config_file.backupOriginal(config_path, alloc) catch |err| {
+            std.log.warn("hermes: config backup failed, config left untouched: {s}", .{@errorName(err)});
+            return false;
+        };
+        hermes_config_file.writeAtomic(config_path, new_content.items, .{}) catch |err| {
+            std.log.warn("hermes: failed to write config: {s}", .{@errorName(err)});
+            return false;
+        };
     }
     return true;
-}
-
-/// Create a timestamped backup of the Hermes config before mutating it.
-/// Preserves source permission bits (e.g. 0600 for files containing API keys).
-fn backupHermesConfig(alloc: std.mem.Allocator, config_path: []const u8) void {
-    const bak_path = std.fmt.allocPrint(alloc, "{s}.bak", .{config_path}) catch return;
-    defer alloc.free(bak_path);
-    // Use follow_symlinks = false so a symlink at the backup path is
-    // actually detected.
-    const bak_stat = std.Io.Dir.cwd().statFile(io.get(), bak_path, .{ .follow_symlinks = false }) catch |err| switch (err) {
-        error.FileNotFound => return, // doesn't exist yet, safe to proceed
-        else => |e| {
-            std.log.warn("hermes: failed to stat backup path: {s}", .{@errorName(e)});
-            return;
-        },
-    };
-    if (bak_stat.kind == .sym_link) {
-        std.log.warn("hermes: backup path is a symlink, refusing to write", .{});
-        return;
-    }
-
-    const src_file = std.Io.Dir.openFileAbsolute(io.get(), config_path, .{}) catch |err| {
-        std.log.warn("hermes: failed to open config for backup: {s}", .{@errorName(err)});
-        return;
-    };
-    defer src_file.close(io.get());
-    const content = io.readToEndAlloc(src_file, alloc, 4 * 1024 * 1024) catch return;
-    defer alloc.free(content);
-
-    const orig_stat = std.Io.Dir.cwd().statFile(io.get(), config_path, .{}) catch null;
-    const permissions: std.Io.File.Permissions = if (orig_stat) |st| @enumFromInt(st.permissions.toMode() & 0o777) else @enumFromInt(0o644);
-    const tmp_path = std.fmt.allocPrint(alloc, "{s}.tmp", .{bak_path}) catch return;
-    defer alloc.free(tmp_path);
-    const tmp = std.Io.Dir.createFileAbsolute(io.get(), tmp_path, .{ .permissions = permissions, .exclusive = true }) catch return;
-    errdefer std.Io.Dir.deleteFileAbsolute(io.get(), tmp_path) catch {};
-    _ = tmp.writeStreamingAll(io.get(), content) catch return;
-    tmp.close(io.get());
-
-    std.Io.Dir.renameAbsolute(tmp_path, bak_path, io.get()) catch |err| {
-        std.log.warn("hermes: failed to move backup into place: {s}", .{@errorName(err)});
-        std.Io.Dir.deleteFileAbsolute(io.get(), tmp_path) catch {};
-    };
-
-    const final_stat = std.Io.Dir.cwd().statFile(io.get(), bak_path, .{}) catch return;
-    const bak_file = std.Io.Dir.openFileAbsolute(io.get(), bak_path, .{}) catch return;
-    defer bak_file.close(io.get());
-    bak_file.setPermissions(io.get(), @enumFromInt(final_stat.permissions.toMode() & 0o777)) catch {};
-}
-
-/// Write content to a file atomically using tmp+rename, preserving original permissions.
-fn writeAtomicConfig(alloc: std.mem.Allocator, path: []const u8, data: []const u8) !void {
-    const tmp_path = try std.fmt.allocPrint(alloc, "{s}.tmp", .{path});
-    defer alloc.free(tmp_path);
-    // Stat original to preserve permission bits (e.g. 0600 for secrets)
-    const orig_stat = std.Io.Dir.cwd().statFile(io.get(), path, .{}) catch null;
-    const permissions: std.Io.File.Permissions = if (orig_stat) |st| @enumFromInt(st.permissions.toMode() & 0o777) else .default_file;
-    // Use exclusive creation to prevent following an existing symlink at the tmp path
-    const tmp = std.Io.Dir.createFileAbsolute(io.get(), tmp_path, .{ .permissions = permissions, .exclusive = true }) catch return;
-    errdefer std.Io.Dir.deleteFileAbsolute(io.get(), tmp_path) catch {};
-    _ = tmp.writeStreamingAll(io.get(), data) catch return;
-    tmp.close(io.get());
-    // Verify destination is not a symlink before renaming
-    if (std.Io.Dir.cwd().statFile(io.get(), path, .{})) |stat| {
-        if (stat.kind == .sym_link) return error.IsSymlink;
-    } else |_| {}
-    std.Io.Dir.renameAbsolute(tmp_path, path, io.get()) catch return;
 }
 
 /// Check if "seance" appears as an actual YAML list item in the plugins.enabled section.
@@ -1621,9 +1574,14 @@ pub fn removeHermesPlugin() void {
             new_content.appendSlice(alloc, "]") catch return;
             new_content.appendSlice(alloc, content[abs_offset + bracket_pos + 1 ..]) catch return;
 
-            // Backup config before mutating
-            backupHermesConfig(alloc, config_path);
-            writeAtomicConfig(alloc, config_path, new_content.items) catch return;
+            hermes_config_file.backupOriginal(config_path, alloc) catch |err| {
+                std.log.warn("hermes: config backup failed, disable aborted: {s}", .{@errorName(err)});
+                return;
+            };
+            hermes_config_file.writeAtomic(config_path, new_content.items, .{}) catch |err| {
+                std.log.warn("hermes: failed to write config: {s}", .{@errorName(err)});
+                return;
+            };
         }
     } else {
         // Block list: remove exact "- seance" lines (not prefix match)
@@ -1665,9 +1623,14 @@ pub fn removeHermesPlugin() void {
         }
         new_content.appendSlice(alloc, content[section_end..]) catch return;
 
-        // Backup config before mutating
-        backupHermesConfig(alloc, config_path);
-        writeAtomicConfig(alloc, config_path, new_content.items) catch return;
+        hermes_config_file.backupOriginal(config_path, alloc) catch |err| {
+            std.log.warn("hermes: config backup failed, disable aborted: {s}", .{@errorName(err)});
+            return;
+        };
+        hermes_config_file.writeAtomic(config_path, new_content.items, .{}) catch |err| {
+            std.log.warn("hermes: failed to write config: {s}", .{@errorName(err)});
+            return;
+        };
     }
 
     // Now delete plugin files (after config edit succeeded)

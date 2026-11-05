@@ -1,11 +1,27 @@
+import atexit
+import collections
 import json
 import os
-import signal
 import subprocess
+import threading
+import time
 
+# The host owns process-wide signal policy (SIGCHLD in particular); this
+# plugin never mutates it. Every child spawned below is awaited and reaped
+# individually by a single owned worker, so unrelated host children keep
+# their real exit statuses.
 
-# Tell the kernel to auto-reap finished children so they don't become zombies.
-signal.signal(signal.SIGCHLD, signal.SIG_IGN)
+_MAX_QUEUE = 64
+_MAX_PAYLOAD = 1024 * 1024
+_CHILD_TIMEOUT = 10.0
+_FLUSH_TIMEOUT = 2.0
+
+_items = collections.deque()
+_cond = threading.Condition()
+_delivering = False
+_worker = None
+_worker_lock = threading.Lock()
+_atexit_registered = False
 
 
 def _enabled():
@@ -15,7 +31,7 @@ def _enabled():
 
 
 def _emit(event, payload):
-    # ponytail: fire-and-forget subprocess; batch/async only if profiling shows overhead
+    # fail-open: never break the agent
     if not _enabled():
         return
     payload = dict(payload or {})
@@ -28,25 +44,91 @@ def _emit(event, payload):
             except ValueError:
                 pass
     try:
-        # Use Popen for fire-and-forget to avoid blocking the event thread.
-        # start_new_session=True ensures the child doesn't hold the parent's
-        # terminal or signal group, so slow/unreachable socket stalls at most
-        # one hook call, not the entire agent loop.
-        proc = subprocess.Popen(
-            ["seance", "ctl", "hermes-hook", event],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True,
-        )
-        # Write payload in background; ignore EPIPE if child already exited.
+        data = json.dumps(payload).encode()
+    except Exception:
+        return
+    if len(data) > _MAX_PAYLOAD:
+        return  # oversized payloads are dropped, never written
+    with _cond:
+        if len(_items) >= _MAX_QUEUE:
+            return  # bound kept: drop rather than block the agent thread
+        _items.append((event, data))
+        _cond.notify()
+    _ensure_worker()
+
+
+def _ensure_worker():
+    global _worker, _atexit_registered
+    with _worker_lock:
+        if _worker is None or not _worker.is_alive():
+            _worker = threading.Thread(target=_worker_main,
+                                       name="seance-hermes-hook", daemon=True)
+            _worker.start()
+        if not _atexit_registered:
+            atexit.register(_flush, _FLUSH_TIMEOUT)
+            _atexit_registered = True
+
+
+def _worker_main():
+    # One worker, FIFO: at most one owned child at a time, so queued
+    # lifecycle events are delivered in emission order.
+    global _delivering
+    while True:
+        with _cond:
+            while not _items:
+                _cond.wait()
+            event, data = _items.popleft()
+            _delivering = True
         try:
-            proc.stdin.write(json.dumps(payload).encode())
+            _deliver(event, data)
+        except Exception:
+            pass  # fail-open: emission errors never escape to the agent
+        finally:
+            with _cond:
+                _delivering = False
+                _cond.notify_all()
+
+
+def _deliver(event, data):
+    proc = subprocess.Popen(
+        ["seance", "ctl", "hermes-hook", event],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    try:
+        try:
+            proc.stdin.write(data)
             proc.stdin.close()
         except Exception:
-            pass
+            # Broken pipe: the child exited before reading. Close and move
+            # on; the wait below still reaps it.
+            try:
+                proc.stdin.close()
+            except Exception:
+                pass
+        try:
+            proc.wait(timeout=_CHILD_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            # Slow or unreachable bridge: kill and reap our own child only.
+            proc.kill()
+            try:
+                proc.wait(timeout=_CHILD_TIMEOUT)
+            except Exception:
+                pass
     except Exception:
-        pass  # fail-open: never break the agent
+        try:
+            proc.kill()
+            proc.wait(timeout=1.0)
+        except Exception:
+            pass
+
+
+def _flush(timeout=_FLUSH_TIMEOUT):
+    """Best-effort drain of queued/in-flight deliveries before exit."""
+    with _cond:
+        _cond.wait_for(lambda: not _items and not _delivering, timeout)
 
 
 def register(ctx):
