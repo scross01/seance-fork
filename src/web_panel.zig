@@ -42,6 +42,20 @@ pub const WebPanel = struct {
     ignore_tls_errors: bool = false,
     flash_step: u8 = 0,
     flash_timeout: c.guint = 0,
+    initial_load_id: c.guint = 0,
+    // Ownership tracking: weak pointers record finalization of the root
+    // widget and of the webview (which WebKit may retain past unparent),
+    // so signal disconnection never dereferences a dead emitter.
+    widget_weak: ?*c.GtkWidget = null,
+    webview_weak: ?*c.WebKitWebView = null,
+    // Emitters (widgets, controllers, gestures) whose signals borrow this
+    // panel. Disconnected only while the root widget is still alive; the
+    // handlers of a finalized emitter died with it.
+    borrowed: [16]?*anyopaque = [_]?*anyopaque{null} ** 16,
+    borrowed_count: u8 = 0,
+    // Outstanding TLS error dialog contexts; each response releases its
+    // own context exactly once.
+    tls_head: ?*TlsErrorCtx = null,
 
     pub fn create(alloc: std.mem.Allocator, url: []const u8) !*WebPanel {
         const id = nextId();
@@ -206,6 +220,17 @@ pub const WebPanel = struct {
             .alloc = alloc,
         };
 
+        // Weak pointers: disconnectSignals must be callable after any part
+        // of the widget tree (or the WebKit-held webview) finalized.
+        c.g_object_add_weak_pointer(
+            @as(*c.GObject, @ptrCast(panel.widget)),
+            @ptrCast(&panel.widget_weak),
+        );
+        c.g_object_add_weak_pointer(
+            @as(*c.GObject, @ptrCast(webview)),
+            @ptrCast(&panel.webview_weak),
+        );
+
         // Navigate on Enter in address bar
         _ = c.g_signal_connect_data(
             @as(c.gpointer, @ptrCast(entry)),
@@ -363,7 +388,27 @@ pub const WebPanel = struct {
             panel.syncDisplay();
         }
 
+        // Record every emitter whose handlers borrow this panel so
+        // disconnectSignals can detach them while the tree is alive.
+        panel.rememberBorrowed(entry);
+        panel.rememberBorrowed(entry_focus_ctrl);
+        panel.rememberBorrowed(webview_focus_ctrl);
+        panel.rememberBorrowed(label_click);
+        panel.rememberBorrowed(entry_focus_leave);
+        panel.rememberBorrowed(btn_back);
+        panel.rememberBorrowed(btn_forward);
+        panel.rememberBorrowed(btn_reload);
+        panel.rememberBorrowed(btn_devtools);
+        panel.rememberBorrowed(btn_close);
+        panel.rememberBorrowed(box);
+
         return panel;
+    }
+
+    fn rememberBorrowed(self: *WebPanel, emitter: anytype) void {
+        if (self.borrowed_count >= self.borrowed.len) return;
+        self.borrowed[self.borrowed_count] = @ptrCast(emitter);
+        self.borrowed_count += 1;
     }
 
     pub fn setCloseCallback(self: *WebPanel, cb: CloseFn, data: *anyopaque) void {
@@ -411,11 +456,44 @@ pub const WebPanel = struct {
         c.webkit_web_view_set_background_color(self.webview, &bg_rgba);
     }
 
+    /// Detach every borrowed-self handler and cancel owned sources. Safe
+    /// to call multiple times and safe when widgets already finalized:
+    /// weak pointers record which emitters can still be reached, and
+    /// handlers on a finalized emitter died with it.
     pub fn disconnectSignals(self: *WebPanel) void {
-        _ = self;
+        // Sources are context-level: removable regardless of widget state.
+        cancelIdle(&self.initial_load_id);
+        cancelIdle(&self.flash_timeout);
+
+        // Outstanding TLS dialogs keep their context (the response frees
+        // it exactly once) but lose their panel reference, so a late
+        // response becomes a harmless cancellation.
+        invalidateTlsContexts(self);
+
+        if (self.webview_weak) |wv| {
+            disconnectByData(wv, self);
+            c.g_object_remove_weak_pointer(
+                @as(*c.GObject, @ptrCast(wv)),
+                @ptrCast(&self.webview_weak),
+            );
+            self.webview_weak = null;
+        }
+        if (self.widget_weak) |root| {
+            // Root alive ⇒ the recorded widget/controller subtree is
+            // intact (it is only ever destroyed together with the root).
+            for (self.borrowed[0..self.borrowed_count]) |emitter| {
+                if (emitter) |e| disconnectByData(e, self);
+            }
+            c.g_object_remove_weak_pointer(
+                @as(*c.GObject, @ptrCast(root)),
+                @ptrCast(&self.widget_weak),
+            );
+            self.widget_weak = null;
+        }
     }
 
     pub fn destroy(self: *WebPanel) void {
+        self.disconnectSignals();
         self.alloc.free(self.url);
         if (self.title.len > 0) self.alloc.free(self.title);
         self.alloc.destroy(self);
@@ -594,14 +672,70 @@ fn onMap(widget_: ?*c.GtkWidget, user_data: ?*anyopaque) callconv(.c) void {
     // Defer load_uri to idle so GTK layout sets the webview size first.
     // Idle callbacks run after frame clock ticks (lower priority),
     // so applyLayout will have set proper dimensions before we load.
-    _ = c.g_idle_add(@ptrCast(&onDeferredLoad), @ptrCast(panel));
+    // The ID is tracked so teardown can cancel a pending first load.
+    if (panel.initial_load_id == 0) {
+        panel.initial_load_id = c.g_idle_add(@ptrCast(&onDeferredLoad), @ptrCast(panel));
+    }
 }
 
 fn onDeferredLoad(user_data: ?*anyopaque) callconv(.c) c.gboolean {
     const panel: *WebPanel = @ptrCast(@alignCast(user_data orelse return 0));
+    // Clear the tracked ID before touching any other panel state so a
+    // later cancel never removes an already-dispatched source.
+    panel.initial_load_id = 0;
     if (!isAllowedUrl(panel.url)) return 0;
     panel.loadUrl(panel.url);
     return 0; // remove from idle source
+}
+
+/// Remove a tracked GLib source by ID. Idempotent: callbacks clear their
+/// ID before dispatch, so a source that already ran is never removed a
+/// second time (which would raise a GLib critical).
+fn cancelIdle(id: *c.guint) void {
+    if (id.* == 0) return;
+    _ = c.g_source_remove(id.*);
+    id.* = 0;
+}
+
+/// Disconnect every handler on `emitter` whose user data is `panel`.
+fn disconnectByData(emitter: *anyopaque, panel: *WebPanel) void {
+    _ = c.g_signal_handlers_disconnect_matched(
+        emitter,
+        c.G_SIGNAL_MATCH_DATA,
+        0,
+        0,
+        null,
+        null,
+        @as(c.gpointer, @ptrCast(panel)),
+    );
+}
+
+/// Panel teardown: every outstanding TLS context keeps its allocations
+/// (the dialog response frees them) but loses its panel reference.
+fn invalidateTlsContexts(panel: *WebPanel) void {
+    var it = panel.tls_head;
+    while (it) |ctx| : (it = ctx.next) ctx.panel = null;
+}
+
+/// Remove `ctx` from its panel's outstanding list, if still linked.
+fn unlinkTlsCtx(panel: *WebPanel, ctx: *TlsErrorCtx) void {
+    if (panel.tls_head == ctx) {
+        panel.tls_head = ctx.next;
+        return;
+    }
+    var it = panel.tls_head;
+    while (it) |cur| : (it = cur.next) {
+        if (cur.next == ctx) {
+            cur.next = ctx.next;
+            return;
+        }
+    }
+}
+
+/// Free a TLS context's owned data exactly once (callers use `defer`).
+fn releaseTlsCtx(ctx: *TlsErrorCtx) void {
+    ctx.alloc.free(ctx.failing_uri);
+    ctx.alloc.destroy(ctx);
 }
 
 fn onEntryActivate(entry_: ?*c.GtkEditable, user_data: ?*anyopaque) callconv(.c) void {
@@ -723,10 +857,16 @@ fn onTlsError(
     c.adw_alert_dialog_set_close_response(@as(*c.AdwAlertDialog, @ptrCast(dialog)), "cancel");
 
     const ctx = panel.alloc.create(TlsErrorCtx) catch return 0;
-    ctx.* = .{ .panel = panel, .failing_uri = panel.alloc.dupe(u8, uri_str) catch {
-        panel.alloc.destroy(ctx);
-        return 0;
-    } };
+    ctx.* = .{
+        .panel = panel,
+        .alloc = panel.alloc,
+        .failing_uri = panel.alloc.dupe(u8, uri_str) catch {
+            panel.alloc.destroy(ctx);
+            return 0;
+        },
+        .next = panel.tls_head,
+    };
+    panel.tls_head = ctx;
 
     _ = c.g_signal_connect_data(@as(c.gpointer, @ptrCast(dialog)), "response", @as(c.GCallback, @ptrCast(&onTlsErrorResponse)), @ptrCast(ctx), null, 0);
     c.adw_dialog_present(@as(*c.AdwDialog, @ptrCast(dialog)), panel.widget);
@@ -735,25 +875,30 @@ fn onTlsError(
 }
 
 const TlsErrorCtx = struct {
-    panel: *WebPanel,
+    /// Null once the owning panel was invalidated; the response then only
+    /// releases this context. The context owns its allocations so the
+    /// release never depends on the panel.
+    panel: ?*WebPanel,
     failing_uri: []u8,
+    alloc: std.mem.Allocator,
+    next: ?*TlsErrorCtx = null,
 };
 
 fn onTlsErrorResponse(_: *c.AdwAlertDialog, response: [*:0]const u8, data: c.gpointer) callconv(.c) void {
     const ctx: *TlsErrorCtx = @ptrCast(@alignCast(data));
-    defer {
-        ctx.panel.alloc.free(ctx.failing_uri);
-        ctx.panel.alloc.destroy(ctx);
-    }
+    defer releaseTlsCtx(ctx);
+
+    const panel = ctx.panel orelse return; // panel gone: harmless cancellation
+    unlinkTlsCtx(panel, ctx);
 
     if (!std.mem.eql(u8, std.mem.sliceTo(response, 0), "proceed")) return;
 
     // Temporarily ignore TLS errors so the reload succeeds.
-    ctx.panel.setTlsPolicy(c.WEBKIT_TLS_ERRORS_POLICY_IGNORE);
+    panel.setTlsPolicy(c.WEBKIT_TLS_ERRORS_POLICY_IGNORE);
 
-    ctx.panel.ignore_tls_errors = true;
+    panel.ignore_tls_errors = true;
 
-    ctx.panel.loadUrl(ctx.failing_uri);
+    panel.loadUrl(ctx.failing_uri);
 }
 
 fn formatTlsErrorFlags(errors: c_uint) []const u8 {
@@ -1013,4 +1158,133 @@ test "buildUrlMarkup: domain with query string" {
     var buf: [2048:0]u8 = .{0} ** 2048;
     const result = buildUrlMarkup("https://example.com/search?q=test", &buf);
     try std.testing.expectEqualStrings("<span alpha=\"50%\">https://</span>example.com<span alpha=\"50%\">/search?q=test</span>", result);
+}
+
+test "web sources: tracked idle cancel is idempotent and never double-removes" {
+    const State = struct {
+        var id: c.guint = 0;
+        var ran: usize = 0;
+        fn cb(data: c.gpointer) callconv(.c) c.gboolean {
+            _ = data;
+            ran += 1;
+            return c.G_SOURCE_REMOVE;
+        }
+    };
+    State.id = 0;
+    State.ran = 0;
+
+    // Cancel with nothing pending is a no-op (a g_source_remove(0) would
+    // raise a GLib critical under fatal-criticals).
+    cancelIdle(&State.id);
+
+    // Queue, cancel, drain: the callback must not run.
+    State.id = c.g_idle_add(State.cb, null);
+    try std.testing.expect(State.id != 0);
+    cancelIdle(&State.id);
+    try std.testing.expectEqual(@as(c.guint, 0), State.id);
+    while (c.g_main_context_iteration(null, 0) != 0) {}
+    try std.testing.expectEqual(@as(usize, 0), State.ran);
+
+    // Repeated cancel after a dispatch-clear is a no-op.
+    cancelIdle(&State.id);
+    cancelIdle(&State.id);
+    while (c.g_main_context_iteration(null, 0) != 0) {}
+    try std.testing.expectEqual(@as(usize, 0), State.ran);
+}
+
+test "web panel: create and destroy release their allocations" {
+    if (c.gtk_init_check() == 0) return error.SkipZigTest;
+    const alloc = std.testing.allocator;
+    const panel = try WebPanel.create(alloc, "about:blank");
+    panel.destroy();
+}
+
+test "web panel: widget finalization before panel destroy is safe" {
+    if (c.gtk_init_check() == 0) return error.SkipZigTest;
+    const alloc = std.testing.allocator;
+    const panel = try WebPanel.create(alloc, "about:blank");
+    const widget = panel.widget;
+    _ = c.g_object_ref_sink(@ptrCast(widget));
+    // The app's natural order: the widget tree is torn down first (close
+    // page / unparent), then the panel is destroyed against the weak-
+    // nulled emitters.
+    c.g_object_unref(@ptrCast(widget));
+    panel.destroy();
+}
+
+test "web panel: pending first-load and flash sources are cancelled before free" {
+    if (c.gtk_init_check() == 0) return error.SkipZigTest;
+    const testing = std.testing;
+    const alloc = testing.allocator;
+    const panel = try WebPanel.create(alloc, "about:blank");
+
+    // First-load idle: queued through the real onMap path, tracked for
+    // cancellation (a genuine map event passes the mapped widget).
+    onMap(@ptrCast(panel.widget), @ptrCast(panel));
+    try std.testing.expect(panel.initial_load_done);
+    try std.testing.expect(panel.initial_load_id != 0);
+
+    // Flash chain: triggerFlash always leaves a pending timeout source
+    // (animated pulse or the static reduced-motion highlight).
+    panel.triggerFlash();
+    try std.testing.expect(panel.flash_timeout != 0);
+
+    // Teardown cancels both sources before self is freed; draining after
+    // the free must not dispatch into it (fatal-criticals enforces). The
+    // widget tree is left un-finalized here on purpose: WebKit's dispose
+    // path is only safe under the full application runtime, and the
+    // finalize-then-destroy order is covered by the test above.
+    panel.destroy();
+    while (c.g_main_context_iteration(null, 0) != 0) {}
+}
+
+test "tls contexts: invalidation turns the response into a pure release" {
+    const testing = std.testing;
+    const alloc = testing.allocator;
+
+    var panel: WebPanel = undefined;
+    panel.tls_head = null;
+
+    const ctx = try alloc.create(TlsErrorCtx);
+    ctx.* = .{
+        .panel = &panel,
+        .alloc = alloc,
+        .failing_uri = try alloc.dupe(u8, "https://example.com"),
+        .next = null,
+    };
+    panel.tls_head = ctx;
+
+    invalidateTlsContexts(&panel);
+    try testing.expect(ctx.panel == null);
+
+    // The dialog response now only frees the context — exactly once;
+    // the allocator's leak check enforces single release.
+    releaseTlsCtx(ctx);
+}
+
+test "tls contexts: a live-panel response unlinks before freeing" {
+    const testing = std.testing;
+    const alloc = testing.allocator;
+
+    var panel: WebPanel = undefined;
+    panel.tls_head = null;
+
+    const first = try alloc.create(TlsErrorCtx);
+    first.* = .{ .panel = &panel, .alloc = alloc, .failing_uri = try alloc.dupe(u8, "https://a"), .next = null };
+    panel.tls_head = first;
+    const second = try alloc.create(TlsErrorCtx);
+    second.* = .{ .panel = &panel, .alloc = alloc, .failing_uri = try alloc.dupe(u8, "https://b"), .next = first };
+    panel.tls_head = second;
+
+    // Response for the older context while the panel is alive: unlinked
+    // so a later teardown never walks the freed entry.
+    unlinkTlsCtx(&panel, first);
+    try testing.expectEqual(@as(?*TlsErrorCtx, second), panel.tls_head);
+    try testing.expect(second.next == null);
+
+    // Panel teardown invalidates only what is still outstanding.
+    invalidateTlsContexts(&panel);
+    try testing.expect(second.panel == null);
+    releaseTlsCtx(second);
+    releaseTlsCtx(first);
 }

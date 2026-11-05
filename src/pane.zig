@@ -25,6 +25,7 @@ pub const Pane = struct {
     flash_step: u8 = 0,
     flash_timeout: c.guint = 0,
     notif_border_timeout: c.guint = 0,
+    deferred_redraw_id: c.guint = 0,
     // IME state
     im_context: ?*c.GtkIMContext = null,
     im_composing: bool = false,
@@ -157,6 +158,7 @@ pub const Pane = struct {
     /// the gl_area has already been finalized (the weak pointer added
     /// in create() will have nulled self.gl_area in that case).
     pub fn disconnectSignals(self: *Pane) void {
+        cancelIdle(&self.deferred_redraw_id);
         if (self.scrollbar_hide_timeout != 0) {
             _ = c.g_source_remove(self.scrollbar_hide_timeout);
             self.scrollbar_hide_timeout = 0;
@@ -394,8 +396,12 @@ pub const Pane = struct {
 
     /// Schedule a deferred render after GTK layout completes.
     /// Useful after reparenting (e.g., split) to ensure the pane gets rendered.
+    /// Coalesces to one pending idle per pane; the tracked ID is cleared by
+    /// the callback before dispatch and removed on disconnect, so a freed
+    /// pane can never be reached through a stale source.
     pub fn queueDeferredRedraw(self: *Pane) void {
-        _ = c.g_idle_add(deferredRedrawCb, @ptrCast(self));
+        if (self.deferred_redraw_id != 0) return;
+        self.deferred_redraw_id = c.g_idle_add(deferredRedrawCb, @ptrCast(self));
     }
 
     pub fn getCachedTitle(self: *const Pane) ?[]const u8 {
@@ -570,8 +576,20 @@ fn setupOverlays(overlay: *c.GtkWidget, pane: *Pane) void {
 
 // ── GLArea callbacks ────────────────────────────────────────────────
 
+/// Remove a tracked GLib source by ID. Idempotent: callbacks clear their
+/// ID before dispatch, so a source that already ran is never removed a
+/// second time (which would raise a GLib critical).
+fn cancelIdle(id: *c.guint) void {
+    if (id.* == 0) return;
+    _ = c.g_source_remove(id.*);
+    id.* = 0;
+}
+
 fn deferredRedrawCb(user_data: c.gpointer) callconv(.c) c.gboolean {
     const pane: *Pane = @ptrCast(@alignCast(user_data));
+    // Clear the tracked ID before touching any other pane state so a
+    // later cancel never removes an already-dispatched source.
+    pane.deferred_redraw_id = 0;
     if (pane.surface != null) {
         pane.queueRedraw();
     }
@@ -1054,6 +1072,60 @@ test "scrollbar callbacks stop when a pane disconnects before its widgets" {
     pane.updateScrollbar(200, 180, 20);
     try std.testing.expectEqual(0, c.gtk_widget_get_visible(scrollbar));
     try std.testing.expectEqual(0, pane.scrollbar_hide_timeout);
+}
+
+fn drainMainContext() void {
+    while (c.g_main_context_iteration(null, 0) != 0) {}
+}
+
+test "deferred redraw idles coalesce, dispatch and cancel safely" {
+    if (c.gtk_init_check() == 0) return error.SkipZigTest;
+    const alloc = std.testing.allocator;
+    const pane = try Pane.create(alloc, null, 1, 1);
+
+    // Queue + coalesce: a second request reuses the pending source.
+    pane.queueDeferredRedraw();
+    const first_id = pane.deferred_redraw_id;
+    try std.testing.expect(first_id != 0);
+    pane.queueDeferredRedraw();
+    try std.testing.expectEqual(first_id, pane.deferred_redraw_id);
+
+    // Dispatch clears the tracked ID before touching pane state (the
+    // surface is null here, so the redraw itself is skipped).
+    drainMainContext();
+    try std.testing.expectEqual(@as(c.guint, 0), pane.deferred_redraw_id);
+
+    // Cancel path: removal is immediate and repeated cleanup is a no-op
+    // (a second g_source_remove would raise a GLib critical).
+    pane.queueDeferredRedraw();
+    pane.disconnectSignals();
+    pane.disconnectSignals();
+    try std.testing.expectEqual(@as(c.guint, 0), pane.deferred_redraw_id);
+    drainMainContext();
+    try std.testing.expectEqual(@as(c.guint, 0), pane.deferred_redraw_id);
+
+    // Destruction cancels a pending source; draining after the free must
+    // not dispatch into the freed pane. The allocator's leak check plus
+    // fatal-criticals in the gate enforce both halves.
+    pane.queueDeferredRedraw();
+    pane.destroy(alloc);
+    drainMainContext();
+}
+
+test "repeated pane cleanup with pending redraw stays idempotent" {
+    if (c.gtk_init_check() == 0) return error.SkipZigTest;
+    const alloc = std.testing.allocator;
+    const pane = try Pane.create(alloc, null, 1, 1);
+    const widget = pane.widget;
+    _ = c.g_object_ref_sink(@ptrCast(widget));
+    defer c.g_object_unref(@ptrCast(widget));
+
+    pane.queueDeferredRedraw();
+    pane.disconnectSignals();
+    pane.destroy(alloc);
+    // A widget finalization racing teardown must not re-enter cleanup.
+    c.gtk_widget_set_visible(widget, 0);
+    drainMainContext();
 }
 
 test "XKB remaps editing keys and both halves of Caps Escape swaps" {
