@@ -52,6 +52,11 @@ The `--recursive` flag initializes the Ghostty submodule during clone. If you cl
 git submodule update --init --recursive
 ```
 
+The Makefile requires Zig 0.16.0 exactly. `make check-zig` reports the
+toolchain it would use; it prefers a matching `zig` on `PATH` and otherwise
+falls back to a keg-only Homebrew `zig@0.16` install. Override explicitly with
+`make ZIG=/path/to/zig-0.16.0/zig build`.
+
 ### First-Time Setup
 
 The Ghostty submodule points at `no1msd/ghostty` on the `seance-patches`

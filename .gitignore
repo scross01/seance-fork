@@ -4,7 +4,6 @@ campaign/
 zig-pkg/
 AppDir/
 *.AppImage
-Makefile
 LOCAL.md
 .mimocode
 __pycache__/

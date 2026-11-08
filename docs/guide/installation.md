@@ -59,6 +59,11 @@ make run
 `make run` builds and launches from there. Do not use `zig-out/bin/seance`
 directly — it lacks installed assets.
 
+The Makefile requires Zig 0.16.0 exactly. `make check-zig` reports the
+toolchain it would use; it prefers a matching `zig` on `PATH` and otherwise
+falls back to a keg-only Homebrew `zig@0.16` install. Override explicitly with
+`make ZIG=/path/to/zig-0.16.0/zig build`.
+
 If the ghostty dependency is missing:
 
 ```bash
