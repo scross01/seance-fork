@@ -1,8 +1,9 @@
 """Panel callback lifetime regressions with physical input on isolated X servers.
 
 Covers config reload racing a terminal close, browser first-load map →
-close, a flashing browser → close with animations on and off, and closing
-a browser panel while its TLS error dialog is outstanding. The
+close, a flashing browser → close with animations on and off, a browsing
+panel closed while WebKit still owns an in-flight load, and closing a
+browser panel while its TLS error dialog is outstanding. The
 deterministic source/dialog ownership cases live in the native tests of
 src/pane.zig and src/web_panel.zig; these cases drive the real GTK/WebKit
 paths under fatal criticals.
@@ -12,6 +13,7 @@ resolves terminals and browser panels through one walk while their IDs
 come from separate counters, so the focused-panel fallback is the reliable
 form until id unification lands elsewhere.
 """
+import http.server
 import os
 import socket
 import ssl
@@ -121,6 +123,55 @@ class BrowserMapCloseTests(PanelCallbackTests):
         self.app.wait(lambda: self.app.call("surface.read_screen").get("text"),
                       "terminal after browser close")
         self.assert_terminal_usable("AFTER_BROWSER_MAP_CLOSE")
+
+
+class _SlowPageServer:
+    """Local page that stalls before its body so a load stays in flight."""
+
+    def __init__(self):
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html")
+                self.end_headers()
+                time.sleep(1.0)
+                try:
+                    self.wfile.write(b"<html><body>slow</body></html>")
+                except OSError:
+                    pass
+
+            def log_message(self, *args):
+                pass
+
+        self.server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+        self.port = self.server.server_address[1]
+        self._thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self._thread.start()
+
+    def close(self):
+        self.server.shutdown()
+        self.server.server_close()
+        self._thread.join(timeout=3)
+
+
+class BrowserLoadingCloseTests(PanelCallbackTests):
+    def setUp(self):
+        super().setUp()
+        self.page = _SlowPageServer()
+        self.addCleanup(self.page.close)
+
+    def test_browser_close_while_webview_load_is_in_flight(self):
+        self.app.call("browser.open", {"url": "http://127.0.0.1:%d/" % self.page.port})
+        # Close while WebKit still owns the load: the panel is disconnected
+        # and freed first, so the retained webview's later load-changed and
+        # progress emissions must find no panel (fatal-criticals enforces).
+        self.app.wait(lambda: self.app.call("browser.is_loading")["loading"],
+                      "browser load start")
+        self.app.call("browser.close", {})
+        self.app.wait(lambda: self.app.call("surface.read_screen").get("text"),
+                      "terminal after in-flight browser close")
+        time.sleep(1.2)  # let the stalled body and load completion drain
+        self.assert_terminal_usable("AFTER_INFLIGHT_BROWSER_CLOSE")
 
 
 class FlashBrowserCloseBase(PanelCallbackTests):

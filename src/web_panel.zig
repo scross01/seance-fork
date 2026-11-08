@@ -200,6 +200,12 @@ pub const WebPanel = struct {
         const owned_url = try alloc.dupe(u8, url);
         errdefer alloc.free(owned_url);
 
+        // gtk_editable_set_text reads a C string. The incoming slice can be a
+        // parsed JSON string with no terminator, so the entry is populated
+        // from an owned copy whose sentinel is guaranteed.
+        const terminated_url = try alloc.dupeZ(u8, url);
+        defer alloc.free(terminated_url);
+
         const panel = try alloc.create(WebPanel);
         panel.* = .{
             .id = id,
@@ -217,7 +223,12 @@ pub const WebPanel = struct {
         };
 
         // Weak pointers: disconnectSignals must be callable after any part
-        // of the widget tree (or the WebKit-held webview) finalized.
+        // of the widget tree (or the WebKit-held webview) finalized. Seed
+        // the live slots before registering so tracking never depends on
+        // the order GObject initializes them; it clears each one at
+        // finalization.
+        panel.widget_weak = @ptrCast(wrapper);
+        panel.webview_weak = webview;
         c.g_object_add_weak_pointer(
             @as(*c.GObject, @ptrCast(panel.widget)),
             @ptrCast(&panel.widget_weak),
@@ -380,7 +391,7 @@ pub const WebPanel = struct {
                 null,
                 0,
             );
-            c.gtk_editable_set_text(@ptrCast(entry), url.ptr);
+            c.gtk_editable_set_text(@ptrCast(entry), terminated_url.ptr);
             panel.syncDisplay();
         }
 
@@ -1273,6 +1284,79 @@ test "web panel: pending first-load and flash sources are cancelled before free"
     // finalize-then-destroy order is covered by the test above.
     panel.destroy();
     while (c.g_main_context_iteration(null, 0) != 0) {}
+}
+
+test "web panel: create seeds live weak slots and terminates the entry URL" {
+    if (c.gtk_init_check() == 0) return error.SkipZigTest;
+    const testing = std.testing;
+    const alloc = testing.allocator;
+
+    // A parsed JSON URL slice has no terminator; `Z` right behind it is the
+    // first byte the entry must never copy.
+    const url = "https://example.com/x";
+    var backing = [_]u8{'Z'} ** (url.len + 4);
+    @memcpy(backing[0..url.len], url);
+    const panel = try WebPanel.create(alloc, backing[0..url.len]);
+    const widget = panel.widget;
+    _ = c.g_object_ref_sink(@ptrCast(widget));
+    defer {
+        c.g_object_unref(@ptrCast(widget));
+        panel.destroy();
+    }
+
+    // Both emitters are tracked the moment the panel exists, so a later
+    // teardown can reach them; registration must not leave null slots.
+    try testing.expect(panel.widget_weak != null);
+    try testing.expect(panel.webview_weak != null);
+    const text = c.gtk_editable_get_text(@ptrCast(panel.entry)) orelse
+        return error.TestUnexpectedResult;
+    try testing.expectEqualStrings(url, std.mem.span(text));
+}
+
+test "web panel: about:blank is copied into the entry, not its sentinel tail" {
+    if (c.gtk_init_check() == 0) return error.SkipZigTest;
+    const testing = std.testing;
+    const alloc = testing.allocator;
+
+    var backing = [_]u8{'Z'} ** ("about:blank".len + 3);
+    @memcpy(backing[0.."about:blank".len], "about:blank");
+    const panel = try WebPanel.create(alloc, backing[0.."about:blank".len]);
+    const widget = panel.widget;
+    _ = c.g_object_ref_sink(@ptrCast(widget));
+    defer {
+        c.g_object_unref(@ptrCast(widget));
+        panel.destroy();
+    }
+
+    const text = c.gtk_editable_get_text(@ptrCast(panel.entry)) orelse
+        return error.TestUnexpectedResult;
+    try testing.expectEqualStrings("about:blank", std.mem.span(text));
+}
+
+test "web panel: disconnect is idempotent and leaves live emitters usable" {
+    if (c.gtk_init_check() == 0) return error.SkipZigTest;
+    const testing = std.testing;
+    const alloc = testing.allocator;
+    const panel = try WebPanel.create(alloc, "https://example.com");
+    const widget = panel.widget;
+    _ = c.g_object_ref_sink(@ptrCast(widget));
+
+    // The panel goes first while its widget tree is still alive: both
+    // registrations are removed and the slots nulled.
+    panel.disconnectSignals();
+    try testing.expect(panel.widget_weak == null);
+    try testing.expect(panel.webview_weak == null);
+    // A repeated call must not touch already-removed registrations.
+    panel.disconnectSignals();
+
+    // The tree outlives the disconnect and still works.
+    c.gtk_editable_set_text(@ptrCast(panel.entry), "still reachable");
+    const text = c.gtk_editable_get_text(@ptrCast(panel.entry)) orelse
+        return error.TestUnexpectedResult;
+    try testing.expectEqualStrings("still reachable", std.mem.span(text));
+
+    c.g_object_unref(@ptrCast(widget));
+    panel.destroy();
 }
 
 test "tls contexts: invalidation turns the response into a pure release" {
