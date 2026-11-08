@@ -354,6 +354,72 @@ pub fn saveConfig(cfg: *const Config) void {
     };
 }
 
+/// Render seance's overrides as ghostty config-file lines. Pure: the
+/// caller resolves environment-dependent values (theme) and owns I/O.
+pub fn writeGhosttyOverrides(cfg: *const Config, theme_name: []const u8, writer: *std.Io.Writer) void {
+    // Font
+    //
+    // Ghostty's `font-family` is a RepeatableString that *appends* rather
+    // than replaces.  If the user has `font-family = FiraCode Nerd Font`
+    // in ~/.config/ghostty/config, that gets loaded by
+    // `ghostty_config_load_default_files` first, and then appending our
+    // seance setting would just add a *fallback* font instead of replacing
+    // the primary.  Write an empty value first to clear the list (the
+    // RepeatableString.parseCLI contract: empty value resets the list),
+    // then write our font on the next line so it becomes the only entry.
+    if (cfg.font_family_len > 0) {
+        writer.writeAll("font-family = \n") catch {};
+        writer.print("font-family = {s}\n", .{cfg.font_family[0..cfg.font_family_len]}) catch {};
+    }
+    if (cfg.font_style_len > 0) {
+        writer.print("font-style = {s}\n", .{cfg.font_style[0..cfg.font_style_len]}) catch {};
+    }
+    if (cfg.font_size) |fs| {
+        writer.print("font-size = {d}\n", .{@as(u32, @intFromFloat(fs))}) catch {};
+    }
+
+    // Theme override — if seance config sets a theme, override ghostty's.
+    // When no theme is configured, follow system dark/light preference.
+    if (cfg.theme_len > 0) {
+        writer.print("theme = {s}\n", .{cfg.theme[0..cfg.theme_len]}) catch {};
+    } else {
+        writer.print("theme = {s}\n", .{theme_name}) catch {};
+    }
+
+    // Background opacity
+    if (cfg.background_opacity < 1.0) {
+        writer.print("background-opacity = {d}\n", .{cfg.background_opacity}) catch {};
+    }
+
+    // Scrollback: seance's setting is a line count; ghostty 1.4 splits the
+    // limit into bytes/lines keys and legacy `scrollback-limit` means bytes.
+    writer.print("scrollback-limit-lines = {d}\n", .{cfg.scrollback_lines}) catch {};
+
+    // Cursor
+    const cursor_style: []const u8 = switch (cfg.cursor_shape) {
+        .block => "block",
+        .ibeam => "bar",
+        .underline => "underline",
+    };
+    writer.print("cursor-style = {s}\n", .{cursor_style}) catch {};
+    writer.print("cursor-style-blink = {s}\n", .{if (cfg.cursor_blink) "true" else "false"}) catch {};
+
+    // Disable ghostty's shell-integration cursor feature. That feature injects
+    // a hardcoded DECSCUSR (\e[5 q / \e[6 q) into PS1 on every prompt render,
+    // which overrides our cursor-style setting and prevents live config updates
+    // from taking effect at the prompt. Seance owns the cursor shape via its
+    // own config, so turn the shell-integration override off unconditionally.
+    writer.writeAll("shell-integration-features = no-cursor\n") catch {};
+
+    // Window padding (only if explicitly set in seance config)
+    if (cfg.window_padding_x) |px| {
+        writer.print("window-padding-x = {d}\n", .{px}) catch {};
+    }
+    if (cfg.window_padding_y) |py| {
+        writer.print("window-padding-y = {d}\n", .{py}) catch {};
+    }
+}
+
 fn writeFloat(writer: anytype, val: f64) !void {
     const cents: u64 = @intFromFloat(@round(@abs(val) * 100.0));
     if (val < 0) try writer.writeByte('-');
@@ -972,4 +1038,26 @@ test "parseToml: sidebar boolean toggles" {
     try std.testing.expectEqual(false, cfg.sidebar_show_progress);
     try std.testing.expectEqual(false, cfg.sidebar_show_branch);
     try std.testing.expectEqual(false, cfg.sidebar_show_ports);
+}
+
+test "writeGhosttyOverrides: default config uses line-based scrollback key" {
+    const cfg = Config{};
+    var buf: [4096]u8 = undefined;
+    var fbs = std.Io.Writer.fixed(&buf);
+    writeGhosttyOverrides(&cfg, "Adwaita Dark", &fbs);
+    const out = fbs.buffered();
+    try std.testing.expect(std.mem.indexOf(u8, out, "scrollback-limit-lines = 10000") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "scrollback-limit = ") == null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "shell-integration-features = no-cursor") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "theme = ") != null);
+}
+
+test "writeGhosttyOverrides: large scrollback value renders" {
+    var cfg = Config{};
+    cfg.scrollback_lines = 2000000;
+    var buf: [4096]u8 = undefined;
+    var fbs = std.Io.Writer.fixed(&buf);
+    writeGhosttyOverrides(&cfg, "Adwaita Dark", &fbs);
+    const out = fbs.buffered();
+    try std.testing.expect(std.mem.indexOf(u8, out, "scrollback-limit-lines = 2000000") != null);
 }

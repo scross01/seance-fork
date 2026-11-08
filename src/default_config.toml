@@ -29,7 +29,7 @@
 # show-ports = true              # detected listening ports
 
 [terminal]
-# scrollback-lines = 10000
+# scrollback-lines = 10000       # lines of scrollback history kept per pane
 # cursor-shape = "block"         # "block", "ibeam", "underline"
 # cursor-blink = true
 
