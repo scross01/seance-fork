@@ -199,13 +199,15 @@ pub const SocketServer = struct {
 
         if (is_browser_eval) {
             const line_copy = std.heap.page_allocator.dupe(u8, line) catch return 1;
-            if (startBrowserEval(self, conn_fd, line_copy)) {
-                transferred = true;
-                return 1;
-            } else {
-                std.heap.page_allocator.free(line_copy);
-                return 1;
-            }
+            // startBrowserEval owns the copy and the connection from here on:
+            // it answers and closes, or keeps the descriptor for a deferred
+            // reply. Neither is closed or freed again on this path.
+            transferred = true;
+            _ = startBrowserEval(conn_fd, line_copy, .{
+                .alloc = std.heap.page_allocator,
+                .close = closeFd,
+            });
+            return 1;
         }
 
         var resp_buf: [16384]u8 = undefined;
@@ -2488,6 +2490,10 @@ pub const SocketServer = struct {
     }
 };
 
+/// One browser.eval request. `replyOnce` owns the single reply and the
+/// descriptor close; `cleanup` owns the context's memory. They are separate
+/// because a timed-out request is answered before WebKit reports its result,
+/// and the late callback must release the context without replying again.
 const EvalContext = struct {
     conn_fd: c_int,
     id: []u8,
@@ -2496,21 +2502,19 @@ const EvalContext = struct {
     errored: bool = false,
     error_code: []const u8 = "eval_error",
     error_msg: []const u8 = "JavaScript evaluation failed",
-    completed: bool = false,
+    replied: bool = false,
     timed_out: bool = false,
     timeout_source: c.guint = 0,
     alloc: std.mem.Allocator = std.heap.page_allocator,
+    close: *const fn (c_int) void = closeFd,
 
-    fn finishReply(self: *EvalContext) void {
-        if (self.completed) return;
-        self.completed = true;
-        if (self.timeout_source != 0) {
-            _ = c.g_source_remove(self.timeout_source);
-            self.timeout_source = 0;
-        }
+    fn replyOnce(self: *EvalContext) void {
+        if (self.replied) return;
+        self.replied = true;
+        self.cancelTimeout();
         const resp_buf = self.alloc.alloc(u8, 65536) catch {
-            posix.close(self.conn_fd);
-            // keep ctx alive? free best-effort
+            // Answering is impossible; the descriptor is still ours to close.
+            self.close(self.conn_fd);
             return;
         };
         defer self.alloc.free(resp_buf);
@@ -2521,15 +2525,49 @@ const EvalContext = struct {
         else
             SocketServer.writeJsonOk(resp_buf, self.id, "\"undefined\"");
         _ = writeAll(self.conn_fd, response);
-        posix.close(self.conn_fd);
+        self.close(self.conn_fd);
     }
 
+    fn cancelTimeout(self: *EvalContext) void {
+        if (self.timeout_source == 0) return;
+        _ = c.g_source_remove(self.timeout_source);
+        self.timeout_source = 0;
+    }
+
+    /// Deadline reached: answer once with the timeout error and close the
+    /// descriptor, but keep the context for WebKit's eventual callback.
+    fn expire(self: *EvalContext) void {
+        if (self.replied) return;
+        self.timed_out = true;
+        self.errored = true;
+        self.error_code = "timeout";
+        self.error_msg = "JavaScript evaluation timed out";
+        self.replyOnce();
+    }
+
+    /// Releases everything the context owns. The reply must already have been
+    /// written (or deliberately abandoned) by the caller.
     fn cleanup(self: *EvalContext) void {
+        self.cancelTimeout();
         self.alloc.free(self.id);
         self.alloc.free(self.script);
         if (self.result_json) |rj| self.alloc.free(rj);
         self.alloc.destroy(self);
     }
+};
+
+fn closeFd(fd: c_int) void {
+    posix.close(fd);
+}
+
+/// Private seam for the native ownership tests. Production uses the page
+/// allocator, posix.close and WebKit dispatch; tests substitute a
+/// leak-checking allocator, a counting closer, and a dispatcher that holds the
+/// context so completion and timeout order are deterministic.
+const EvalHooks = struct {
+    alloc: std.mem.Allocator,
+    close: *const fn (c_int) void,
+    dispatch: ?*const fn (*EvalContext) void = null,
 };
 
 fn writeAll(fd: c_int, data: []const u8) void {
@@ -2543,25 +2581,8 @@ fn writeAll(fd: c_int, data: []const u8) void {
 
 fn onEvalTimeout(user_data: c.gpointer) callconv(.c) c.gboolean {
     const ctx: *EvalContext = @ptrCast(@alignCast(user_data));
-    if (ctx.completed) return 0;
-    ctx.completed = true;
-    ctx.timed_out = true;
-    ctx.errored = true;
-    ctx.error_code = "timeout";
-    ctx.error_msg = "JavaScript evaluation timed out";
-    if (ctx.timeout_source != 0) {
-        ctx.timeout_source = 0;
-    }
-    // reply timeout, close fd, but keep ctx alive for eventual WebKit callback
-    const resp_buf = ctx.alloc.alloc(u8, 65536) catch {
-        posix.close(ctx.conn_fd);
-        return 0;
-    };
-    defer ctx.alloc.free(resp_buf);
-    const response = SocketServer.writeJsonError(resp_buf, ctx.id, "timeout", "JavaScript evaluation timed out");
-    _ = writeAll(ctx.conn_fd, response);
-    posix.close(ctx.conn_fd);
-    return 0;
+    ctx.expire();
+    return 0; // drop the deadline source
 }
 
 fn onEvalFinished(webview_ptr: ?*anyopaque, result_ptr: ?*c.GAsyncResult, user_data: c.gpointer) callconv(.c) void {
@@ -2573,7 +2594,7 @@ fn onEvalFinished(webview_ptr: ?*anyopaque, result_ptr: ?*c.GAsyncResult, user_d
         if (err != null) c.g_error_free(err.?);
     }
     if (ctx.timed_out) {
-        // Already replied with timeout; just free.
+        // The deadline already answered and closed; only the context is left.
         ctx.cleanup();
         return;
     }
@@ -2583,108 +2604,95 @@ fn onEvalFinished(webview_ptr: ?*anyopaque, result_ptr: ?*c.GAsyncResult, user_d
         const str = c.jsc_value_to_json(jsc_val, 0);
         if (str != null) {
             const slice = std.mem.sliceTo(str, 0);
-            if (std.mem.eql(u8, slice, "undefined")) {
-                ctx.result_json = null;
-            } else {
+            if (!std.mem.eql(u8, slice, "undefined")) {
                 ctx.result_json = ctx.alloc.dupe(u8, slice) catch null;
             }
             c.g_free(@ptrCast(str));
-        } else {
-            ctx.result_json = null;
         }
     }
-    if (ctx.completed) {
-        // timeout already handled? shouldn't happen if not timed_out, but guard
-        ctx.cleanup();
-        return;
-    }
-    ctx.finishReply();
+    ctx.replyOnce();
     ctx.cleanup();
 }
 
-fn startBrowserEval(server: *SocketServer, conn_fd: c_int, line: []u8) bool {
-    _ = server;
-    // Parse request
-    const parsed = std.json.parseFromSlice(std.json.Value, std.heap.page_allocator, line, .{}) catch {
-        var buf: [4096]u8 = undefined;
-        const resp = SocketServer.writeJsonError(&buf, "null", "parse_error", "Invalid JSON");
-        _ = writeAll(conn_fd, resp);
-        posix.close(conn_fd);
-        std.heap.page_allocator.free(line);
-        return false;
-    };
-    defer parsed.deinit();
-    if (parsed.value != .object) {
-        var buf: [4096]u8 = undefined;
-        const resp = SocketServer.writeJsonError(&buf, "null", "parse_error", "Request must be a JSON object");
-        _ = writeAll(conn_fd, resp);
-        posix.close(conn_fd);
-        std.heap.page_allocator.free(line);
-        return false;
-    }
-    const root = parsed.value.object;
-    var id_buf: [128]u8 = undefined;
-    const id_str = SocketServer.extractId(root, &id_buf);
-    // copy id
-    const id_copy = std.heap.page_allocator.dupe(u8, id_str) catch {
-        posix.close(conn_fd);
-        std.heap.page_allocator.free(line);
-        return false;
-    };
+/// Answers a request that never reached a context, then closes the
+/// descriptor. Exactly one of this helper and `replyOnce` runs per request.
+fn replyEvalError(conn_fd: c_int, hooks: EvalHooks, id: []const u8, code: []const u8, msg: []const u8) void {
+    var buf: [4096]u8 = undefined;
+    const resp = SocketServer.writeJsonError(&buf, id, code, msg);
+    _ = writeAll(conn_fd, resp);
+    hooks.close(conn_fd);
+}
 
-    const params = root.get("params");
-    const panel_id = SocketServer.getParamInt(params, "panel_id") orelse 0;
-    const script = SocketServer.getParamString(params, "script") orelse {
-        var buf: [4096]u8 = undefined;
-        const resp = SocketServer.writeJsonError(&buf, id_copy, "invalid_params", "Missing 'script' parameter");
-        _ = writeAll(conn_fd, resp);
-        posix.close(conn_fd);
-        std.heap.page_allocator.free(id_copy);
-        std.heap.page_allocator.free(line);
-        return false;
-    };
-
-    // size limit
-    if (script.len > 65535) {
-        var buf: [4096]u8 = undefined;
-        const resp = SocketServer.writeJsonError(&buf, id_copy, "invalid_params", "Script too large");
-        _ = writeAll(conn_fd, resp);
-        posix.close(conn_fd);
-        std.heap.page_allocator.free(id_copy);
-        std.heap.page_allocator.free(line);
-        return false;
-    }
-
-    const wp = SocketServer.resolveBrowserPanel(panel_id) orelse {
-        var buf: [4096]u8 = undefined;
-        const resp = SocketServer.writeJsonError(&buf, id_copy, "not_found", "Browser panel not found");
-        _ = writeAll(conn_fd, resp);
-        posix.close(conn_fd);
-        std.heap.page_allocator.free(id_copy);
-        std.heap.page_allocator.free(line);
-        return false;
-    };
-
-    const ctx = std.heap.page_allocator.create(EvalContext) catch {
-        posix.close(conn_fd);
-        std.heap.page_allocator.free(id_copy);
-        std.heap.page_allocator.free(line);
-        return false;
-    };
-    const script_copy = std.heap.page_allocator.dupe(u8, script) catch {
-        std.heap.page_allocator.destroy(ctx);
-        posix.close(conn_fd);
-        std.heap.page_allocator.free(id_copy);
-        std.heap.page_allocator.free(line);
-        return false;
-    };
+fn createEvalContext(hooks: EvalHooks, conn_fd: c_int, id: []const u8, script: []const u8) !*EvalContext {
+    const ctx = try hooks.alloc.create(EvalContext);
+    errdefer hooks.alloc.destroy(ctx);
+    const id_copy = try hooks.alloc.dupe(u8, id);
+    errdefer hooks.alloc.free(id_copy);
+    const script_copy = try hooks.alloc.dupe(u8, script);
     ctx.* = .{
         .conn_fd = conn_fd,
         .id = id_copy,
         .script = script_copy,
+        .alloc = hooks.alloc,
+        .close = hooks.close,
     };
-    // free the request line copy (no longer needed)
-    std.heap.page_allocator.free(line);
+    return ctx;
+}
+
+/// Takes ownership of `line` and `conn_fd` unconditionally. Every branch
+/// either answers and closes here (returning false) or hands the context to
+/// WebKit, which closes the descriptor from its callback (returning true).
+/// The caller must not free `line` or close `conn_fd` afterwards.
+fn startBrowserEval(conn_fd: c_int, line: []u8, hooks: EvalHooks) bool {
+    const parsed = std.json.parseFromSlice(std.json.Value, hooks.alloc, line, .{}) catch {
+        replyEvalError(conn_fd, hooks, "null", "parse_error", "Invalid JSON");
+        hooks.alloc.free(line);
+        return false;
+    };
+    defer parsed.deinit();
+    if (parsed.value != .object) {
+        replyEvalError(conn_fd, hooks, "null", "parse_error", "Request must be a JSON object");
+        hooks.alloc.free(line);
+        return false;
+    }
+    const root = parsed.value.object;
+    var id_buf: [128]u8 = undefined;
+    const id = SocketServer.extractId(root, &id_buf);
+
+    const params = root.get("params");
+    const panel_id = SocketServer.getParamInt(params, "panel_id") orelse 0;
+    const script = SocketServer.getParamString(params, "script") orelse {
+        replyEvalError(conn_fd, hooks, id, "invalid_params", "Missing 'script' parameter");
+        hooks.alloc.free(line);
+        return false;
+    };
+    if (script.len > 65535) {
+        replyEvalError(conn_fd, hooks, id, "invalid_params", "Script too large");
+        hooks.alloc.free(line);
+        return false;
+    }
+
+    const ctx = createEvalContext(hooks, conn_fd, id, script) catch {
+        replyEvalError(conn_fd, hooks, id, "internal", "Out of memory");
+        hooks.alloc.free(line);
+        return false;
+    };
+    // The context owns copies of everything it needs from the request.
+    hooks.alloc.free(line);
+
+    if (hooks.dispatch) |dispatch| {
+        dispatch(ctx);
+        return true;
+    }
+
+    const wp = SocketServer.resolveBrowserPanel(panel_id) orelse {
+        ctx.errored = true;
+        ctx.error_code = "not_found";
+        ctx.error_msg = "Browser panel not found";
+        ctx.replyOnce();
+        ctx.cleanup();
+        return false;
+    };
 
     ctx.timeout_source = c.g_timeout_add(5000, @ptrCast(&onEvalTimeout), @ptrCast(ctx));
 
@@ -2790,4 +2798,203 @@ test "jsonEscapeString: round-trip with JSON parser" {
     defer parsed.deinit();
 
     try std.testing.expectEqualStrings(original, parsed.value.string);
+}
+
+// --- browser.eval request ownership -----------------------------------------
+// The eval path transfers two resources (the request line and the accepted
+// connection) from the acceptor to the deferred reply. These tests inject a
+// counting closer and a dispatcher that holds the context, so every branch is
+// checked for exactly-once release without depending on WebKit's timing.
+
+const eval_test_request = "{\"id\":\"e\",\"method\":\"browser.eval\",\"params\":{\"panel_id\":7,\"script\":\"1 + 1\"}}";
+
+const EvalTestSeam = struct {
+    var closes: usize = 0;
+    var dispatched: ?*EvalContext = null;
+
+    fn close(fd: c_int) void {
+        _ = fd;
+        closes += 1;
+    }
+
+    fn dispatch(ctx: *EvalContext) void {
+        dispatched = ctx;
+    }
+
+    fn reset() void {
+        closes = 0;
+        dispatched = null;
+    }
+};
+
+test "browser eval: rejected requests answer, close and free exactly once" {
+    const testing = std.testing;
+    const alloc = testing.allocator;
+
+    const requests = [_][]const u8{
+        "{", // invalid JSON
+        "[1,2]", // not an object
+        "{\"id\":\"e\",\"method\":\"browser.eval\",\"params\":{\"panel_id\":0}}", // missing script
+        "{\"id\":\"e\",\"method\":\"browser.eval\",\"params\":{\"panel_id\":999999,\"script\":\"1\"}}", // no panel
+    };
+    for (requests) |request| {
+        EvalTestSeam.reset();
+        const line = try alloc.dupe(u8, request);
+        try testing.expect(!startBrowserEval(-1, line, .{ .alloc = alloc, .close = EvalTestSeam.close }));
+        try testing.expectEqual(@as(usize, 1), EvalTestSeam.closes);
+    }
+
+    // Oversized scripts are rejected before any context or WebKit dispatch.
+    EvalTestSeam.reset();
+    const big_script = try alloc.alloc(u8, 65536);
+    defer alloc.free(big_script);
+    @memset(big_script, 'a');
+    const big_request = try std.fmt.allocPrint(alloc, "{{\"id\":\"e\",\"method\":\"browser.eval\",\"params\":{{\"panel_id\":0,\"script\":\"{s}\"}}}}", .{big_script});
+    try testing.expect(!startBrowserEval(-1, big_request, .{ .alloc = alloc, .close = EvalTestSeam.close }));
+    try testing.expectEqual(@as(usize, 1), EvalTestSeam.closes);
+}
+
+test "browser eval: allocation failures free the line and close once" {
+    const testing = std.testing;
+    const request = eval_test_request;
+
+    var fail_index: usize = 0;
+    var saw_deferred = false;
+    while (fail_index < 12) : (fail_index += 1) {
+        EvalTestSeam.reset();
+        var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = fail_index });
+        const hooks = EvalHooks{
+            .alloc = failing.allocator(),
+            .close = EvalTestSeam.close,
+            .dispatch = EvalTestSeam.dispatch,
+        };
+        const line = hooks.alloc.dupe(u8, request) catch continue;
+        if (startBrowserEval(-1, line, hooks)) {
+            // The dispatcher holds the context; finish it like a completion.
+            const ctx = EvalTestSeam.dispatched.?;
+            ctx.replyOnce();
+            ctx.cleanup();
+            saw_deferred = true;
+        }
+        try testing.expectEqual(@as(usize, 1), EvalTestSeam.closes);
+    }
+    // The sweep must reach the successful transfer, or it only proved errors.
+    try testing.expect(saw_deferred);
+}
+
+test "browser eval: deferred ownership replies once in either order" {
+    const testing = std.testing;
+    const alloc = testing.allocator;
+    const request = eval_test_request;
+
+    // Completion first, then a stale deadline.
+    {
+        EvalTestSeam.reset();
+        const line = try alloc.dupe(u8, request);
+        try testing.expect(startBrowserEval(-1, line, .{
+            .alloc = alloc,
+            .close = EvalTestSeam.close,
+            .dispatch = EvalTestSeam.dispatch,
+        }));
+        try testing.expectEqual(@as(usize, 0), EvalTestSeam.closes);
+        const ctx = EvalTestSeam.dispatched.?;
+        ctx.result_json = try alloc.dupe(u8, "2");
+        ctx.replyOnce();
+        try testing.expectEqual(@as(usize, 1), EvalTestSeam.closes);
+        ctx.expire();
+        try testing.expect(!ctx.timed_out);
+        try testing.expectEqual(@as(usize, 1), EvalTestSeam.closes);
+        ctx.cleanup();
+    }
+
+    // Deadline first, then the late completion.
+    {
+        EvalTestSeam.reset();
+        const line = try alloc.dupe(u8, request);
+        try testing.expect(startBrowserEval(-1, line, .{
+            .alloc = alloc,
+            .close = EvalTestSeam.close,
+            .dispatch = EvalTestSeam.dispatch,
+        }));
+        const ctx = EvalTestSeam.dispatched.?;
+        ctx.expire();
+        try testing.expect(ctx.timed_out);
+        try testing.expectEqual(@as(usize, 1), EvalTestSeam.closes);
+        // What onEvalFinished does after the deadline already answered.
+        ctx.cleanup();
+        try testing.expectEqual(@as(usize, 1), EvalTestSeam.closes);
+    }
+}
+
+test "browser eval: the deadline answers once with a bounded timeout reply" {
+    const testing = std.testing;
+    const alloc = testing.allocator;
+    var fds: [2]c_int = undefined;
+    try testing.expectEqual(@as(c_int, 0), c.pipe(&fds));
+    defer posix.close(fds[0]);
+
+    EvalTestSeam.reset();
+    const line = try alloc.dupe(u8, eval_test_request);
+    try testing.expect(startBrowserEval(fds[1], line, .{
+        .alloc = alloc,
+        .close = closeFd,
+        .dispatch = EvalTestSeam.dispatch,
+    }));
+    const ctx = EvalTestSeam.dispatched.?;
+    ctx.timeout_source = c.g_timeout_add(1, @ptrCast(&onEvalTimeout), @ptrCast(ctx));
+
+    // Drive the real deadline callback: it replies, closes the descriptor and
+    // leaves the context for the WebKit completion that never arrives here.
+    var waited: usize = 0;
+    while (!ctx.replied and waited < 500) : (waited += 1) {
+        while (c.g_main_context_iteration(null, 0) != 0) {}
+        c.g_usleep(1000);
+    }
+    try testing.expect(ctx.replied);
+    try testing.expect(ctx.timed_out);
+    try testing.expectEqual(@as(c.guint, 0), ctx.timeout_source);
+
+    var buf: [2048]u8 = undefined;
+    var total: usize = 0;
+    while (total < buf.len) {
+        const n = c.read(fds[0], buf[total..].ptr, buf.len - total);
+        if (n <= 0) break;
+        total += @intCast(n);
+    }
+    const reply = buf[0..total];
+    try testing.expect(std.mem.indexOf(u8, reply, "\"code\":\"timeout\"") != null);
+
+    ctx.cleanup();
+}
+
+test "browser eval: completion cancels the pending deadline source" {
+    const testing = std.testing;
+    const alloc = testing.allocator;
+
+    const Counter = struct {
+        var ran: usize = 0;
+        fn cb(data: c.gpointer) callconv(.c) c.gboolean {
+            _ = data;
+            ran += 1;
+            return c.G_SOURCE_REMOVE;
+        }
+    };
+    Counter.ran = 0;
+    EvalTestSeam.reset();
+    const line = try alloc.dupe(u8, eval_test_request);
+    try testing.expect(startBrowserEval(-1, line, .{
+        .alloc = alloc,
+        .close = EvalTestSeam.close,
+        .dispatch = EvalTestSeam.dispatch,
+    }));
+    const ctx = EvalTestSeam.dispatched.?;
+    ctx.timeout_source = c.g_timeout_add(1, @ptrCast(&Counter.cb), null);
+    try testing.expect(ctx.timeout_source != 0);
+
+    ctx.replyOnce();
+    try testing.expectEqual(@as(c.guint, 0), ctx.timeout_source);
+    c.g_usleep(10 * 1000);
+    while (c.g_main_context_iteration(null, 0) != 0) {}
+    try testing.expectEqual(@as(usize, 0), Counter.ran);
+    ctx.cleanup();
 }
