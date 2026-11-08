@@ -735,7 +735,13 @@ fn onCtxRename(_: *c.GSimpleAction, _: ?*c.GVariant, data: c.gpointer) callconv(
         return;
     };
 
-    const root = c.gtk_widget_get_root(asWidget(self.tab_view)) orelse return;
+    _ = showRenameDialog(std.heap.c_allocator, self, pane);
+}
+
+/// Builds, owns and presents the rename dialog for one pane. Returns the
+/// dialog so tests can drive its response without a pointer-driven menu.
+fn showRenameDialog(alloc: std.mem.Allocator, group: *PaneGroup, pane: *Pane) ?*c.AdwAlertDialog {
+    const root = c.gtk_widget_get_root(asWidget(group.tab_view)) orelse return null;
 
     const dialog = c.adw_alert_dialog_new("Rename tab", null);
     c.adw_alert_dialog_add_response(@as(*c.AdwAlertDialog, @ptrCast(dialog)), "cancel", "Cancel");
@@ -755,47 +761,144 @@ fn onCtxRename(_: *c.GSimpleAction, _: ?*c.GVariant, data: c.gpointer) callconv(
     c.gtk_editable_set_text(@ptrCast(entry), &title_z);
     c.adw_alert_dialog_set_extra_child(@as(*c.AdwAlertDialog, @ptrCast(dialog)), entry);
 
-    const ctx = self.alloc.create(RenameCtx) catch return;
-    ctx.* = .{ .group = self, .pane_id = pane.id, .entry = @ptrCast(entry) };
-
-    _ = c.g_signal_connect_data(@as(c.gpointer, @ptrCast(dialog)), "response", @as(c.GCallback, @ptrCast(&onCtxRenameResponse)), @ptrCast(ctx), null, 0);
-    c.adw_dialog_present(@as(*c.AdwDialog, @ptrCast(dialog)), @ptrCast(@alignCast(root)));
+    const alert: *c.AdwAlertDialog = @ptrCast(@alignCast(dialog));
+    presentDialog(alloc, alert, group.id, pane.id, false, &onCtxRenameResponse, root);
 
     _ = c.gtk_widget_grab_focus(entry);
     c.gtk_editable_select_region(@ptrCast(entry), 0, -1);
+    return alert;
 }
 
-const RenameCtx = struct {
-    group: *PaneGroup,
-    pane_id: u64,
-    entry: *c.GtkEditable,
+/// One outstanding tab dialog. The dialog owns this allocation and GTK frees it
+/// through the signal destroy notify, whether a response was delivered or the
+/// window took the dialog down first. Nothing here references the group, the
+/// target page, or the group's allocator, so a late response can only find a
+/// live target or cancel.
+const TabDialogCtx = struct {
+    group_id: u64,
+    panel_id: u64,
+    right_only: bool = false,
+    alloc: std.mem.Allocator,
+    /// Live lookups; tests substitute them to model a destroyed group and a
+    /// tab that moved elsewhere.
+    resolve: GroupResolver = .{},
 };
 
-fn onCtxRenameResponse(_: *c.AdwAlertDialog, response: [*:0]const u8, data: c.gpointer) callconv(.c) void {
-    const ctx: *RenameCtx = @ptrCast(@alignCast(data));
-    const resp = std.mem.sliceTo(response, 0);
+/// Where a pending dialog finds its targets. Both lookups walk the live window
+/// manager in production.
+const GroupResolver = struct {
+    by_id: *const fn (group_id: u64) ?*PaneGroup = findLiveGroup,
+    by_pane: *const fn (pane_id: u64) ?*PaneGroup = findGroupContainingPane,
+};
 
-    if (std.mem.eql(u8, resp, "rename")) {
-        const text: [*c]const u8 = c.gtk_editable_get_text(ctx.entry);
-        if (text != null) {
-            const slice = std.mem.span(text);
-            const trimmed = std.mem.trim(u8, slice, " \t\r\n");
-            if (trimmed.len > 0) {
-                if (ctx.group.findPaneById(ctx.pane_id)) |pane| {
-                    pane.setCustomTitle(trimmed);
-                    ctx.group.updateTitleForPane(ctx.pane_id, trimmed);
+fn presentDialog(
+    alloc: std.mem.Allocator,
+    dialog: *c.AdwAlertDialog,
+    group_id: u64,
+    panel_id: u64,
+    right_only: bool,
+    handler: *const fn (*c.AdwAlertDialog, [*:0]const u8, c.gpointer) callconv(.c) void,
+    root: *c.GtkRoot,
+) void {
+    ownDialog(alloc, dialog, group_id, panel_id, right_only, handler, .{});
+    c.adw_dialog_present(@as(*c.AdwDialog, @ptrCast(dialog)), @ptrCast(@alignCast(root)));
+}
+
+/// Gives one outstanding dialog ownership of its context. The dialog frees it
+/// through the destroy notify, so no response path can double-free and a
+/// dialog torn down with the window still releases.
+fn ownDialog(
+    alloc: std.mem.Allocator,
+    dialog: *c.AdwAlertDialog,
+    group_id: u64,
+    panel_id: u64,
+    right_only: bool,
+    handler: *const fn (*c.AdwAlertDialog, [*:0]const u8, c.gpointer) callconv(.c) void,
+    resolver: GroupResolver,
+) void {
+    const ctx = alloc.create(TabDialogCtx) catch return;
+    ctx.* = .{ .group_id = group_id, .panel_id = panel_id, .right_only = right_only, .alloc = alloc, .resolve = resolver };
+
+    _ = c.g_signal_connect_data(
+        @as(c.gpointer, @ptrCast(dialog)),
+        "response",
+        @as(c.GCallback, @ptrCast(handler)),
+        @ptrCast(ctx),
+        @ptrCast(&releaseTabDialog),
+        0,
+    );
+}
+
+fn releaseTabDialog(data: c.gpointer, _: ?*anyopaque) callconv(.c) void {
+    const ctx: *TabDialogCtx = @ptrCast(@alignCast(data));
+    ctx.alloc.destroy(ctx);
+}
+
+fn findLiveGroup(group_id: u64) ?*PaneGroup {
+    const Window = @import("window.zig");
+    const wm = Window.window_manager orelse return null;
+    for (wm.windows.items) |state| {
+        for (state.workspaces.items) |ws| {
+            for (ws.columns.items) |col| {
+                for (col.groups.items) |group| {
+                    if (group.id == group_id) return group;
                 }
             }
         }
-    } else if (std.mem.eql(u8, resp, "clear")) {
-        if (ctx.group.findPaneById(ctx.pane_id)) |pane| {
-            pane.clearCustomTitle();
-            const title = pane.getCachedTitle() orelse "Terminal";
-            ctx.group.updateTitleForPane(ctx.pane_id, title);
+    }
+    return null;
+}
+
+/// Finds the live group that currently holds a pane, following a tab that was
+/// dragged to another group or window after its dialog opened.
+fn findGroupContainingPane(pane_id: u64) ?*PaneGroup {
+    const Window = @import("window.zig");
+    const wm = Window.window_manager orelse return null;
+    for (wm.windows.items) |state| {
+        for (state.workspaces.items) |ws| {
+            if (ws.findGroupContainingPane(pane_id)) |group| return group;
         }
     }
+    return null;
+}
 
-    ctx.group.alloc.destroy(ctx);
+fn onCtxRenameResponse(dialog: *c.AdwAlertDialog, response: [*:0]const u8, data: c.gpointer) callconv(.c) void {
+    const ctx: *TabDialogCtx = @ptrCast(@alignCast(data));
+    const resp = std.mem.sliceTo(response, 0);
+    if (!std.mem.eql(u8, resp, "rename") and !std.mem.eql(u8, resp, "clear")) return;
+
+    const title: ?[]const u8 = if (std.mem.eql(u8, resp, "rename")) dialogEntryText(dialog) else null;
+    _ = applyRenameResponse(ctx.resolve, ctx.group_id, ctx.panel_id, title);
+}
+
+/// Reads the rename entry from the live dialog; null when it was emptied.
+fn dialogEntryText(dialog: *c.AdwAlertDialog) ?[]const u8 {
+    const child = c.adw_alert_dialog_get_extra_child(dialog) orelse return null;
+    const entry: *c.GtkEditable = @ptrCast(@alignCast(child));
+    const raw: [*c]const u8 = c.gtk_editable_get_text(entry);
+    if (raw == null) return null;
+    const trimmed = std.mem.trim(u8, std.mem.span(raw), " \t\r\n");
+    return if (trimmed.len > 0) trimmed else null;
+}
+
+/// Applies a rename decision to the live pane, following it across groups.
+/// Returns false when the pane is gone, so a late response is cancellation.
+fn applyRenameResponse(resolve: GroupResolver, group_id: u64, pane_id: u64, title: ?[]const u8) bool {
+    const owner = if (resolve.by_id(group_id)) |group|
+        (if (group.findPaneById(pane_id) != null) group else null)
+    else
+        null;
+    const group = owner orelse resolve.by_pane(pane_id) orelse return false;
+    const pane = group.findPaneById(pane_id) orelse return false;
+
+    if (title) |text| {
+        pane.setCustomTitle(text);
+        group.updateTitleForPane(pane_id, text);
+    } else {
+        pane.clearCustomTitle();
+        group.updateTitleForPane(pane_id, pane.getCachedTitle() orelse "Terminal");
+    }
+    return true;
 }
 
 fn onCtxClose(_: *c.GSimpleAction, _: ?*c.GVariant, data: c.gpointer) callconv(.c) void {
@@ -834,15 +937,25 @@ fn onCtxCloseRight(_: *c.GSimpleAction, _: ?*c.GVariant, data: c.gpointer) callc
     c.adw_tab_view_close_pages_after(self.tab_view, page);
 }
 
-const CloseDialogCtx = struct {
-    group: *PaneGroup,
-    page: *c.AdwTabPage,
-    right_only: bool,
-    alloc: std.mem.Allocator,
-};
+/// Resolves the panel ID that owns a live tab page; null once the page's
+/// panel left this group.
+fn panelIdForPage(group: *PaneGroup, page: *c.AdwTabPage) ?u64 {
+    const child = c.adw_tab_page_get_child(page);
+    for (group.panels.items) |panel| {
+        if (panel.getWidget() == child) return panel.getId();
+    }
+    return null;
+}
 
 fn showCloseConfirmDialog(group: *PaneGroup, page: *c.AdwTabPage, right_only: bool) void {
-    const root = c.gtk_widget_get_root(asWidget(group.tab_view)) orelse return;
+    _ = showCloseConfirmDialogWith(std.heap.c_allocator, group, page, right_only);
+}
+
+/// Builds, owns and presents the close-confirmation dialog. Returns the dialog
+/// so tests can drive its response without a pointer-driven menu.
+fn showCloseConfirmDialogWith(alloc: std.mem.Allocator, group: *PaneGroup, page: *c.AdwTabPage, right_only: bool) ?*c.AdwAlertDialog {
+    const panel_id = panelIdForPage(group, page) orelse return null;
+    const root = c.gtk_widget_get_root(asWidget(group.tab_view)) orelse return null;
 
     const page_pos = c.adw_tab_view_get_page_position(group.tab_view, page);
     const n = c.adw_tab_view_get_n_pages(group.tab_view);
@@ -862,28 +975,35 @@ fn showCloseConfirmDialog(group: *PaneGroup, page: *c.AdwTabPage, right_only: bo
     c.adw_alert_dialog_set_default_response(@as(*c.AdwAlertDialog, @ptrCast(dialog)), "cancel");
     c.adw_alert_dialog_set_close_response(@as(*c.AdwAlertDialog, @ptrCast(dialog)), "cancel");
 
-    const ctx = group.alloc.create(CloseDialogCtx) catch return;
-    ctx.* = .{
-        .group = group,
-        .page = page,
-        .right_only = right_only,
-        .alloc = group.alloc,
-    };
-
-    _ = c.g_signal_connect_data(@as(c.gpointer, @ptrCast(dialog)), "response", @as(c.GCallback, @ptrCast(&onCloseDialogResponse)), @ptrCast(ctx), null, 0);
-    c.adw_dialog_present(@as(*c.AdwDialog, @ptrCast(dialog)), @ptrCast(@alignCast(root)));
+    const alert: *c.AdwAlertDialog = @ptrCast(@alignCast(dialog));
+    presentDialog(alloc, alert, group.id, panel_id, right_only, &onCloseDialogResponse, root);
+    return alert;
 }
 
 fn onCloseDialogResponse(_: *c.AdwAlertDialog, response: [*:0]const u8, data: c.gpointer) callconv(.c) void {
-    const ctx: *CloseDialogCtx = @ptrCast(@alignCast(data));
-    if (std.mem.eql(u8, std.mem.sliceTo(response, 0), "close")) {
-        if (ctx.right_only) {
-            c.adw_tab_view_close_pages_after(ctx.group.tab_view, ctx.page);
-        } else {
-            c.adw_tab_view_close_other_pages(ctx.group.tab_view, ctx.page);
-        }
+    const ctx: *TabDialogCtx = @ptrCast(@alignCast(data));
+    if (!std.mem.eql(u8, std.mem.sliceTo(response, 0), "close")) return;
+    _ = applyCloseResponse(ctx.resolve, ctx.group_id, ctx.panel_id, ctx.right_only);
+}
+
+/// Resolves a panel's current tab page in a live group; null after the tab was
+/// closed or moved elsewhere, which turns the response into a no-op.
+fn tabPageForPanel(group: *PaneGroup, panel_id: u64) ?*c.AdwTabPage {
+    const found = group.findPanelById(panel_id) orelse return null;
+    return c.adw_tab_view_get_page(group.tab_view, found.panel.getWidget());
+}
+
+/// Applies a confirmed close to the live group. Returns false, touching no tab,
+/// when the group or the target panel disappeared while the dialog was open.
+fn applyCloseResponse(resolve: GroupResolver, group_id: u64, panel_id: u64, right_only: bool) bool {
+    const group = resolve.by_id(group_id) orelse return false;
+    const page = tabPageForPanel(group, panel_id) orelse return false;
+    if (right_only) {
+        c.adw_tab_view_close_pages_after(group.tab_view, page);
+    } else {
+        c.adw_tab_view_close_other_pages(group.tab_view, page);
     }
-    ctx.alloc.destroy(ctx);
+    return true;
 }
 
 // ── Idle callback to close empty groups ────────────────────────────
@@ -912,4 +1032,171 @@ var id_counter: u64 = 0;
 fn nextId() u64 {
     id_counter += 1;
     return id_counter;
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+const testing = std.testing;
+
+var test_group: ?*PaneGroup = null;
+
+fn testGroupById(_: u64) ?*PaneGroup {
+    return test_group;
+}
+
+fn testGroupByPane(_: u64) ?*PaneGroup {
+    return test_group;
+}
+
+fn missingGroup(_: u64) ?*PaneGroup {
+    return null;
+}
+
+fn testResolver() GroupResolver {
+    return .{ .by_id = testGroupById, .by_pane = testGroupByPane };
+}
+
+fn liveGroupResolver() GroupResolver {
+    return .{};
+}
+
+/// Creates a group with `count` terminal panels, returning it with its first
+/// pane. The container is sunk so tests can finalize it after `destroy`.
+fn destroyTestGroup(group: *PaneGroup, container: *c.GtkWidget) void {
+    group.destroy();
+    c.g_object_unref(@ptrCast(container));
+    test_group = null;
+}
+
+fn makeTestGroup(alloc: std.mem.Allocator, count: usize) !*PaneGroup {
+    const group = try PaneGroup.createEmpty(alloc, 1);
+    for (0..count) |_| {
+        _ = try group.newPanel(null);
+    }
+    return group;
+}
+
+test "tab dialog context is released once by the dialog destroy notify" {
+    if (c.gtk_init_check() == 0) return error.SkipZigTest;
+    const alloc = std.testing.allocator;
+    const group = try makeTestGroup(alloc, 1);
+    const container = group.getWidget();
+    _ = c.g_object_ref_sink(@ptrCast(container));
+    test_group = group;
+    defer destroyTestGroup(group, container);
+
+    const dialog = c.adw_alert_dialog_new("Rename tab", null);
+    _ = c.g_object_ref_sink(@ptrCast(dialog));
+    ownDialog(alloc, @ptrCast(dialog), group.id, group.focusedTerminalPane().?.id, false, &onCtxRenameResponse, testResolver());
+
+    // Cancel: the response must not touch the pane, and the destroy notify
+    // still releases the context exactly once (testing.allocator checks both
+    // a leak here and a double free below).
+    c.g_signal_emit_by_name(@ptrCast(dialog), "response", @as([*c]const u8, "cancel"));
+    c.g_object_unref(@ptrCast(dialog));
+
+    const silent = c.adw_alert_dialog_new("Close other tabs", null);
+    _ = c.g_object_ref_sink(@ptrCast(silent));
+    ownDialog(alloc, @ptrCast(silent), group.id, group.focusedTerminalPane().?.id, false, &onCloseDialogResponse, testResolver());
+    // Window teardown without any response: release must still happen.
+    c.g_object_unref(@ptrCast(silent));
+}
+
+test "rename response renames the live pane and refuses a vanished target" {
+    if (c.gtk_init_check() == 0) return error.SkipZigTest;
+    const alloc = std.testing.allocator;
+    const group = try makeTestGroup(alloc, 3);
+    const container = group.getWidget();
+    _ = c.g_object_ref_sink(@ptrCast(container));
+    test_group = group;
+    defer destroyTestGroup(group, container);
+
+    const first = group.panels.items[0].asTerminal().?;
+    const middle = group.panels.items[1].asTerminal().?;
+
+    try testing.expect(applyRenameResponse(testResolver(), group.id, first.id, "Live"));
+    try testing.expectEqualStrings("Live", first.getDisplayTitle().?);
+
+    // Clearing restores whatever title the shell reported (possibly none).
+    try testing.expect(applyRenameResponse(testResolver(), group.id, first.id, null));
+    try testing.expect(!std.mem.eql(u8, first.getDisplayTitle() orelse "", "Live"));
+
+    // The tab was closed while its dialog was open: cancellation, no crash.
+    _ = group.removePanel(1);
+    try testing.expect(!applyRenameResponse(testResolver(), group.id, middle.id, "Gone"));
+
+    // The pane moved to another group: follow it there.
+    const moved = group.panels.items[1].asTerminal().?;
+    try testing.expect(applyRenameResponse(.{ .by_id = missingGroup, .by_pane = testGroupByPane }, group.id, moved.id, "Moved"));
+    try testing.expectEqualStrings("Moved", moved.getDisplayTitle().?);
+
+    // Everything is gone (group and window destroyed first).
+    try testing.expect(!applyRenameResponse(.{ .by_id = missingGroup, .by_pane = missingGroup }, group.id, moved.id, "Late"));
+    try testing.expect(!applyRenameResponse(liveGroupResolver(), group.id, moved.id, "Late"));
+}
+
+test "close response leaves surviving tabs alone when its target vanished" {
+    if (c.gtk_init_check() == 0) return error.SkipZigTest;
+    const alloc = std.testing.allocator;
+    const group = try makeTestGroup(alloc, 3);
+    const container = group.getWidget();
+    _ = c.g_object_ref_sink(@ptrCast(container));
+    test_group = group;
+    defer destroyTestGroup(group, container);
+
+    const middle = group.panels.items[1].asTerminal().?;
+    try testing.expectEqual(@as(c.gint, 3), c.adw_tab_view_get_n_pages(group.tab_view));
+
+    // Remove the dialog's target, then deliver its response: no tab-view call
+    // may run, so the two surviving tabs stay put.
+    try testing.expect(!group.removePanel(1));
+    try testing.expectEqual(@as(c.gint, 2), c.adw_tab_view_get_n_pages(group.tab_view));
+    try testing.expect(!applyCloseResponse(testResolver(), group.id, middle.id, false));
+    try testing.expectEqual(@as(c.gint, 2), c.adw_tab_view_get_n_pages(group.tab_view));
+    try testing.expectEqual(@as(usize, 2), group.panels.items.len);
+
+    // Destroyed group, live panel ID: cancellation.
+    try testing.expect(!applyCloseResponse(.{ .by_id = missingGroup, .by_pane = missingGroup }, group.id, group.panels.items[0].getId(), false));
+
+    // Live target: close pages after it and leave only that tab.
+    try testing.expect(applyCloseResponse(testResolver(), group.id, group.panels.items[0].getId(), true));
+    try testing.expectEqual(@as(c.gint, 1), c.adw_tab_view_get_n_pages(group.tab_view));
+    try testing.expectEqual(@as(usize, 1), group.panels.items.len);
+}
+
+test "presented tab dialogs become harmless when their group is destroyed" {
+    if (c.gtk_init_check() == 0) return error.SkipZigTest;
+    const alloc = std.testing.allocator;
+
+    const window = c.gtk_window_new();
+    _ = c.g_object_ref_sink(@ptrCast(window));
+    defer c.g_object_unref(@ptrCast(window));
+
+    const group = try makeTestGroup(alloc, 3);
+    const container = group.getWidget();
+    c.gtk_window_set_child(@ptrCast(window), container);
+
+    // Both dialogs are owned by the presented window, exactly as in the app.
+    const close_dialog = showCloseConfirmDialogWith(alloc, group, c.adw_tab_view_get_nth_page(group.tab_view, 0).?, false).?;
+    const rename_dialog = showRenameDialog(alloc, group, group.panels.items[0].asTerminal().?).?;
+    try testing.expect(close_dialog != rename_dialog);
+
+    while (c.g_main_context_iteration(null, 0) != 0) {}
+
+    // The group is torn down while both dialogs are outstanding.
+    group.destroy();
+
+    // Late responses must resolve nothing and leave the window untouched. The
+    // context release still happens through each dialog's destroy notify, which
+    // testing.allocator verifies (leak or double free would fail the test).
+    c.g_signal_emit_by_name(@ptrCast(close_dialog), "response", @as([*c]const u8, "close"));
+    c.g_signal_emit_by_name(@ptrCast(rename_dialog), "response", @as([*c]const u8, "rename"));
+    _ = c.adw_dialog_close(@ptrCast(close_dialog));
+    _ = c.adw_dialog_close(@ptrCast(rename_dialog));
+    while (c.g_main_context_iteration(null, 0) != 0) {}
+
+    c.gtk_window_set_child(@ptrCast(window), null);
+    while (c.g_main_context_iteration(null, 0) != 0) {}
 }

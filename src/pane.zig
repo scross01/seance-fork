@@ -1741,11 +1741,25 @@ fn onFlashClear(data: c.gpointer) callconv(.c) c.gboolean {
     return 0;
 }
 
-/// Context for async drop data read.
+/// Context for async drop data read. Only the ID survives the async boundary:
+/// the pane may be destroyed or moved before the payload arrives.
 const DropReadCtx = struct {
-    pane: *Pane,
+    pane_id: u64,
     drop: *c.GdkDrop,
 };
+
+/// Resolves the pane a drop read is completing for through the live window
+/// manager; null once the pane is gone, which cancels the drop.
+fn resolveLivePane(pane_id: u64) ?*Pane {
+    const Window = @import("window.zig");
+    const wm = Window.window_manager orelse return null;
+    for (wm.windows.items) |state| {
+        for (state.workspaces.items) |ws| {
+            if (ws.findPaneById(pane_id)) |pane| return pane;
+        }
+    }
+    return null;
+}
 
 /// Set up drag-and-drop target on the GLArea for file drops.
 fn setupDropTarget(pane: *Pane) void {
@@ -1785,7 +1799,7 @@ fn onDropAsync(_: *c.GtkDropTargetAsync, drop: *c.GdkDrop, _: f64, _: f64, user_
 
     const ctx_mem = c.g_malloc(@sizeOf(DropReadCtx)) orelse return 0;
     const ctx: *DropReadCtx = @ptrCast(@alignCast(ctx_mem));
-    ctx.* = .{ .pane = pane, .drop = drop };
+    ctx.* = .{ .pane_id = pane.id, .drop = drop };
 
     // Read the drop payload as a GdkFileList (GTK deserialises text/uri-list).
     c.gdk_drop_read_value_async(
@@ -1809,6 +1823,11 @@ fn onDropValueReady(source_object: ?*c.GObject, res: ?*c.GAsyncResult, user_data
         return;
     });
 
+    // Every branch below ends the drop protocol exactly once, including when
+    // the payload is unusable or the target disappeared mid-read.
+    var action: c.GdkDragAction = 0;
+    defer c.gdk_drop_finish(drop, action);
+
     var err: ?*c.GError = null;
     const value: *const c.GValue = c.gdk_drop_read_value_finish(drop, res, &err) orelse {
         if (err) |e| {
@@ -1819,13 +1838,11 @@ fn onDropValueReady(source_object: ?*c.GObject, res: ?*c.GAsyncResult, user_data
             }
             c.g_error_free(e);
         }
-        c.gdk_drop_finish(drop, 0);
         return;
     };
 
     const boxed = c.g_value_get_boxed(value) orelse {
         std.log.debug("pane: drop value has no boxed data", .{});
-        c.gdk_drop_finish(drop, 0);
         return;
     };
     const files: ?*c.GSList = c.gdk_file_list_get_files(@ptrCast(@constCast(boxed)));
@@ -1849,30 +1866,43 @@ fn onDropValueReady(source_object: ?*c.GObject, res: ?*c.GAsyncResult, user_data
         node = n.next;
     }
 
-    if (pos > 0) {
-        std.log.debug("pane: drop {d} path bytes onto pane {d}", .{ pos, ctx.pane.id });
-        // Null-terminate for gdk_clipboard_set_text, then use ghostty's
-        // paste_from_clipboard so the text goes through proper bracketed-paste.
-        if (pos < buf.len) {
-            buf[pos] = 0;
-            const display = c.gdk_display_get_default();
-            if (display) |d| {
-                const clipboard = c.gdk_display_get_clipboard(d);
-                if (clipboard) |cb| {
-                    c.gdk_clipboard_set_text(cb, &buf);
-                    if (ctx.pane.surface) |s| {
-                        _ = c.ghostty_surface_binding_action(s, "paste_from_clipboard", 20);
-                    }
+    const text: [:0]const u8 = if (pos < buf.len) blk: {
+        buf[pos] = 0;
+        break :blk buf[0..pos :0];
+    } else "";
+    action = applyDropText(resolveLivePane(ctx.pane_id), text);
+}
+
+/// Applies the escaped paths of a completed drop read to a live pane and
+/// returns the action the protocol must finish with. A null pane means the
+/// target disappeared while the read was in flight: cancel without touching
+/// freed pane or widget state.
+fn applyDropText(pane: ?*Pane, text: [:0]const u8) c.GdkDragAction {
+    const live = pane orelse {
+        std.log.debug("pane: drop target disappeared while reading", .{});
+        return 0;
+    };
+
+    if (text.len == 0) {
+        std.log.debug("pane: drop event but no file paths extracted", .{});
+    } else {
+        std.log.debug("pane: drop {d} path bytes onto pane {d}", .{ text.len, live.id });
+        // Use ghostty's own paste so the text goes through bracketed-paste.
+        const display = c.gdk_display_get_default();
+        if (display) |d| {
+            const clipboard = c.gdk_display_get_clipboard(d);
+            if (clipboard) |cb| {
+                c.gdk_clipboard_set_text(cb, text.ptr);
+                if (live.surface) |s| {
+                    _ = c.ghostty_surface_binding_action(s, "paste_from_clipboard", 20);
                 }
             }
         }
-    } else {
-        std.log.debug("pane: drop event but no file paths extracted", .{});
     }
 
-    ctx.pane.focus();
-    c.gtk_widget_remove_css_class(ctx.pane.widget, "pane-drop-target");
-    c.gdk_drop_finish(drop, c.GDK_ACTION_COPY);
+    live.focus();
+    c.gtk_widget_remove_css_class(live.widget, "pane-drop-target");
+    return c.GDK_ACTION_COPY;
 }
 
 fn onDragEnter(_: *c.GtkDropTargetAsync, _: *c.GdkDrop, _: f64, _: f64, user_data: c.gpointer) callconv(.c) c.GdkDragAction {
@@ -1922,4 +1952,38 @@ pub fn handlePaste(pane: *Pane) void {
         // Use ghostty's built-in paste handling
         _ = c.ghostty_surface_binding_action(s, "paste_from_clipboard", 20);
     }
+}
+
+test "drop completion cancels when the target pane is gone" {
+    if (c.gtk_init_check() == 0) return error.SkipZigTest;
+    const alloc = std.testing.allocator;
+    const pane = try Pane.create(alloc, null, 1, 1);
+    const pane_id = pane.id;
+    const widget = pane.widget;
+    _ = c.g_object_ref_sink(@ptrCast(widget));
+    pane.destroy(alloc);
+
+    // A payload that arrives after teardown resolves to no live pane: the
+    // completion cancels the drop instead of touching the freed widget.
+    try std.testing.expectEqual(@as(?*Pane, null), resolveLivePane(pane_id));
+    try std.testing.expectEqual(@as(c.GdkDragAction, 0), applyDropText(resolveLivePane(pane_id), "/tmp/late"));
+    c.g_object_unref(@ptrCast(widget));
+}
+
+test "drop completion pastes into a live pane and clears its target state" {
+    if (c.gtk_init_check() == 0) return error.SkipZigTest;
+    const alloc = std.testing.allocator;
+    const pane = try Pane.create(alloc, null, 1, 1);
+    const widget = pane.widget;
+    _ = c.g_object_ref_sink(@ptrCast(widget));
+    defer c.g_object_unref(@ptrCast(widget));
+    defer pane.destroy(alloc);
+
+    c.gtk_widget_add_css_class(widget, "pane-drop-target");
+    try std.testing.expectEqual(@as(c.GdkDragAction, c.GDK_ACTION_COPY), applyDropText(pane, "/tmp/a"));
+    try std.testing.expectEqual(@as(c.gboolean, 0), c.gtk_widget_has_css_class(widget, "pane-drop-target"));
+
+    // Cancellation never reports a completed action.
+    try std.testing.expectEqual(@as(c.GdkDragAction, 0), applyDropText(null, "/tmp/a"));
+    try std.testing.expectEqual(@as(c.GdkDragAction, 0), applyDropText(null, ""));
 }
