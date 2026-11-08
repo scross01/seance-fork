@@ -2063,10 +2063,6 @@ pub const Workspace = struct {
         // Panel, not Pane: a browser transferred out of a stacked column takes
         // this slow path too, so every later step works through Panel accessors.
         const panel = src_grp.panels.items[active_idx];
-        // In tabbed mode the active panel fills the column, so use
-        // full-height fractions for animation instead of stale stacked values.
-        const old_frac_y: f64 = if (src_grp.in_stacked_mode) panel.getStackedFracY() else 0.0;
-        const old_frac_h: f64 = if (src_grp.in_stacked_mode) panel.getStackedFracH() else 1.0;
 
         // --- Suppress focus events during restructuring ---
         self.restructuring = true;
@@ -2189,8 +2185,10 @@ pub const Workspace = struct {
                 const tgt_col_left = self.columnLeft(tgt_idx);
                 const new_screen_x = (tgt_col_left - self.camera) * fw;
                 panel.setStackedOffsetX(old_screen_x - new_screen_x);
-                panel.setStackedFracY(old_frac_y);
-                panel.setStackedFracH(old_frac_h);
+                // The column already shows other panels: give the newcomer its
+                // own row instead of the fraction it had in the source, which
+                // would cover the panels already here.
+                tgt_grp.assignLastRow(insert_pos);
                 panel.setStackedOpenAnim(1.0);
                 panel.setStackedClosing(false);
             }
@@ -2231,12 +2229,13 @@ pub const Workspace = struct {
                 }
             }
 
-            // Animation: horizontal slide from old position
+            // Animation: horizontal slide from old position. The panel is alone
+            // in its new column, so it fills it regardless of its old row.
             const new_col_left = self.columnLeft(insert_at);
             const new_screen_x = (new_col_left - self.camera) * fw;
             panel.setStackedOffsetX(old_screen_x - new_screen_x);
-            panel.setStackedFracY(old_frac_y);
-            panel.setStackedFracH(old_frac_h);
+            panel.setStackedFracY(0.0);
+            panel.setStackedFracH(1.0);
             panel.setStackedOpenAnim(1.0);
             panel.setStackedClosing(false);
 

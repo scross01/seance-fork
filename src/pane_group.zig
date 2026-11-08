@@ -214,6 +214,40 @@ pub const PaneGroup = struct {
         }
     }
 
+    /// Give the panel at `index` the bottom row of the stacked layout and
+    /// spread the height above it over the other panels in proportion to the
+    /// rows they occupy now. A panel joining a stacked group from another
+    /// column keeps its own fraction otherwise, which lays it over the panels
+    /// already here; this makes the column tile again, gaps included, without
+    /// flattening the rows a user resized.
+    pub fn assignLastRow(self: *PaneGroup, index: usize) void {
+        const count = self.panels.items.len;
+        if (index >= count) return;
+
+        const count_f: f64 = @floatFromInt(count);
+        const above = (count_f - 1.0) / count_f;
+        // Only reached with one panel (which then takes the whole column), so
+        // the loop below never divides by zero.
+        const uniform = if (count > 1) 1.0 / (count_f - 1.0) else 1.0;
+
+        var weights: f64 = 0.0;
+        for (self.panels.items, 0..) |panel, i| {
+            if (i != index) weights += panel.getStackedFracH();
+        }
+
+        var y: f64 = 0.0;
+        for (self.panels.items, 0..) |panel, i| {
+            if (i == index) continue;
+            const share = if (weights > 0.0) panel.getStackedFracH() / weights else uniform;
+            panel.setStackedFracY(y);
+            panel.setStackedFracH(above * share);
+            y += above * share;
+        }
+
+        self.panels.items[index].setStackedFracY(y);
+        self.panels.items[index].setStackedFracH(1.0 / count_f);
+    }
+
     pub fn newPanel(self: *PaneGroup, cwd: ?[*:0]const u8) !*Pane {
         const pane = try Pane.create(self.alloc, cwd, self.workspace_id, self.id);
 
@@ -1049,6 +1083,67 @@ fn makeTestGroup(alloc: std.mem.Allocator, count: usize) !*PaneGroup {
         _ = try group.newPanel(null);
     }
     return group;
+}
+
+/// Append a panel without going through addPanel, whose stacked branch focuses
+/// the new pane. Tests that only care about row fractions use this.
+fn appendTestPanel(group: *PaneGroup, alloc: std.mem.Allocator) !Panel {
+    const pane = try Pane.create(alloc, null, 1, group.id);
+    const panel = Panel{ .terminal = pane };
+    try group.panels.append(alloc, panel);
+    return panel;
+}
+
+test "assignLastRow gives a panel joining a stacked group its own row" {
+    if (c.gtk_init_check() == 0) return error.SkipZigTest;
+    const alloc = std.testing.allocator;
+    const group = try makeTestGroup(alloc, 1);
+    const container = group.getWidget();
+    _ = c.g_object_ref_sink(@ptrCast(container));
+    test_group = group;
+    defer destroyTestGroup(group, container);
+    // Only the row arithmetic is under test, so the group needs no GtkFixed:
+    // a single stacked panel fills the column, as it does live.
+    group.in_stacked_mode = true;
+    group.panels.items[0].setStackedFracY(0.0);
+    group.panels.items[0].setStackedFracH(1.0);
+
+    _ = try appendTestPanel(group, alloc);
+    group.assignLastRow(1);
+
+    try testing.expectApproxEqAbs(@as(f64, 0.0), group.panels.items[0].getStackedFracY(), 1e-9);
+    try testing.expectApproxEqAbs(@as(f64, 0.5), group.panels.items[0].getStackedFracH(), 1e-9);
+    try testing.expectApproxEqAbs(@as(f64, 0.5), group.panels.items[1].getStackedFracY(), 1e-9);
+    try testing.expectApproxEqAbs(@as(f64, 0.5), group.panels.items[1].getStackedFracH(), 1e-9);
+}
+
+test "assignLastRow repairs rows that already overlapped" {
+    if (c.gtk_init_check() == 0) return error.SkipZigTest;
+    const alloc = std.testing.allocator;
+    const group = try makeTestGroup(alloc, 2);
+    const container = group.getWidget();
+    _ = c.g_object_ref_sink(@ptrCast(container));
+    test_group = group;
+    defer destroyTestGroup(group, container);
+    group.in_stacked_mode = true;
+
+    // Adding a panel to a stacked group leaves the first panel full height,
+    // so a group can reach a transfer already overlapping.
+    group.panels.items[0].setStackedFracY(0.0);
+    group.panels.items[0].setStackedFracH(1.0);
+    group.panels.items[1].setStackedFracY(0.5);
+    group.panels.items[1].setStackedFracH(0.5);
+
+    _ = try appendTestPanel(group, alloc);
+    group.assignLastRow(2);
+
+    // Rows keep their relative sizes (1 : 1/2) and fill the column exactly.
+    try testing.expectApproxEqAbs(@as(f64, 0.0), group.panels.items[0].getStackedFracY(), 1e-9);
+    try testing.expectApproxEqAbs(@as(f64, 4.0 / 9.0), group.panels.items[0].getStackedFracH(), 1e-9);
+    try testing.expectApproxEqAbs(@as(f64, 4.0 / 9.0), group.panels.items[1].getStackedFracY(), 1e-9);
+    try testing.expectApproxEqAbs(@as(f64, 2.0 / 9.0), group.panels.items[1].getStackedFracH(), 1e-9);
+    try testing.expectApproxEqAbs(@as(f64, 2.0 / 3.0), group.panels.items[2].getStackedFracY(), 1e-9);
+    try testing.expectApproxEqAbs(@as(f64, 1.0 / 3.0), group.panels.items[2].getStackedFracH(), 1e-9);
 }
 
 test "tab dialog context is released once by the dialog destroy notify" {
