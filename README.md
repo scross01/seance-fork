@@ -113,7 +113,7 @@ Requires Zig **0.16.0** (pinned), GTK4, libadwaita, OpenGL 4.3+, and Linux (X11 
 **Install build dependencies (Ubuntu/Debian):**
 
 ```bash
-sudo apt install pkg-config libgtk-4-dev libadwaita-1-dev libcanberra-dev inotify-tools
+sudo apt install pkg-config libgtk-4-dev libadwaita-1-dev libcanberra-dev libwebkitgtk-6.0-dev inotify-tools
 ```
 
 **Build:**

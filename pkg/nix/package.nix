@@ -8,6 +8,7 @@
   pkg-config,
   zig_0_16,
   libcanberra,
+  webkitgtk_6_0,
   adwaita-icon-theme,
   pkgs,
   revision ? "dirty",
@@ -62,8 +63,10 @@ in
       ghosttyBuildInputs
       ++ [
         libcanberra
+        webkitgtk_6_0
         adwaita-icon-theme
       ];
+      # provides pkg-config module webkitgtk-6.0
 
     dontConfigure = true;
     dontStrip = !strip;

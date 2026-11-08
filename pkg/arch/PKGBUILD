@@ -22,6 +22,7 @@ depends=(
     'freetype2'
     'harfbuzz'
     'oniguruma'
+    'webkitgtk-6.0'
 )
 makedepends=(
     'zig>=0.16.0'

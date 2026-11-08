@@ -37,13 +37,13 @@ mv seance-*-x86_64.AppImage ~/.local/bin/seance
 **Ubuntu/Debian:**
 
 ```bash
-sudo apt install pkg-config libgtk-4-dev libadwaita-1-dev libcanberra-dev inotify-tools
+sudo apt install pkg-config libgtk-4-dev libadwaita-1-dev libcanberra-dev libwebkitgtk-6.0-dev inotify-tools
 ```
 
 **Arch Linux:**
 
 ```bash
-sudo pacman -S pkg-config gtk4 libadwaita libcanberra inotify-tools
+sudo pacman -S pkg-config gtk4 libadwaita libcanberra webkitgtk-6.0 inotify-tools
 ```
 
 ### Clone and build

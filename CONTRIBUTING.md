@@ -12,9 +12,10 @@ Thanks for considering a contribution. A few notes to save time.
 
 ```
 git clone --recursive https://github.com/scross01/seance-fork.git
-cd seance
-zig build
-./zig-out/bin/seance
+cd seance-fork
+make check-zig
+make build
+make run
 ```
 
 You need Zig 0.16.x, GTK4, libadwaita, OpenGL 4.3+, and Linux. The submodule (`ghostty`) must be checked out for libghostty to build.
@@ -104,7 +105,7 @@ and cursor positioning. The test context requires a C compiler and GTK4 headers:
 SEANCE_TEST_BINARY="$PWD/zig-out/bin/seance" python3 -m unittest discover -s tests -p 'test_ime.py' -v
 ```
 
-For a desktop check, build and launch `./zig-out/bin/seance` at your next restart
+For a desktop check, build and launch with `make build` then `make run` (installed AppDir assets) at your next restart
 so an older running instance does not handle the launch. Enable your Korean
 input method and type `안녕` followed by a space. Also insert Korean text into the
 middle of an existing shell command, and switch panes during composition. Check

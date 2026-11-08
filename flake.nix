@@ -48,6 +48,7 @@
           ++ [
             pkgs.libnotify
             pkgs.libcanberra
+            pkgs.webkitgtk_6_0 # provides pkg-config module webkitgtk-6.0
           ];
       };
     });

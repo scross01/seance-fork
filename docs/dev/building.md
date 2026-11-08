@@ -26,13 +26,13 @@ How to build Séance from source, manage dependencies, and work with the Ghostty
 ### Ubuntu/Debian
 
 ```bash
-sudo apt install pkg-config libgtk-4-dev libadwaita-1-dev libcanberra-dev inotify-tools
+sudo apt install pkg-config libgtk-4-dev libadwaita-1-dev libcanberra-dev libwebkitgtk-6.0-dev inotify-tools
 ```
 
 ### Arch Linux
 
 ```bash
-sudo pacman -S gtk4 libadwaita libcanberra inotify-tools
+sudo pacman -S gtk4 libadwaita libcanberra webkitgtk-6.0 inotify-tools
 ```
 
 `inotify-tools` is required for real-time agent status monitoring with Codebuff and Freebuff agents (the Freebuff monitor also uses `ps` from procps, present on any standard Linux system).
