@@ -442,13 +442,18 @@ Evaluate JavaScript in a browser panel and return the result.
 seance ctl browser-eval SCRIPT [--panel ID]
 ```
 
-Evaluates the script synchronously (pumps the glib main loop until the result is ready, up to 5 seconds).
+The request is handled asynchronously: the socket reply is sent when JavaScript
+evaluation completes (up to 5 seconds). `result` contains the native JSON value
+produced by WebKit's serializer (strings as JSON strings, numbers/booleans as
+their JSON types, arrays/objects intact). `undefined` is returned as the JSON
+string `"undefined"`. A thrown exception yields an `eval_error`. Oversized
+scripts are rejected with `invalid_params`.
 
 With `--json`, returns:
 
 | Field | Description |
 |-------|-------------|
-| `result` | JSON-serialized result of the JavaScript expression |
+| `result` | JSON value of the JavaScript expression |
 
 ### browser-close
 

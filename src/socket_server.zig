@@ -135,7 +135,10 @@ pub const SocketServer = struct {
 
         // Accept connection
         const conn_fd = posix.accept(@intCast(self.fd), null, null, 0) catch return 1;
-        defer posix.close(conn_fd);
+        var transferred = false;
+        defer {
+            if (!transferred) posix.close(conn_fd);
+        }
 
         // Guard: don't let a slow client stall the GTK main thread.
         // Data from local Unix sockets arrives in microseconds; 10 ms is generous.
@@ -167,6 +170,30 @@ pub const SocketServer = struct {
 
         // Trim trailing newline/whitespace
         const line = std.mem.trimEnd(u8, buf[0..total], &[_]u8{ '\r', '\n', ' ' });
+
+        // Deferred async path for browser.eval: transfer connection ownership.
+        var is_browser_eval = false;
+        if (std.json.parseFromSlice(std.json.Value, std.heap.page_allocator, line, .{})) |parsed| {
+            defer parsed.deinit();
+            if (parsed.value == .object) {
+                if (parsed.value.object.get("method")) |mv| {
+                    if (mv == .string and std.mem.eql(u8, mv.string, "browser.eval")) {
+                        is_browser_eval = true;
+                    }
+                }
+            }
+        } else |_| {}
+
+        if (is_browser_eval) {
+            const line_copy = std.heap.page_allocator.dupe(u8, line) catch return 1;
+            if (startBrowserEval(self, conn_fd, line_copy)) {
+                transferred = true;
+                return 1;
+            } else {
+                std.heap.page_allocator.free(line_copy);
+                return 1;
+            }
+        }
 
         var resp_buf: [16384]u8 = undefined;
         const response = handleJsonRequest(line, &resp_buf);
@@ -2430,80 +2457,8 @@ pub const SocketServer = struct {
     }
 
     fn handleBrowserEval(params: ?std.json.Value, id: []const u8, buf: []u8) []const u8 {
-        const panel_id = getParamInt(params, "panel_id") orelse 0;
-        const script = getParamString(params, "script") orelse
-            return writeJsonError(buf, id, "invalid_params", "Missing 'script' parameter");
-
-        const wp = resolveBrowserPanel(panel_id) orelse
-            return writeJsonError(buf, id, "not_found", "Browser panel not found");
-
-        // Evaluate JS synchronously: call async API then pump glib main loop.
-        // Safe because we hold the GTK main thread and no re-entrancy.
-        const EvalState = struct {
-            var script_buf: [65536]u8 = undefined;
-            var script_len: usize = 0;
-            var result_json: ?[]const u8 = null;
-            var done: bool = false;
-            var errored: bool = false;
-
-            fn onEvalFinished(webview_ptr: ?*anyopaque, result_ptr: ?*c.GAsyncResult, _: c.gpointer) callconv(.c) void {
-                var err: ?*c.GError = null;
-                const jsc_val = c.webkit_web_view_evaluate_javascript_finish(@ptrCast(@alignCast(webview_ptr)), result_ptr, &err);
-                defer {
-                    if (jsc_val != null) c.g_object_unref(@ptrCast(jsc_val));
-                    if (err != null) c.g_error_free(err.?);
-                }
-                if (err != null or jsc_val == null) {
-                    errored = true;
-                } else {
-                    const str = c.jsc_value_to_json(jsc_val, 0);
-                    if (str != null) {
-                        const slice = std.mem.sliceTo(str, 0);
-                        result_json = std.fmt.allocPrint(std.heap.page_allocator, "\"{s}\"", .{slice}) catch null;
-                        c.g_free(@ptrCast(str));
-                    }
-                }
-                done = true;
-            }
-        };
-
-        const copy_len = @min(script.len, 65535);
-        @memcpy(EvalState.script_buf[0..copy_len], script[0..copy_len]);
-        EvalState.script_len = copy_len;
-        EvalState.result_json = null;
-        EvalState.done = false;
-        EvalState.errored = false;
-
-        c.webkit_web_view_evaluate_javascript(
-            wp.webview,
-            &EvalState.script_buf,
-            @intCast(copy_len),
-            null,
-            null,
-            null,
-            @ptrCast(&EvalState.onEvalFinished),
-            null,
-        );
-
-        // Pump glib main loop until callback fires (max 5 seconds)
-        const deadline = io.milliTimestamp() + 5_000;
-        while (!EvalState.done and io.milliTimestamp() < deadline) {
-            _ = c.g_main_context_iteration(c.g_main_context_default(), 0);
-            io.sleep(1_000_000); // 1ms
-        }
-
-        if (!EvalState.done) {
-            return writeJsonError(buf, id, "timeout", "JavaScript evaluation timed out");
-        }
-        if (EvalState.errored) {
-            return writeJsonError(buf, id, "eval_error", "JavaScript evaluation failed");
-        }
-
-        const val_str = EvalState.result_json orelse "\"undefined\"";
-        var result_buf: [8192]u8 = undefined;
-        const result_str = std.fmt.bufPrint(&result_buf, "{{\"result\":{s}}}", .{val_str}) catch
-            return writeJsonError(buf, id, "internal", "Buffer overflow");
-        return writeJsonOk(buf, id, result_str);
+        _ = params;
+        return writeJsonError(buf, id, "internal", "browser.eval is handled asynchronously");
     }
 
     fn handleBrowserClose(params: ?std.json.Value, id: []const u8, buf: []u8) []const u8 {
@@ -2519,6 +2474,220 @@ pub const SocketServer = struct {
         return writeJsonOk(buf, id, "{}");
     }
 };
+
+const EvalContext = struct {
+    conn_fd: c_int,
+    id: []u8,
+    script: []u8,
+    result_json: ?[]u8 = null,
+    errored: bool = false,
+    error_code: []const u8 = "eval_error",
+    error_msg: []const u8 = "JavaScript evaluation failed",
+    completed: bool = false,
+    timed_out: bool = false,
+    timeout_source: c.guint = 0,
+    alloc: std.mem.Allocator = std.heap.page_allocator,
+
+    fn finishReply(self: *EvalContext) void {
+        if (self.completed) return;
+        self.completed = true;
+        if (self.timeout_source != 0) {
+            _ = c.g_source_remove(self.timeout_source);
+            self.timeout_source = 0;
+        }
+        const resp_buf = self.alloc.alloc(u8, 65536) catch {
+            posix.close(self.conn_fd);
+            // keep ctx alive? free best-effort
+            return;
+        };
+        defer self.alloc.free(resp_buf);
+        const response: []const u8 = if (self.errored)
+            SocketServer.writeJsonError(resp_buf, self.id, self.error_code, self.error_msg)
+        else if (self.result_json) |rj|
+            SocketServer.writeJsonOk(resp_buf, self.id, rj)
+        else
+            SocketServer.writeJsonOk(resp_buf, self.id, "\"undefined\"");
+        _ = writeAll(self.conn_fd, response);
+        posix.close(self.conn_fd);
+    }
+
+    fn cleanup(self: *EvalContext) void {
+        self.alloc.free(self.id);
+        self.alloc.free(self.script);
+        if (self.result_json) |rj| self.alloc.free(rj);
+        self.alloc.destroy(self);
+    }
+};
+
+fn writeAll(fd: c_int, data: []const u8) void {
+    var off: usize = 0;
+    while (off < data.len) {
+        const n = posix.write(fd, data[off..]) catch return;
+        if (n == 0) return;
+        off += n;
+    }
+}
+
+fn onEvalTimeout(user_data: c.gpointer) callconv(.c) c.gboolean {
+    const ctx: *EvalContext = @ptrCast(@alignCast(user_data));
+    if (ctx.completed) return 0;
+    ctx.completed = true;
+    ctx.timed_out = true;
+    ctx.errored = true;
+    ctx.error_code = "timeout";
+    ctx.error_msg = "JavaScript evaluation timed out";
+    if (ctx.timeout_source != 0) {
+        ctx.timeout_source = 0;
+    }
+    // reply timeout, close fd, but keep ctx alive for eventual WebKit callback
+    const resp_buf = ctx.alloc.alloc(u8, 65536) catch {
+        posix.close(ctx.conn_fd);
+        return 0;
+    };
+    defer ctx.alloc.free(resp_buf);
+    const response = SocketServer.writeJsonError(resp_buf, ctx.id, "timeout", "JavaScript evaluation timed out");
+    _ = writeAll(ctx.conn_fd, response);
+    posix.close(ctx.conn_fd);
+    return 0;
+}
+
+fn onEvalFinished(webview_ptr: ?*anyopaque, result_ptr: ?*c.GAsyncResult, user_data: c.gpointer) callconv(.c) void {
+    const ctx: *EvalContext = @ptrCast(@alignCast(user_data));
+    var err: ?*c.GError = null;
+    const jsc_val = c.webkit_web_view_evaluate_javascript_finish(@ptrCast(@alignCast(webview_ptr)), result_ptr, &err);
+    defer {
+        if (jsc_val != null) c.g_object_unref(@ptrCast(jsc_val));
+        if (err != null) c.g_error_free(err.?);
+    }
+    if (ctx.timed_out) {
+        // Already replied with timeout; just free.
+        ctx.cleanup();
+        return;
+    }
+    if (err != null or jsc_val == null) {
+        ctx.errored = true;
+    } else {
+        const str = c.jsc_value_to_json(jsc_val, 0);
+        if (str != null) {
+            const slice = std.mem.sliceTo(str, 0);
+            if (std.mem.eql(u8, slice, "undefined")) {
+                ctx.result_json = null;
+            } else {
+                ctx.result_json = ctx.alloc.dupe(u8, slice) catch null;
+            }
+            c.g_free(@ptrCast(str));
+        } else {
+            ctx.result_json = null;
+        }
+    }
+    if (ctx.completed) {
+        // timeout already handled? shouldn't happen if not timed_out, but guard
+        ctx.cleanup();
+        return;
+    }
+    ctx.finishReply();
+    ctx.cleanup();
+}
+
+fn startBrowserEval(server: *SocketServer, conn_fd: c_int, line: []u8) bool {
+    _ = server;
+    // Parse request
+    const parsed = std.json.parseFromSlice(std.json.Value, std.heap.page_allocator, line, .{}) catch {
+        var buf: [4096]u8 = undefined;
+        const resp = SocketServer.writeJsonError(&buf, "null", "parse_error", "Invalid JSON");
+        _ = writeAll(conn_fd, resp);
+        posix.close(conn_fd);
+        std.heap.page_allocator.free(line);
+        return false;
+    };
+    defer parsed.deinit();
+    if (parsed.value != .object) {
+        var buf: [4096]u8 = undefined;
+        const resp = SocketServer.writeJsonError(&buf, "null", "parse_error", "Request must be a JSON object");
+        _ = writeAll(conn_fd, resp);
+        posix.close(conn_fd);
+        std.heap.page_allocator.free(line);
+        return false;
+    }
+    const root = parsed.value.object;
+    var id_buf: [128]u8 = undefined;
+    const id_str = SocketServer.extractId(root, &id_buf);
+    // copy id
+    const id_copy = std.heap.page_allocator.dupe(u8, id_str) catch {
+        posix.close(conn_fd);
+        std.heap.page_allocator.free(line);
+        return false;
+    };
+
+    const params = root.get("params");
+    const panel_id = SocketServer.getParamInt(params, "panel_id") orelse 0;
+    const script = SocketServer.getParamString(params, "script") orelse {
+        var buf: [4096]u8 = undefined;
+        const resp = SocketServer.writeJsonError(&buf, id_copy, "invalid_params", "Missing 'script' parameter");
+        _ = writeAll(conn_fd, resp);
+        posix.close(conn_fd);
+        std.heap.page_allocator.free(id_copy);
+        std.heap.page_allocator.free(line);
+        return false;
+    };
+
+    // size limit
+    if (script.len > 65535) {
+        var buf: [4096]u8 = undefined;
+        const resp = SocketServer.writeJsonError(&buf, id_copy, "invalid_params", "Script too large");
+        _ = writeAll(conn_fd, resp);
+        posix.close(conn_fd);
+        std.heap.page_allocator.free(id_copy);
+        std.heap.page_allocator.free(line);
+        return false;
+    }
+
+    const wp = SocketServer.resolveBrowserPanel(panel_id) orelse {
+        var buf: [4096]u8 = undefined;
+        const resp = SocketServer.writeJsonError(&buf, id_copy, "not_found", "Browser panel not found");
+        _ = writeAll(conn_fd, resp);
+        posix.close(conn_fd);
+        std.heap.page_allocator.free(id_copy);
+        std.heap.page_allocator.free(line);
+        return false;
+    };
+
+    const ctx = std.heap.page_allocator.create(EvalContext) catch {
+        posix.close(conn_fd);
+        std.heap.page_allocator.free(id_copy);
+        std.heap.page_allocator.free(line);
+        return false;
+    };
+    const script_copy = std.heap.page_allocator.dupe(u8, script) catch {
+        std.heap.page_allocator.destroy(ctx);
+        posix.close(conn_fd);
+        std.heap.page_allocator.free(id_copy);
+        std.heap.page_allocator.free(line);
+        return false;
+    };
+    ctx.* = .{
+        .conn_fd = conn_fd,
+        .id = id_copy,
+        .script = script_copy,
+    };
+    // free the request line copy (no longer needed)
+    std.heap.page_allocator.free(line);
+
+    ctx.timeout_source = c.g_timeout_add(5000, @ptrCast(&onEvalTimeout), @ptrCast(ctx));
+
+    c.webkit_web_view_evaluate_javascript(
+        wp.webview,
+        ctx.script.ptr,
+        @intCast(ctx.script.len),
+        null,
+        null,
+        null,
+        @ptrCast(&onEvalFinished),
+        @ptrCast(ctx),
+    );
+
+    return true;
+}
 
 fn copySlice(dest: []u8, src: []const u8) usize {
     const len = @min(src.len, dest.len);
