@@ -3,6 +3,7 @@ const io = @import("io.zig");
 const builtin = @import("builtin");
 const c = @import("c.zig").c;
 const config_mod = @import("config.zig");
+const runtime_file = @import("runtime_file.zig");
 const pane_mod = @import("pane.zig");
 const Pane = pane_mod.Pane;
 
@@ -902,16 +903,12 @@ pub fn applySeanceConfigPublic(config: *anyopaque) void {
 fn applySeanceDefaults(config: *anyopaque) void {
     const defaults = "window-padding-x = 8\nwindow-padding-y = 8\nfont-size = 11\n";
 
-    var tmp_path_buf: [std.fs.max_path_bytes]u8 = undefined;
     const runtime_dir = config_mod.runtimeDir();
-    const tmp_path = std.fmt.bufPrintZ(&tmp_path_buf, "{s}/seance-ghostty-defaults.tmp", .{runtime_dir}) catch return;
-    const file = std.Io.Dir.createFileAbsolute(io.get(), tmp_path, .{}) catch return;
-    defer {
-        file.close(io.get());
-        std.Io.Dir.deleteFileAbsolute(io.get(), tmp_path) catch {};
-    }
-    file.writeStreamingAll(io.get(), defaults) catch return;
-    c.ghostty_config_load_file(@ptrCast(config), tmp_path);
+    var tmp = runtime_file.OwnedTempFile.create(runtime_dir, "defaults.tmp") catch return;
+    defer tmp.deinit();
+    tmp.writeAll(defaults) catch return;
+    tmp.closeFile();
+    c.ghostty_config_load_file(@ptrCast(config), tmp.pathZ());
 }
 
 /// When no explicit theme is configured, choose between "Adwaita" and
@@ -941,20 +938,16 @@ fn applySeanceConfig(config: *anyopaque) void {
     const written = fbs.buffered();
     if (written.len == 0) return;
 
-    // Write to temp file and load
-    var tmp_path_buf: [std.fs.max_path_bytes]u8 = undefined;
+    // Write to an owned temp file and load
     const runtime_dir = config_mod.runtimeDir();
-    const tmp_path = std.fmt.bufPrintZ(&tmp_path_buf, "{s}/seance-ghostty-config.tmp", .{runtime_dir}) catch return;
-    const file = std.Io.Dir.createFileAbsolute(io.get(), tmp_path, .{}) catch return;
-    defer {
-        file.close(io.get());
-        std.Io.Dir.deleteFileAbsolute(io.get(), tmp_path) catch {};
-    }
-    file.writeStreamingAll(io.get(), written) catch return;
+    var tmp = runtime_file.OwnedTempFile.create(runtime_dir, "config.tmp") catch return;
+    defer tmp.deinit();
+    tmp.writeAll(written) catch return;
+    tmp.closeFile();
 
     // ghostty_config_load_file expects a [*:0]const u8
     c.ghostty_config_load_file(
         @ptrCast(config),
-        tmp_path,
+        tmp.pathZ(),
     );
 }

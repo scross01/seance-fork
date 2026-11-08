@@ -8,6 +8,9 @@ pub const SocketServer = struct {
     watch_id: c.guint = 0,
     path_buf: [std.fs.max_path_bytes]u8 = undefined,
     path_len: usize = 0,
+    bound: bool = false,
+    bound_dev: u64 = 0,
+    bound_ino: u64 = 0,
 
     /// Return the resolved socket path (expanded, no ~).
     /// Prefers XDG_RUNTIME_DIR for runtime sockets, falls back to $HOME/.seance/.
@@ -52,6 +55,7 @@ pub const SocketServer = struct {
             if (isSocketAlive(path)) {
                 std.log.warn("socket_server: another seance instance is using {s}", .{path});
                 std.log.err("seance: another instance is already running ({s})", .{path});
+                self.path_len = 0;
                 return;
             }
             // Socket is stale, safe to remove
@@ -106,10 +110,19 @@ pub const SocketServer = struct {
             posix.close(@intCast(self.fd));
             self.fd = -1;
         }
-        if (self.path_len > 0) {
-            posix.unlink(self.path_buf[0..self.path_len]) catch {};
-            self.path_len = 0;
+        self.cleanupOwnedSocket();
+    }
+
+    fn cleanupOwnedSocket(self: *SocketServer) void {
+        if (self.bound and self.path_len > 0) {
+            if (posix.pathIdentity(self.path_buf[0..self.path_len])) |id| {
+                if (id.dev == self.bound_dev and id.ino == self.bound_ino) {
+                    posix.unlink(self.path_buf[0..self.path_len]) catch {};
+                }
+            } else |_| {}
         }
+        self.bound = false;
+        self.path_len = 0;
     }
 
     /// Check if a socket file is owned by a running instance by trying to connect.
