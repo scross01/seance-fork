@@ -347,7 +347,7 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run unit tests");
 
     // Standalone tests (no external dependencies)
-    for ([_][]const u8{ "src/ime_state.zig", "src/osc_parser.zig", "src/port_scan.zig", "src/io.zig", "src/posix.zig", "src/opencode.zig", "src/ctl.zig", "src/vibe_hooks.zig", "src/session_storage.zig", "src/hermes_config_file.zig", "src/panel_id.zig", "src/runtime_file.zig" }) |src| {
+    for ([_][]const u8{ "src/ime_state.zig", "src/osc_parser.zig", "src/port_scan.zig", "src/io.zig", "src/posix.zig", "src/opencode.zig", "src/ctl.zig", "src/vibe_hooks.zig", "src/session_storage.zig", "src/hermes_config_file.zig", "src/panel_id.zig", "src/runtime_file.zig", "src/git_info.zig" }) |src| {
         const mod = b.createModule(.{
             .root_source_file = b.path(src),
             .target = target,

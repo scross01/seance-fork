@@ -445,8 +445,10 @@ pub const WindowState = struct {
             if (!shell_has_branch) {
                 // Fallback: read .git/HEAD (file I/O only, fast)
                 if (ws.getActivePaneCwd()) |cwd_path| {
-                    if (git_info.getBranch(&ws.git_branch, cwd_path)) |branch| {
-                        if (branch.len != ws.git_branch_len) changed = true;
+                    var tmp_branch: [128]u8 = undefined;
+                    if (git_info.getBranch(&tmp_branch, cwd_path)) |branch| {
+                        if (branch.len != ws.git_branch_len or !std.mem.eql(u8, branch, ws.git_branch[0..ws.git_branch_len])) changed = true;
+                        @memcpy(ws.git_branch[0..branch.len], branch);
                         ws.git_branch_len = branch.len;
                     } else {
                         if (ws.git_branch_len != 0) changed = true;
@@ -462,9 +464,13 @@ pub const WindowState = struct {
             if (ws.focusedGroup()) |fg| {
                 if (fg.focusedTerminalPane()) |fp| {
                     if (fp.getCachedTitle()) |title| {
-                        const old_len = ws.title_len;
+                        var old_title: [128]u8 = undefined;
+                        const old_slice = ws.getTitle();
+                        @memcpy(old_title[0..old_slice.len], old_slice);
+                        const old_len = old_slice.len;
                         ws.setAutoTitle(title);
-                        if (ws.title_len != old_len) changed = true;
+                        const new_slice = ws.getTitle();
+                        if (old_len != new_slice.len or !std.mem.eql(u8, old_title[0..old_len], new_slice)) changed = true;
                     }
                 }
             }
