@@ -10,6 +10,7 @@ const socket_server = @import("socket_server.zig");
 const ghostty_bridge = @import("ghostty_bridge.zig");
 const config_mod = @import("config.zig");
 const hermes_config_file = @import("hermes_config_file.zig");
+const commandcode_config_file = @import("commandcode_config_file.zig");
 const pool_config_file = @import("pool_config_file.zig");
 const vibe_hooks = @import("vibe_hooks.zig");
 const blur_mod = @import("blur.zig");
@@ -641,24 +642,16 @@ fn lockCommandCodeSettings(alloc: std.mem.Allocator, path: []const u8) ?std.Io.F
     }) catch null;
 }
 
-/// True when the file on disk still holds what we read. `expected` is null
-/// when the file was absent.
-fn commandCodeSettingsUnchanged(alloc: std.mem.Allocator, path: []const u8, expected: ?[]const u8) bool {
-    const current = readCommandCodeSettings(alloc, path);
-    defer if (current) |data| alloc.free(data);
-    if (expected) |text| {
-        const now = current orelse return false;
-        return std.mem.eql(u8, text, now);
-    }
-    return current == null;
-}
-
-/// Merge seance's hooks into ~/.commandcode/settings.json. Every other key the
-/// user has set (model, theme, ...) is preserved: the file is parsed as JSON,
-/// only the "hooks" object is touched, and it is written back atomically.
+/// Merge seance's hooks into ~/.commandcode/settings.json. Every other key
+/// the user has set (model, theme, ...) is preserved: the file is parsed as
+/// JSON, only the "hooks" object is touched, and it is written back
+/// atomically.
 ///
-/// Re-running is a no-op. An event that already carries a seance handler is
-/// left alone, so toggling the setting off and on cannot duplicate entries.
+/// A file we cannot read, parse, or merge into is left exactly as it is.
+/// Absence is the only case in which an empty object is seeded: rebuilding a
+/// malformed file would discard whatever the user wrote. Re-running is a
+/// no-op. An event that already carries a seance handler is left alone, so
+/// toggling the setting off and on cannot duplicate entries.
 pub fn installCommandCodeHooks() void {
     const home = io.getenv("HOME") orelse return;
     const alloc = std.heap.page_allocator;
@@ -669,33 +662,47 @@ pub fn installCommandCodeHooks() void {
     defer alloc.free(settings_path);
 
     std.Io.Dir.createDirAbsolute(io.get(), dir_path, .default_dir) catch |err| {
-        if (err != error.PathAlreadyExists) return;
+        if (err != error.PathAlreadyExists) {
+            std.log.warn("commandcode: cannot create {s}: {s}; hooks not installed", .{ dir_path, @errorName(err) });
+            return;
+        }
     };
 
     const lock = lockCommandCodeSettings(alloc, settings_path) orelse return;
     defer lock.close(io.get());
 
+    // Absence and read failure are different answers. Only absence may be
+    // seeded; an oversized or unreadable file must not be overwritten.
+    const loaded = commandcode_config_file.readSettings(alloc, settings_path) catch |err| {
+        std.log.warn("commandcode: cannot read {s}: {s}; settings left unchanged", .{ settings_path, @errorName(err) });
+        return;
+    };
+    defer loaded.deinit(alloc);
+    const source = loaded.text orelse "{}";
+
     var arena_state = std.heap.ArenaAllocator.init(alloc);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const existing = readCommandCodeSettings(alloc, settings_path);
-    defer if (existing) |data| alloc.free(data);
-    const source = existing orelse "{}";
-
-    var config: std.json.Value = .{ .object = .empty };
-    if (std.json.parseFromSliceLeaky(std.json.Value, arena, source, .{})) |value| {
-        if (value == .object) config = value;
-    } else |_| {
-        // Unparseable. The original is backed up before we replace it below.
-        config = .{ .object = .empty };
+    const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, source, .{}) catch {
+        std.log.warn("commandcode: {s} is not valid JSON; settings left unchanged", .{settings_path});
+        return;
+    };
+    if (parsed != .object) {
+        std.log.warn("commandcode: {s} does not hold a JSON object; settings left unchanged", .{settings_path});
+        return;
     }
+    var config = parsed;
 
     var hooks: std.json.Value = .{ .object = .empty };
     if (config.object.get("hooks")) |value| {
-        // A malformed "hooks" value is replaced below; every other key the
-        // user set is kept.
-        if (value == .object) hooks = value;
+        // An inline/array/null "hooks" value cannot be merged into without
+        // dropping user hooks, so it is refused rather than replaced.
+        if (value != .object) {
+            std.log.warn("commandcode: {s} has an unsupported \"hooks\" value; settings left unchanged", .{settings_path});
+            return;
+        }
+        hooks = value;
     }
 
     for (commandcode_events) |event| {
@@ -715,9 +722,10 @@ pub fn installCommandCodeHooks() void {
     const output = std.json.Stringify.valueAlloc(arena, config, .{ .whitespace = .indent_2 }) catch return;
     // The file already says what we would write — leave it alone.
     if (std.mem.eql(u8, source, output)) return;
-    // Keep the pre-seance file, once, before we rewrite it.
-    if (existing != null) backupCommandCodeSettings(settings_path, source);
-    writeCommandCodeSettings(alloc, settings_path, existing, output);
+    installCommandCodeOutput(alloc, settings_path, loaded.text, source, output) catch |err| {
+        std.log.warn("commandcode: cannot update {s}: {s}; settings left unchanged", .{ settings_path, @errorName(err) });
+        return;
+    };
     std.log.info("commandcode: installed hooks in {s}", .{settings_path});
 }
 
@@ -735,15 +743,25 @@ pub fn removeCommandCodeHooks() void {
     const lock = lockCommandCodeSettings(alloc, settings_path) orelse return;
     defer lock.close(io.get());
 
-    const source = readCommandCodeSettings(alloc, settings_path) orelse return;
-    defer alloc.free(source);
+    const loaded = commandcode_config_file.readSettings(alloc, settings_path) catch |err| {
+        std.log.warn("commandcode: cannot read {s}: {s}; settings left unchanged", .{ settings_path, @errorName(err) });
+        return;
+    };
+    defer loaded.deinit(alloc);
+    const source = loaded.text orelse return;
 
     var arena_state = std.heap.ArenaAllocator.init(alloc);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, source, .{}) catch return;
-    if (parsed != .object) return;
+    const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, source, .{}) catch {
+        std.log.warn("commandcode: {s} is not valid JSON; settings left unchanged", .{settings_path});
+        return;
+    };
+    if (parsed != .object) {
+        std.log.warn("commandcode: {s} does not hold a JSON object; settings left unchanged", .{settings_path});
+        return;
+    }
     var config = parsed;
 
     const hooks_value = config.object.get("hooks") orelse return;
@@ -770,7 +788,10 @@ pub fn removeCommandCodeHooks() void {
     if (config.object.count() == 0) {
         // Nothing of the user's is left. Drop the file — but only if it has
         // not changed under us in the meantime.
-        if (!commandCodeSettingsUnchanged(alloc, settings_path, source)) return;
+        const still = commandcode_config_file.readSettings(alloc, settings_path) catch return;
+        defer still.deinit(alloc);
+        const now = still.text orelse return;
+        if (!std.mem.eql(u8, now, source)) return;
         std.Io.Dir.deleteFileAbsolute(io.get(), settings_path) catch {};
         std.log.info("commandcode: removed hooks from {s}", .{settings_path});
         return;
@@ -779,8 +800,24 @@ pub fn removeCommandCodeHooks() void {
     const output = std.json.Stringify.valueAlloc(arena, config, .{ .whitespace = .indent_2 }) catch return;
     // The file already says what we would write — leave it alone.
     if (std.mem.eql(u8, source, output)) return;
-    writeCommandCodeSettings(alloc, settings_path, source, output);
+    removeCommandCodeOutput(alloc, settings_path, source, output) catch |err| {
+        std.log.warn("commandcode: cannot update {s}: {s}; settings left unchanged", .{ settings_path, @errorName(err) });
+        return;
+    };
     std.log.info("commandcode: removed hooks from {s}", .{settings_path});
+}
+
+/// Preserve the bytes about to be replaced, then replace them. The backup is
+/// complete and closed before the write is attempted, so a failed write never
+/// leaves the original recoverable only in theory.
+fn installCommandCodeOutput(alloc: std.mem.Allocator, path: []const u8, expected: ?[]const u8, source: []const u8, content: []const u8) !void {
+    if (expected != null) try commandcode_config_file.backupGeneration(alloc, path, source);
+    try commandcode_config_file.writeAtomic(alloc, path, expected, content, .{});
+}
+
+fn removeCommandCodeOutput(alloc: std.mem.Allocator, path: []const u8, source: []const u8, content: []const u8) !void {
+    try commandcode_config_file.backupGeneration(alloc, path, source);
+    try commandcode_config_file.writeAtomic(alloc, path, source, content, .{});
 }
 
 fn buildCommandCodeHookDefinition(arena: std.mem.Allocator, event: CommandCodeEvent) !std.json.Value {
@@ -863,52 +900,6 @@ fn filterOutSeanceHandlers(arena: std.mem.Allocator, definitions: std.json.Array
         try kept.append(.{ .object = updated });
     }
     return kept;
-}
-
-fn readCommandCodeSettings(alloc: std.mem.Allocator, path: []const u8) ?[]u8 {
-    const file = std.Io.Dir.openFileAbsolute(io.get(), path, .{}) catch return null;
-    defer file.close(io.get());
-    return io.readToEndAlloc(file, alloc, 1024 * 1024) catch null;
-}
-
-/// Keep the file we are about to replace next to it. The backup is written
-/// once — a later install never clobbers the first copy.
-fn backupCommandCodeSettings(path: []const u8, source: []const u8) void {
-    const alloc = std.heap.page_allocator;
-    const backup_path = std.fmt.allocPrint(alloc, "{s}.seance-backup", .{path}) catch return;
-    defer alloc.free(backup_path);
-    const file = std.Io.Dir.createFileAbsolute(io.get(), backup_path, .{
-        .exclusive = true,
-        .permissions = .fromMode(0o600),
-    }) catch return;
-    defer file.close(io.get());
-    file.writeStreamingAll(io.get(), source) catch {};
-}
-
-/// Write `content` to `path`, but only if the file still holds `expected`
-/// (null means "was absent"). Command Code writes this file itself — e.g.
-/// `cmd mods add` persists a mod source — so a change that landed while we
-/// prepared the write means the newer content is someone else's. Leaving it
-/// alone beats clobbering it.
-fn writeCommandCodeSettings(alloc: std.mem.Allocator, path: []const u8, expected: ?[]const u8, content: []const u8) void {
-    // Never replace a symlink: that would write through the link. The stat
-    // must not follow it, or the link's target is reported instead.
-    var permissions: std.Io.File.Permissions = .fromMode(0o600);
-    if (std.Io.Dir.cwd().statFile(io.get(), path, .{ .follow_symlinks = false })) |stat| {
-        if (stat.kind == .sym_link) return;
-        permissions = stat.permissions;
-    } else |_| {}
-
-    var output = std.Io.Dir.cwd().createFileAtomic(io.get(), path, .{
-        .replace = true,
-        .permissions = permissions,
-    }) catch return;
-    defer output.deinit(io.get());
-    output.file.writeStreamingAll(io.get(), content) catch return;
-
-    // Re-read before the rename: the file may have changed under us.
-    if (!commandCodeSettingsUnchanged(alloc, path, expected)) return;
-    output.replace(io.get()) catch return;
 }
 
 /// Auto-install Hermes plugin if ~/.hermes exists.
