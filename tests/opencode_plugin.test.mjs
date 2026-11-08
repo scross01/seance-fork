@@ -17,14 +17,19 @@ const KILO_SRC = join(HERE, '..', 'plugins', 'seance-kilo', 'index.ts');
 const MIMO_SRC = join(HERE, '..', 'plugins', 'seance-mimocode', 'index.ts');
 
 // Spawns a bridge the way the production plugin does: execFile without a
-// shell, payload on stdin, bounded runtime, killed on timeout.
-function runBridge(binary, args, payload, { timeout = 5000, env = process.env } = {}) {
+// shell, payload on stdin, bounded runtime, killed on timeout. `input: false`
+// withholds the payload so a child sees a clean EOF instead of JSON, and
+// `interpret: true` runs the bridge through the parent's own node binary
+// rather than the kernel's `#!/usr/bin/env node` resolution.
+function runBridge(binary, args, payload, { timeout = 5000, env = process.env, input = true, interpret = false } = {}) {
   return new Promise((resolve) => {
-    const child = execFile(binary, args, {
+    const child = execFile(interpret ? process.execPath : binary, interpret ? [binary, ...args] : args, {
       encoding: 'utf8', maxBuffer: 4096, timeout, killSignal: 'SIGKILL', env,
     }, (error, stdout, stderr) => resolve({ error, stdout, stderr }));
+    // EPIPE is expected when a child exits before draining its stdin; the
+    // child's own status is what the caller diagnoses.
     child.stdin.on('error', () => {});
-    child.stdin.end(JSON.stringify(payload));
+    child.stdin.end(input ? JSON.stringify(payload) : '');
   });
 }
 
@@ -39,12 +44,24 @@ async function preflight(t, dir, capture, options = {}) {
   if (!options.missing) {
     const record = options.malformed
       ? `appendFileSync(process.env.SEANCE_TEST_CAPTURE || ${JSON.stringify(capture)}, 'not-json\\n');`
-      : `appendFileSync(process.env.SEANCE_TEST_CAPTURE || ${JSON.stringify(capture)}, JSON.stringify({args: process.argv.slice(2), payload: JSON.parse(text), surface: process.env.SEANCE_SURFACE_ID}) + '\\n');`;
+      : `appendFileSync(process.env.SEANCE_TEST_CAPTURE || ${JSON.stringify(capture)}, JSON.stringify({args: process.argv.slice(2), payload: JSON.parse(text), bytes: Buffer.byteLength(text), surface: process.env.SEANCE_SURFACE_ID}) + '\\n');`;
+    // A child that receives nothing must say so: the bare JSON.parse error it
+    // would otherwise raise cannot be told apart from malformed fixture data.
+    const readStdin = options.earlyClose
+      ? `process.stdin.destroy();
+process.exitCode = 4;
+return;`
+      : `for await (const chunk of process.stdin) text += chunk;
+if (Buffer.byteLength(text) === 0) {
+  process.stderr.write('fixture bridge received 0 stdin bytes; no payload reached the child\\n');
+  process.exitCode = 3;
+  return;
+}`;
     const source = `#!/usr/bin/env node
 const { appendFileSync } = require('node:fs');
 (async () => {
 let text = '';
-for await (const chunk of process.stdin) text += chunk;
+${readStdin}
 ${record}
 ${options.hang ? 'setInterval(() => {}, 1000);' : ''}
 ${options.fail ? 'process.exitCode = 1;' : ''}
@@ -61,7 +78,7 @@ ${options.fail ? 'process.exitCode = 1;' : ''}
   }
   const { error, stderr } = await runBridge(binary, ['ctl', 'opencode-hook', 'state'],
     { state: 'Fixture preflight' }, { timeout: options.hang ? 600 : 5000,
-      env: { ...process.env, SEANCE_TEST_CAPTURE: `${capture}.preflight` } });
+      input: !options.noInput, env: { ...process.env, SEANCE_TEST_CAPTURE: `${capture}.preflight` } });
   const despawn = `fixture bridge ${binary} preflight failed: ` +
     (error ? `${error.code ?? 'no exit code'}${error.killed ? ` killed (${error.signal})` : ''}; ` : 'child exited cleanly; ') +
     `stderr: ${stderr.trim() || 'empty'}`;
@@ -150,6 +167,47 @@ test('a missing fixture executable fails the preflight with a spawn diagnostic',
   t.after(() => rm(root, { recursive: true, force: true }));
   await assert.rejects(preflight(t, root, join(root, 'events'), { missing: true }),
     ({ message }) => message.includes('ENOENT') && message.includes(join(root, 'seance')));
+});
+
+test('the bridge delivers the exact stdin bytes by shebang and explicit interpreter', async (t) => {
+  const previous = { ...process.env };
+  try {
+    Object.assign(process.env, { SEANCE_SURFACE_ID: '3' });
+    const root = await mkdtemp(join(tmpdir(), "seance-preflight-stdin-' "));
+    t.after(() => rm(root, { recursive: true, force: true }));
+    const binary = await preflight(t, root, join(root, 'events'));
+    // Multibyte text and shell metacharacters: the count is bytes, not chars.
+    const payload = { state: "It’s 'done' ✓", note: 'line\nbreak' };
+    for (const route of ['shebang', 'execPath']) {
+      const target = join(root, `events-${route}`);
+      const { error, stderr } = await runBridge(binary, ['ctl', 'opencode-hook', 'state'], payload,
+        { env: { ...process.env, SEANCE_TEST_CAPTURE: target }, interpret: route === 'execPath' });
+      assert.equal(error, null, `${route} route failed: ${stderr.trim() || 'no stderr'}`);
+      const emission = JSON.parse((await readFile(target, 'utf8')).trim());
+      assert.deepEqual(emission.args, ['ctl', 'opencode-hook', 'state']);
+      assert.deepEqual(emission.payload, payload);
+      assert.equal(emission.bytes, Buffer.byteLength(JSON.stringify(payload)));
+    }
+  } finally { process.env = previous; }
+});
+
+test('the preflight names zero stdin bytes when no payload reaches the child', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'seance-preflight-noinput-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  // The audit signature was a child parsing an empty string; it must read as
+  // lost input with a byte count, not as a spawn or fixture-data failure.
+  await assert.rejects(preflight(t, root, join(root, 'events'), { noInput: true }), ({ message }) =>
+    message.includes('received 0 stdin bytes') && message.includes('preflight failed: 3') &&
+    !message.includes('ENOENT') && !message.includes('malformed'));
+});
+
+test('the preflight reports a child that closes stdin and exits before reading it', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'seance-preflight-earlyclose-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  // The parent's write hits EPIPE, which the fixture swallows; the child's own
+  // status is the only signal, so it must surface as that status.
+  await assert.rejects(preflight(t, root, join(root, 'events'), { earlyClose: true }), ({ message }) =>
+    message.includes('preflight failed: 4') && message.includes('stderr: empty'));
 });
 
 test('malformed fixture output fails the preflight with the raw emission', async (t) => {
