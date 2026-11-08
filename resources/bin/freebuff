@@ -161,7 +161,7 @@ _start_status_monitor() {
         fi
 
         # ── watch phase ──
-        local offset=0 line activity last_marker=$SECONDS
+        local offset=0 line activity last_marker=$SECONDS rediscover=1
         offset=$(wc -c < "$logfile" 2>/dev/null || echo 0)
         while kill -0 $$ 2>/dev/null; do
             timeout "$idle_timeout" inotifywait -q -e modify \
@@ -210,7 +210,6 @@ _start_status_monitor
 
 # ── Launch freebuff (no exec — wrapper must survive for cleanup) ───────────
 
-"$REAL_FREEBUFF" "$@"
-rc=$?
+"$REAL_FREEBUFF" "$@" || rc=$?
 
-exit $rc
+exit ${rc:-0}

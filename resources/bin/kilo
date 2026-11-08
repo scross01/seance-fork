@@ -44,17 +44,27 @@ fi
 
 export SEANCE_KILO_PID=$$
 
-# ── Launch kilo (no exec — wrapper must survive for cleanup) ─────────────
-
-"$REAL_KILO" "$@"
-rc=$?
-
-# ── Session-end cleanup ──────────────────────────────────────────────────
+# ── Bounded idempotent session-end cleanup on exit ───────────────────────
 # Kilo plugin may not fire session-end on crash or forced exit, so we
-# always run it from the wrapper.
+# always run it from the wrapper. Capture status explicitly because errexit
+# would otherwise skip cleanup on nonzero agent exit.
 
-seance ctl kilo-hook session-end <<EOF >/dev/null 2>&1 || true
+_CLEANUP_DONE=0
+_kilo_cleanup() {
+    (( _CLEANUP_DONE )) && return 0
+    _CLEANUP_DONE=1
+    timeout 3 seance ctl kilo-hook session-end <<EOF >/dev/null 2>&1 || true
 {"workspace_id":${SEANCE_WORKSPACE_ID:-null},"surface_id":${SEANCE_SURFACE_ID:-null}}
 EOF
+}
+trap _kilo_cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
+
+# ── Launch kilo (no exec — wrapper must survive for cleanup) ─────────────
+
+rc=0
+"$REAL_KILO" "$@" || rc=$?
 
 exit $rc

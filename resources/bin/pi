@@ -114,15 +114,32 @@ EXTEOF
 export SEANCE_PI_SESSION_DIR="$SESSION_DIR"
 export SEANCE_PI_PID=$$
 
+# ── Bounded idempotent session-end cleanup on exit ───────────────────────
+# Pi may not fire session_shutdown, so we always run it from the wrapper.
+# Capture status explicitly because errexit would otherwise skip cleanup on
+# nonzero agent exit. Only remove a session directory we provably own.
+
+_CLEANUP_DONE=0
+_pi_cleanup() {
+    (( _CLEANUP_DONE )) && return 0
+    _CLEANUP_DONE=1
+    timeout 3 seance ctl pi-hook session-end <<< "{}" >/dev/null 2>&1 || true
+    case "$SESSION_DIR" in
+        "$HOME"/.cache/seance-pi/*)
+            if [[ -n "${SESSION_DIR:-}" && -d "$SESSION_DIR" ]]; then
+                rm -rf "$SESSION_DIR"
+            fi
+            ;;
+    esac
+}
+trap _pi_cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
+
 # ── Launch pi (no exec — wrapper must survive for cleanup) ───────────────
 
-"$REAL_PI" --extension "$SESSION_DIR/seance-hook.js" "$@"
-rc=$?
-
-# ── Session-end cleanup ─────────────────────────────────────────────────
-# Pi may not fire session_shutdown, so we always run it from the wrapper.
-
-seance ctl pi-hook session-end <<< "{}" >/dev/null 2>&1 || true
-rm -rf "$SESSION_DIR"
+rc=0
+"$REAL_PI" --extension "$SESSION_DIR/seance-hook.js" "$@" || rc=$?
 
 exit $rc

@@ -48,17 +48,27 @@ export VIBE_ENABLE_EXPERIMENTAL_HOOKS=1
 
 export SEANCE_VIBE_PID=$$
 
-# ── Launch vibe (no exec — wrapper must survive for cleanup) ─────────────
+# ── Bounded idempotent session-end cleanup on exit ───────────────────────
+# Vibe may not fire session-end on crash or forced exit, so we always run it
+# from the wrapper. Capture status explicitly because errexit would otherwise
+# skip cleanup on nonzero agent exit.
 
-"$REAL_VIBE" "$@"
-rc=$?
-
-# ── Session-end cleanup ──────────────────────────────────────────────────
-# Vibe may not fire session-end on crash or forced exit, so we
-# always run it from the wrapper.
-
-seance ctl vibe-hook session-end <<EOF >/dev/null 2>&1 || true
+_CLEANUP_DONE=0
+_vibe_cleanup() {
+    (( _CLEANUP_DONE )) && return 0
+    _CLEANUP_DONE=1
+    timeout 3 seance ctl vibe-hook session-end <<EOF >/dev/null 2>&1 || true
 {"workspace_id":${SEANCE_WORKSPACE_ID:-null},"surface_id":${SEANCE_SURFACE_ID:-null}}
 EOF
+}
+trap _vibe_cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
+
+# ── Launch vibe (no exec — wrapper must survive for cleanup) ─────────────
+
+rc=0
+"$REAL_VIBE" "$@" || rc=$?
 
 exit $rc
