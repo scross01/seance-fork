@@ -1,6 +1,7 @@
 const std = @import("std");
 const io = @import("io.zig");
 const c = @import("c.zig").c;
+const port_allocation = @import("port_allocation.zig");
 const app = @import("app.zig");
 const config_mod = @import("config.zig");
 const ghostty_bridge = @import("ghostty_bridge.zig");
@@ -516,7 +517,7 @@ fn buildIntegrationsSection(page: *c.GtkWidget, cfg: *const config_mod.Config) v
     const g3 = newGroup(null);
     c.adw_preferences_group_set_description(@as(*c.AdwPreferencesGroup, @ptrCast(g3)), "Each workspace gets SEANCE_PORT and SEANCE_PORT_END env vars with a dedicated port range.");
     w.port_base = addSpinRow(g3, "Port base", "Starting port for SEANCE_PORT env var.", 1024, 65535, 1, @floatFromInt(cfg.port_base));
-    w.port_range = addSpinRow(g3, "Port range size", "Number of ports per workspace.", 1, 100, 1, @floatFromInt(cfg.port_range));
+    w.port_range = addSpinRow(g3, "Port range size", "Number of ports per workspace.", 1, @floatFromInt(port_allocation.uiRangeLimit(cfg.port_base)), 1, @floatFromInt(cfg.port_range));
     addToPage(page, g3);
 }
 
@@ -927,6 +928,18 @@ fn onSpinChanged(obj: *c.GObject, _: *c.GParamSpec, _: c.gpointer) callconv(.c) 
         cfg.scrollback_lines = @intFromFloat(val);
     } else if (widget == w.port_base) {
         cfg.port_base = @intFromFloat(val);
+        // The range must keep fitting inside the TCP space: shrink its allowed
+        // maximum and clamp the current value with it.
+        const limit = port_allocation.uiRangeLimit(cfg.port_base);
+        if (w.port_range) |range_row| {
+            updating = true;
+            c.adw_spin_row_set_range(@ptrCast(range_row), 1, @floatFromInt(limit));
+            if (c.adw_spin_row_get_value(@ptrCast(range_row)) > @as(f64, @floatFromInt(limit))) {
+                c.adw_spin_row_set_value(@ptrCast(range_row), @floatFromInt(limit));
+                cfg.port_range = limit;
+            }
+            updating = false;
+        }
     } else if (widget == w.port_range) {
         cfg.port_range = @intFromFloat(val);
     } else return;

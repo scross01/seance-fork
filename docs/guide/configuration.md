@@ -127,4 +127,21 @@ palette and hamburger menu — but all of them are rebindable here.
 ```toml
 [socket]
 path = ""                     # override the Unix socket path (auto-detected by default)
+port-base = 9100              # first port of the first workspace's block
+port-range = 10               # ports reserved per workspace
 ```
+
+Each workspace's terminals get `SEANCE_PORT`, `SEANCE_PORT_END` and
+`SEANCE_PORT_RANGE` describing a block of `port-range` ports, with workspace
+*n* starting at `port-base + n * port-range`.
+
+The pair is validated as a whole: `port-base` must be within 1–65535 (reserved
+ports are allowed, they are a manual choice) and `port-range` must be at least
+1 and fit the space above the base. A pair that does not fit (for example
+`port-base = 65535` with `port-range = 100`) is ignored with a warning and the
+defaults `9100`/`10` are used instead.
+
+When the port space is exhausted — the next workspace's block would end past
+65535, or the session restored a workspace at the maximum ordinal — the
+workspace is still created and simply exports none of the three variables, so
+nothing wraps onto a port another workspace already owns.

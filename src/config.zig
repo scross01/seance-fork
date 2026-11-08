@@ -1,5 +1,6 @@
 const std = @import("std");
 const io = @import("io.zig");
+const port_allocation = @import("port_allocation.zig");
 const ErrorBuf = @import("error_buf.zig").ErrorBuf;
 
 pub const SidebarPosition = enum { left, right };
@@ -194,6 +195,7 @@ pub fn load() Config {
             return config;
         };
         parseToml(&config, buf[0..n]);
+        validatePorts(&config);
         global = config;
         return config;
     };
@@ -205,6 +207,7 @@ pub fn load() Config {
         return config;
     };
     parseToml(&config, alloc_buf[0..n]);
+    validatePorts(&config);
 
     global = config;
     return config;
@@ -432,6 +435,23 @@ fn writeBool(writer: anytype, key: []const u8, val: bool) !void {
     try writer.print("{s} = {s}\n", .{ key, if (val) @as([]const u8, "true") else @as([]const u8, "false") });
 }
 
+/// Rejects a port base/range pair that cannot form a TCP block. Both values
+/// return to their defaults together so a key order cannot leave a half-valid
+/// pair behind.
+pub fn validatePorts(config: *Config) void {
+    port_allocation.validatePair(config.port_base, config.port_range) catch |e| {
+        std.log.warn("config: port-base {d} with port-range {d} is not a valid TCP range ({s}); using {d}/{d}", .{
+            config.port_base,
+            config.port_range,
+            @errorName(e),
+            port_allocation.default_base,
+            port_allocation.default_range,
+        });
+        config.port_base = port_allocation.default_base;
+        config.port_range = port_allocation.default_range;
+    };
+}
+
 fn parseToml(config: *Config, content: []const u8) void {
     var current_section: []const u8 = "";
     var line_num: usize = 0;
@@ -507,8 +527,7 @@ fn applyValue(config: *Config, section: []const u8, key: []const u8, raw_val: []
             return true;
         } else if (eql(key, "background-opacity")) {
             if (parseFloat(val)) |f| {
-                if (std.math.isFinite(f)) config.background_opacity = std.math.clamp(f, 0.0, 1.0)
-                else config.background_opacity = 1.0;
+                if (std.math.isFinite(f)) config.background_opacity = std.math.clamp(f, 0.0, 1.0) else config.background_opacity = 1.0;
             } else {
                 config.background_opacity = 1.0;
             }
@@ -698,8 +717,7 @@ fn applyGhosttyValue(config: *Config, key: []const u8, val: []const u8) void {
         }
     } else if (eql(key, "background-opacity")) {
         if (parseFloat(val)) |f| {
-            if (std.math.isFinite(f)) config.background_opacity = std.math.clamp(f, 0.0, 1.0)
-            else config.background_opacity = 1.0;
+            if (std.math.isFinite(f)) config.background_opacity = std.math.clamp(f, 0.0, 1.0) else config.background_opacity = 1.0;
         } else {
             config.background_opacity = 1.0;
         }
@@ -1076,4 +1094,46 @@ test "writeGhosttyOverrides: large scrollback value renders" {
     writeGhosttyOverrides(&cfg, "Adwaita Dark", &fbs);
     const out = fbs.buffered();
     try std.testing.expect(std.mem.indexOf(u8, out, "scrollback-limit-lines = 2000000") != null);
+}
+
+test "validatePorts: key order does not decide a valid pair" {
+    var forward = Config{};
+    parseToml(&forward, "[socket]\nport-base = 20000\nport-range = 5\n");
+    validatePorts(&forward);
+    var reverse = Config{};
+    parseToml(&reverse, "[socket]\nport-range = 5\nport-base = 20000\n");
+    validatePorts(&reverse);
+
+    try std.testing.expectEqual(@as(u32, 20000), forward.port_base);
+    try std.testing.expectEqual(@as(u32, 5), forward.port_range);
+    try std.testing.expectEqual(forward.port_base, reverse.port_base);
+    try std.testing.expectEqual(forward.port_range, reverse.port_range);
+}
+
+test "validatePorts: an invalid pair returns both values to defaults" {
+    var too_high = Config{};
+    parseToml(&too_high, "[socket]\nport-base = 65535\nport-range = 100\n");
+    validatePorts(&too_high);
+    try std.testing.expectEqual(port_allocation.default_base, too_high.port_base);
+    try std.testing.expectEqual(port_allocation.default_range, too_high.port_range);
+
+    var zero = Config{};
+    parseToml(&zero, "[socket]\nport-range = 0\n");
+    validatePorts(&zero);
+    try std.testing.expectEqual(port_allocation.default_base, zero.port_base);
+    try std.testing.expectEqual(port_allocation.default_range, zero.port_range);
+
+    var out_of_space = Config{};
+    parseToml(&out_of_space, "[socket]\nport-base = 65536\nport-range = 1\n");
+    validatePorts(&out_of_space);
+    try std.testing.expectEqual(port_allocation.default_base, out_of_space.port_base);
+    try std.testing.expectEqual(port_allocation.default_range, out_of_space.port_range);
+}
+
+test "validatePorts: the last representable block is accepted" {
+    var cfg = Config{};
+    parseToml(&cfg, "[socket]\nport-base = 65000\nport-range = 536\n");
+    validatePorts(&cfg);
+    try std.testing.expectEqual(@as(u32, 65000), cfg.port_base);
+    try std.testing.expectEqual(@as(u32, 536), cfg.port_range);
 }

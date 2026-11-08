@@ -2,6 +2,7 @@ const std = @import("std");
 const io = @import("io.zig");
 const c = @import("c.zig").c;
 const config_mod = @import("config.zig");
+const port_allocation = @import("port_allocation.zig");
 const SearchOverlay = @import("search_overlay.zig").SearchOverlay;
 const ghostty_bridge = @import("ghostty_bridge.zig");
 const ime_state = @import("ime_state.zig");
@@ -801,20 +802,21 @@ fn initSurface(pane: *Pane, width: u32, height: u32) void {
     if (Window.window_manager) |wm| {
         if (wm.findByWorkspaceId(pane.workspace_id)) |state| {
             for (state.workspaces.items) |ws| {
-                if (ws.id == pane.workspace_id and ws.port_ordinal != std.math.maxInt(u32)) {
-                    const port_start = cfg.port_base + ws.port_ordinal * cfg.port_range;
-                    const port_end = port_start + cfg.port_range - 1;
-                    if (std.fmt.bufPrintZ(&port_buf, "{d}", .{port_start})) |v| {
+                if (ws.id != pane.workspace_id) continue;
+                // Exhausted or unallocated ordinals export no port variables at
+                // all, so a wrapper never sees a partial or wrapped block.
+                if (port_allocation.block(cfg.port_base, cfg.port_range, ws.port_ordinal)) |ports| {
+                    if (std.fmt.bufPrintZ(&port_buf, "{d}", .{ports.start})) |v| {
                         port_val = v;
                     } else |_| {}
-                    if (std.fmt.bufPrintZ(&port_end_buf, "{d}", .{port_end})) |v| {
+                    if (std.fmt.bufPrintZ(&port_end_buf, "{d}", .{ports.end})) |v| {
                         port_end_val = v;
                     } else |_| {}
                     if (std.fmt.bufPrintZ(&port_range_buf, "{d}", .{cfg.port_range})) |v| {
                         port_range_val = v;
                     } else |_| {}
-                    break;
                 }
+                break;
             }
         }
     }

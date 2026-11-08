@@ -3,6 +3,7 @@ const io = @import("io.zig");
 const builtin = @import("builtin");
 const c = @import("c.zig").c;
 const config_mod = @import("config.zig");
+const port_allocation = @import("port_allocation.zig");
 const Workspace = @import("workspace.zig").Workspace;
 const sidebar_mod = @import("sidebar.zig");
 const Sidebar = sidebar_mod.Sidebar;
@@ -220,7 +221,7 @@ pub const WindowState = struct {
     pub fn newWorkspace(self: *WindowState) !void {
         const ws = try Workspace.create(self.alloc, "Terminal");
         ws.port_ordinal = self.next_port_ordinal;
-        self.next_port_ordinal += 1;
+        self.next_port_ordinal = port_allocation.nextOrdinal(self.next_port_ordinal);
 
         var name_buf: [32]u8 = undefined;
         const name = std.fmt.bufPrintZ(&name_buf, "ws-{d}", .{ws.id}) catch "ws";
@@ -1134,7 +1135,7 @@ pub const WindowState = struct {
     pub fn newWorkspaceWithCwd(self: *WindowState, cwd: [*:0]const u8, title: []const u8) void {
         const ws = Workspace.createForRestore(self.alloc, cwd) catch return;
         ws.port_ordinal = self.next_port_ordinal;
-        self.next_port_ordinal += 1;
+        self.next_port_ordinal = port_allocation.nextOrdinal(self.next_port_ordinal);
         ws.setTitle(title);
 
         var name_buf: [32]u8 = undefined;

@@ -1,5 +1,6 @@
 const std = @import("std");
 const io = @import("io.zig");
+const port_allocation = @import("port_allocation.zig");
 const c = @import("c.zig").c;
 const ErrorBuf = @import("error_buf.zig").ErrorBuf;
 const Pane = @import("pane.zig").Pane;
@@ -832,13 +833,12 @@ fn restoreWindowContent(state: *WindowState, obj: std.json.ObjectMap) bool {
 
     if (restored_count == 0) return false;
 
-    // Compute next_port_ordinal from saved values. Saturating add so a
-    // u32-max ordinal in the session file doesn't overflow here.
+    // Next ordinal after every restored workspace. nextOrdinal saturates at
+    // the unallocated sentinel, so a saved maximum ordinal can be restored and
+    // still leave the counter representable.
     var max_ord: u32 = 0;
     for (state.workspaces.items) |ws| {
-        if (ws.port_ordinal >= max_ord) {
-            max_ord = ws.port_ordinal +| 1;
-        }
+        max_ord = @max(max_ord, port_allocation.nextOrdinal(ws.port_ordinal));
     }
     state.next_port_ordinal = max_ord;
 
