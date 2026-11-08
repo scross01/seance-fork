@@ -198,10 +198,15 @@ fn buildAppearanceSection(page: *c.GtkWidget, cfg: *const config_mod.Config) voi
         if (cfg.font_family_len > 0) {
             var desc_buf: [192]u8 = undefined;
             const style_part: []const u8 = if (cfg.font_style_len > 0) cfg.font_style[0..cfg.font_style_len] else "";
-            const desc_str = if (style_part.len > 0)
-                std.fmt.bufPrintZ(&desc_buf, "{s} {s} {d}", .{ cfg.font_family[0..cfg.font_family_len], style_part, @as(u32, @intFromFloat(cfg.font_size orelse 11.0)) }) catch null
+            const fs: f64 = if (cfg.font_size) |v|
+                (if (std.math.isFinite(v) and v >= 6.0 and v <= 72.0) v else 11.0)
             else
-                std.fmt.bufPrintZ(&desc_buf, "{s} {d}", .{ cfg.font_family[0..cfg.font_family_len], @as(u32, @intFromFloat(cfg.font_size orelse 11.0)) }) catch null;
+                11.0;
+            const size_int: u32 = @intFromFloat(fs);
+            const desc_str = if (style_part.len > 0)
+                std.fmt.bufPrintZ(&desc_buf, "{s} {s} {d}", .{ cfg.font_family[0..cfg.font_family_len], style_part, size_int }) catch null
+            else
+                std.fmt.bufPrintZ(&desc_buf, "{s} {d}", .{ cfg.font_family[0..cfg.font_family_len], size_int }) catch null;
             if (desc_str) |ds| {
                 const desc = c.pango_font_description_from_string(ds.ptr);
                 if (desc != null) {

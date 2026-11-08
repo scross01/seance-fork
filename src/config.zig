@@ -375,7 +375,9 @@ pub fn writeGhosttyOverrides(cfg: *const Config, theme_name: []const u8, writer:
         writer.print("font-style = {s}\n", .{cfg.font_style[0..cfg.font_style_len]}) catch {};
     }
     if (cfg.font_size) |fs| {
-        writer.print("font-size = {d}\n", .{@as(u32, @intFromFloat(fs))}) catch {};
+        if (std.math.isFinite(fs) and fs >= 6.0 and fs <= 72.0) {
+            writer.print("font-size = {d}\n", .{@as(u32, @intFromFloat(fs))}) catch {};
+        }
     }
 
     // Theme override — if seance config sets a theme, override ghostty's.
@@ -494,7 +496,9 @@ fn applyValue(config: *Config, section: []const u8, key: []const u8, raw_val: []
             setStr(&config.font_style, &config.font_style_len, val);
             return true;
         } else if (eql(key, "size")) {
-            if (parseFloat(val)) |f| config.font_size = f;
+            if (parseFloat(val)) |f| {
+                if (std.math.isFinite(f) and f >= 6.0 and f <= 72.0) config.font_size = f;
+            }
             return true;
         }
     } else if (eql(section, "colors")) {
@@ -502,7 +506,12 @@ fn applyValue(config: *Config, section: []const u8, key: []const u8, raw_val: []
             setStr(&config.theme, &config.theme_len, val);
             return true;
         } else if (eql(key, "background-opacity")) {
-            config.background_opacity = parseFloat(val) orelse config.background_opacity;
+            if (parseFloat(val)) |f| {
+                if (std.math.isFinite(f)) config.background_opacity = std.math.clamp(f, 0.0, 1.0)
+                else config.background_opacity = 1.0;
+            } else {
+                config.background_opacity = 1.0;
+            }
             return true;
         } else if (eql(key, "dim-unfocused-panes")) {
             config.dim_unfocused_panes = parseBool(val) orelse config.dim_unfocused_panes;
@@ -684,9 +693,16 @@ fn applyGhosttyValue(config: *Config, key: []const u8, val: []const u8) void {
     } else if (eql(key, "font-style")) {
         setStr(&config.font_style, &config.font_style_len, val);
     } else if (eql(key, "font-size")) {
-        if (parseFloat(val)) |f| config.font_size = f;
+        if (parseFloat(val)) |f| {
+            if (std.math.isFinite(f) and f >= 6.0 and f <= 72.0) config.font_size = f;
+        }
     } else if (eql(key, "background-opacity")) {
-        config.background_opacity = parseFloat(val) orelse config.background_opacity;
+        if (parseFloat(val)) |f| {
+            if (std.math.isFinite(f)) config.background_opacity = std.math.clamp(f, 0.0, 1.0)
+            else config.background_opacity = 1.0;
+        } else {
+            config.background_opacity = 1.0;
+        }
     } else if (eql(key, "focus-ring-opacity")) {
         if (parseFloat(val)) |f| config.focus_ring_opacity = clamp01(f);
     } else if (eql(key, "cursor-style")) {
