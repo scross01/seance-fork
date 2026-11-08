@@ -1917,22 +1917,28 @@ pub const Workspace = struct {
         // Column that was at src is now at dst (the focused/moved column)
         for (self.columns.items[dst].groups.items) |grp| {
             for (grp.panels.items) |p| {
-                if (p.asTerminal()) |t| {
-                    t.stacked_offset_x = old_src_screen_x - new_dst_screen_x;
-                }
+                p.setStackedOffsetX(old_src_screen_x - new_dst_screen_x);
             }
         }
         // Column that was at dst is now at src (the neighbor)
         for (self.columns.items[src].groups.items) |grp| {
             for (grp.panels.items) |p| {
-                if (p.asTerminal()) |t| {
-                    t.stacked_offset_x = old_dst_screen_x - new_src_screen_x;
-                }
+                p.setStackedOffsetX(old_dst_screen_x - new_src_screen_x);
             }
         }
     }
 
     pub const ExpelDirection = enum { left, right };
+
+    /// Point a terminal panel at its owning group. Browser panels carry no
+    /// owner ids: their callbacks are wired to the workspace, which does not
+    /// change when a panel moves between columns of the same workspace.
+    fn assignPanelOwner(panel: Panel, group_id: u64, workspace_id: u64) void {
+        if (panel.asTerminal()) |pane| {
+            pane.pane_group_id = group_id;
+            pane.workspace_id = workspace_id;
+        }
+    }
 
     /// Expel the focused pane from its column into the adjacent column
     /// in the given direction. Creates a new column if none exists and
@@ -2054,11 +2060,13 @@ pub const Workspace = struct {
         const old_col_left = self.columnLeft(src_col_idx);
         const old_screen_x = (old_col_left - self.camera) * fw;
         const active_idx = src_grp.active_panel;
-        const pane = src_grp.panels.items[active_idx].asTerminal().?;
+        // Panel, not Pane: a browser transferred out of a stacked column takes
+        // this slow path too, so every later step works through Panel accessors.
+        const panel = src_grp.panels.items[active_idx];
         // In tabbed mode the active panel fills the column, so use
         // full-height fractions for animation instead of stale stacked values.
-        const old_frac_y: f64 = if (src_grp.in_stacked_mode) pane.stacked_frac_y else 0.0;
-        const old_frac_h: f64 = if (src_grp.in_stacked_mode) pane.stacked_frac_h else 1.0;
+        const old_frac_y: f64 = if (src_grp.in_stacked_mode) panel.getStackedFracY() else 0.0;
+        const old_frac_h: f64 = if (src_grp.in_stacked_mode) panel.getStackedFracH() else 1.0;
 
         // --- Suppress focus events during restructuring ---
         self.restructuring = true;
@@ -2071,8 +2079,8 @@ pub const Workspace = struct {
         // unrealize → realize cycles that destroy GtkGLArea's GL context).
         // In tabbed mode, detach the active page and reparent onto GtkFixed.
         const src_tabbed = !src_grp.in_stacked_mode;
-        src_grp.panels.items[active_idx].unfocus();
-        const panel = src_grp.panels.orderedRemove(active_idx);
+        panel.unfocus();
+        _ = src_grp.panels.orderedRemove(active_idx);
         if (src_tabbed) {
             const pw = panel.getWidget();
             const page = c.adw_tab_view_get_page(src_grp.tab_view, pw);
@@ -2121,13 +2129,11 @@ pub const Workspace = struct {
             const tgt_tabbed = !tgt_grp.in_stacked_mode;
 
             // Insert into target group's list (no widget tree change)
-            pane.pane_group_id = tgt_grp.id;
-            pane.workspace_id = tgt_grp.workspace_id;
+            assignPanelOwner(panel, tgt_grp.id, tgt_grp.workspace_id);
             tgt_grp.panels.insert(tgt_grp.alloc, insert_pos, panel) catch {
                 // Failed — put it back in source
                 src_grp.panels.insert(src_grp.alloc, active_idx, panel) catch {};
-                pane.pane_group_id = src_grp.id;
-                pane.workspace_id = src_grp.workspace_id;
+                assignPanelOwner(panel, src_grp.id, src_grp.workspace_id);
                 if (src_tabbed) {
                     // Move widget back from GtkFixed into source tab view.
                     const pw = panel.getWidget();
@@ -2148,7 +2154,7 @@ pub const Workspace = struct {
                 _ = c.g_object_ref(@ptrCast(pw));
                 c.gtk_fixed_remove(@ptrCast(self.fixed), pw);
                 const tab_page = c.adw_tab_view_insert(tgt_grp.tab_view, pw, @intCast(insert_pos));
-                const title = if (pane.getDisplayTitle()) |t| t else "Terminal";
+                const title = panel.title();
                 var buf: [65:0]u8 = [_:0]u8{0} ** 65;
                 var tlen = @min(title.len, 64);
                 // Avoid splitting a multi-byte UTF-8 codepoint.
@@ -2157,7 +2163,7 @@ pub const Workspace = struct {
                 @memcpy(buf[0..tlen], title[0..tlen]);
                 c.adw_tab_page_set_title(tab_page, &buf);
                 {
-                    const icon = c.g_themed_icon_new("utilities-terminal-symbolic");
+                    const icon = c.g_themed_icon_new(panel.iconName());
                     c.adw_tab_page_set_icon(tab_page, icon);
                     c.g_object_unref(@ptrCast(icon));
                 }
@@ -2182,11 +2188,11 @@ pub const Workspace = struct {
             if (!tgt_tabbed) {
                 const tgt_col_left = self.columnLeft(tgt_idx);
                 const new_screen_x = (tgt_col_left - self.camera) * fw;
-                pane.stacked_offset_x = old_screen_x - new_screen_x;
-                pane.stacked_frac_y = old_frac_y;
-                pane.stacked_frac_h = old_frac_h;
-                pane.stacked_open_anim = 1.0;
-                pane.stacked_closing = false;
+                panel.setStackedOffsetX(old_screen_x - new_screen_x);
+                panel.setStackedFracY(old_frac_y);
+                panel.setStackedFracH(old_frac_h);
+                panel.setStackedOpenAnim(1.0);
+                panel.setStackedClosing(false);
             }
 
             self.focused_column = tgt_idx;
@@ -2201,8 +2207,7 @@ pub const Workspace = struct {
             const new_grp = self.insertColumnWithPanel(panel, insert_at) catch {
                 // Failed — re-insert panel back into source
                 src_grp.panels.insert(src_grp.alloc, active_idx, panel) catch {};
-                pane.pane_group_id = src_grp.id;
-                pane.workspace_id = src_grp.workspace_id;
+                assignPanelOwner(panel, src_grp.id, src_grp.workspace_id);
                 src_grp.focus();
                 return;
             };
@@ -2220,9 +2225,7 @@ pub const Workspace = struct {
                 while (ci < self.columns.items.len) : (ci += 1) {
                     for (self.columns.items[ci].groups.items) |grp2| {
                         for (grp2.panels.items) |p2| {
-                            if (p2.asTerminal()) |t| {
-                                t.stacked_offset_x -= shift_px;
-                            }
+                            p2.setStackedOffsetX(p2.getStackedOffsetX() - shift_px);
                         }
                     }
                 }
@@ -2231,11 +2234,11 @@ pub const Workspace = struct {
             // Animation: horizontal slide from old position
             const new_col_left = self.columnLeft(insert_at);
             const new_screen_x = (new_col_left - self.camera) * fw;
-            pane.stacked_offset_x = old_screen_x - new_screen_x;
-            pane.stacked_frac_y = old_frac_y;
-            pane.stacked_frac_h = old_frac_h;
-            pane.stacked_open_anim = 1.0;
-            pane.stacked_closing = false;
+            panel.setStackedOffsetX(old_screen_x - new_screen_x);
+            panel.setStackedFracY(old_frac_y);
+            panel.setStackedFracH(old_frac_h);
+            panel.setStackedOpenAnim(1.0);
+            panel.setStackedClosing(false);
 
             // Set new column as focused
             self.focused_column = insert_at;
@@ -2287,10 +2290,7 @@ pub const Workspace = struct {
         // directly into the list — the widget is already on workspace.fixed
         // and re-adding it would trigger unrealize/realize.
         grp.enterStackedMode(self.fixed);
-        if (panel.asTerminal()) |p| {
-            p.pane_group_id = grp.id;
-            p.workspace_id = grp.workspace_id;
-        }
+        assignPanelOwner(panel, grp.id, grp.workspace_id);
         grp.panels.insert(grp.alloc, 0, panel) catch return error.OutOfMemory;
 
         // Hide initially to avoid flash before first animation tick

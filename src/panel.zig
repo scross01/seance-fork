@@ -84,6 +84,23 @@ pub const Panel = union(PanelType) {
         };
     }
 
+    /// Tab title for this panel: the terminal's display title or the browser's
+    /// page title, with a kind-appropriate fallback.
+    pub fn title(self: Panel) []const u8 {
+        return switch (self) {
+            .terminal => |pane| pane.getDisplayTitle() orelse "Terminal",
+            .webkit => |wp| wp.getTitle(),
+        };
+    }
+
+    /// Symbolic icon naming this panel's kind, for tab pages.
+    pub fn iconName(self: Panel) [*:0]const u8 {
+        return switch (self) {
+            .terminal => "utilities-terminal-symbolic",
+            .webkit => "web-browser-symbolic",
+        };
+    }
+
     pub fn getHeightWeight(self: Panel) f64 {
         return switch (self) {
             .terminal => |p| p.height_weight,
@@ -152,6 +169,15 @@ pub const Panel = union(PanelType) {
             .terminal => |p| p.stacked_closing,
             .webkit => false,
         };
+    }
+
+    pub fn setStackedClosing(self: Panel, val: bool) void {
+        switch (self) {
+            .terminal => |p| p.stacked_closing = val,
+            // Web panels have no closing animation flag; their close path
+            // removes the whole column.
+            .webkit => {},
+        }
     }
 
     pub fn updateBackgroundColor(self: Panel) void {

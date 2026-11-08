@@ -203,14 +203,12 @@ pub const PaneGroup = struct {
             panel.focus();
         } else {
             const page = c.adw_tab_view_append(self.tab_view, panel.getWidget());
-            const title = panelTitle(panel);
+            const title = panel.title();
             var buf: [65:0]u8 = [_:0]u8{0} ** 65;
             const len = @min(title.len, 64);
             @memcpy(buf[0..len], title[0..len]);
             c.adw_tab_page_set_title(page, &buf);
-            if (panelIcon(panel)) |icon| {
-                setTabIcon(page, icon);
-            }
+            setTabIcon(page, panel.iconName());
 
             c.adw_tab_view_set_selected_page(self.tab_view, page);
         }
@@ -380,11 +378,9 @@ pub const PaneGroup = struct {
             const w = panel.getWidget();
             c.gtk_fixed_put(@ptrCast(fixed), w, 0, 0);
             _ = c.g_object_unref(@ptrCast(w));
-            if (panel.asTerminal()) |pane| {
-                const i_f: f64 = @floatFromInt(i);
-                pane.stacked_frac_y = i_f / n_f;
-                pane.stacked_frac_h = 1.0 / n_f;
-            }
+            const i_f: f64 = @floatFromInt(i);
+            panel.setStackedFracY(i_f / n_f);
+            panel.setStackedFracH(1.0 / n_f);
         }
 
         self.programmatic_close = false;
@@ -437,14 +433,12 @@ pub const PaneGroup = struct {
         for (self.panels.items) |panel| {
             const w = panel.getWidget();
             const page = c.adw_tab_view_append(self.tab_view, w);
-            const title = panelTitle(panel);
+            const title = panel.title();
             var buf: [65:0]u8 = [_:0]u8{0} ** 65;
             const len = @min(title.len, 64);
             @memcpy(buf[0..len], title[0..len]);
             c.adw_tab_page_set_title(page, &buf);
-            if (panelIcon(panel)) |icon| {
-                setTabIcon(page, icon);
-            }
+            setTabIcon(page, panel.iconName());
             _ = c.g_object_unref(@ptrCast(w));
         }
 
@@ -555,9 +549,7 @@ pub const PaneGroup = struct {
                 const tlen = @min(title.len, 64);
                 @memcpy(buf[0..tlen], title[0..tlen]);
                 c.adw_tab_page_set_title(page, &buf);
-                if (panelIcon(panel)) |icon| {
-                    setTabIcon(page, icon);
-                }
+                setTabIcon(page, panel.iconName());
                 return;
             }
         }
@@ -594,23 +586,6 @@ pub const PaneGroup = struct {
         return null;
     }
 };
-
-fn panelTitle(panel: Panel) []const u8 {
-    switch (panel) {
-        .terminal => |pane| {
-            if (pane.getDisplayTitle()) |title| return title;
-            return "Terminal";
-        },
-        .webkit => |wp| return wp.getTitle(),
-    }
-}
-
-fn panelIcon(panel: Panel) ?[*:0]const u8 {
-    return switch (panel) {
-        .terminal => "utilities-terminal-symbolic",
-        .webkit => "web-browser-symbolic",
-    };
-}
 
 fn setTabIcon(page_: ?*c.AdwTabPage, icon_name: [*:0]const u8) void {
     const page = page_ orelse return;
@@ -680,14 +655,12 @@ fn onPageAttached(_: *c.AdwTabView, page: *c.AdwTabPage, position: c.gint, user_
 
         self.panels.insert(self.alloc, pos, panel) catch return;
 
-        const title = panelTitle(panel);
+        const title = panel.title();
         var buf: [65:0]u8 = [_:0]u8{0} ** 65;
         const len = @min(title.len, 64);
         @memcpy(buf[0..len], title[0..len]);
         c.adw_tab_page_set_title(page, &buf);
-        if (panelIcon(panel)) |icon| {
-            setTabIcon(page, icon);
-        }
+        setTabIcon(page, panel.iconName());
     }
 }
 
