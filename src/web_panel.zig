@@ -36,7 +36,6 @@ pub const WebPanel = struct {
     stacked_frac_h: f64 = 1.0,
     height_weight: f64 = 1.0,
     stacked_offset_x: f64 = 0.0,
-    ignore_tls_errors: bool = false,
     flash_step: u8 = 0,
     flash_timeout: c.guint = 0,
     initial_load_id: c.guint = 0,
@@ -532,7 +531,6 @@ pub const WebPanel = struct {
     pub fn navigate(self: *WebPanel, url: []const u8) void {
         if (!isAllowedUrl(url)) return;
         self.setTlsPolicy(c.WEBKIT_TLS_ERRORS_POLICY_FAIL);
-        self.ignore_tls_errors = false;
         const new_url = self.alloc.dupe(u8, url) catch return;
         self.alloc.free(self.url);
         self.url = new_url;
@@ -547,7 +545,6 @@ pub const WebPanel = struct {
 
     pub fn reload(self: *WebPanel) void {
         self.setTlsPolicy(c.WEBKIT_TLS_ERRORS_POLICY_FAIL);
-        self.ignore_tls_errors = false;
         c.webkit_web_view_reload(self.webview);
     }
 
@@ -557,13 +554,11 @@ pub const WebPanel = struct {
 
     pub fn back(self: *WebPanel) void {
         self.setTlsPolicy(c.WEBKIT_TLS_ERRORS_POLICY_FAIL);
-        self.ignore_tls_errors = false;
         c.webkit_web_view_go_back(self.webview);
     }
 
     pub fn forward(self: *WebPanel) void {
         self.setTlsPolicy(c.WEBKIT_TLS_ERRORS_POLICY_FAIL);
-        self.ignore_tls_errors = false;
         c.webkit_web_view_go_forward(self.webview);
     }
 
@@ -732,6 +727,8 @@ fn unlinkTlsCtx(panel: *WebPanel, ctx: *TlsErrorCtx) void {
 /// Free a TLS context's owned data exactly once (callers use `defer`).
 fn releaseTlsCtx(ctx: *TlsErrorCtx) void {
     ctx.alloc.free(ctx.failing_uri);
+    ctx.alloc.free(ctx.host);
+    if (ctx.certificate) |cert| _ = c.g_object_unref(@ptrCast(cert));
     ctx.alloc.destroy(ctx);
 }
 
@@ -785,10 +782,6 @@ fn onLoadChanged(_: ?*c.WebKitWebView, event: c_int, user_data: ?*anyopaque) cal
         WEBKIT_LOAD_FINISHED => {
             panel.setLoading(false);
             panel.navigating_from_entry = false;
-            if (panel.ignore_tls_errors) {
-                panel.ignore_tls_errors = false;
-                panel.setTlsPolicy(c.WEBKIT_TLS_ERRORS_POLICY_FAIL);
-            }
         },
         else => {},
     }
@@ -832,19 +825,73 @@ fn onFlashClear(data: c.gpointer) callconv(.c) c.gboolean {
 fn onTlsError(
     webview_: ?*c.WebKitWebView,
     failing_uri: ?[*:0]const u8,
-    _: ?*c.GTlsCertificate,
+    certificate: ?*c.GTlsCertificate,
     errors: c_uint,
     user_data: ?*anyopaque,
 ) callconv(.c) c.gboolean {
     _ = webview_;
     const panel: *WebPanel = @ptrCast(@alignCast(user_data orelse return 0));
     const uri = failing_uri orelse return 0;
+    const cert = certificate orelse return 0;
 
     const uri_str = std.mem.sliceTo(uri, 0);
-    const host = getHostFromUrl(uri_str);
+
+    // Canonical host via GLib's URI parser (not string splitting).
+    var host_owned: []u8 = &[_]u8{};
+    const guri = c.g_uri_parse(uri_str.ptr, c.G_URI_FLAGS_NONE, null);
+    const host_slice: []const u8 = if (guri) |u| blk: {
+        const h = c.g_uri_get_host(u);
+        if (h) |hp| break :blk std.mem.sliceTo(hp, 0) else break :blk getHostFromUrl(uri_str);
+    } else getHostFromUrl(uri_str);
+    host_owned = panel.alloc.dupe(u8, host_slice) catch {
+        if (guri) |u| c.g_uri_unref(u);
+        return 0;
+    };
+    if (guri) |u| c.g_uri_unref(u);
+
+    const retained_cert = c.g_object_ref(@ptrCast(cert));
+
+    const ctx = panel.alloc.create(TlsErrorCtx) catch {
+        _ = c.g_object_unref(retained_cert);
+        panel.alloc.free(host_owned);
+        return 0;
+    };
+    ctx.* = .{
+        .panel = panel,
+        .alloc = panel.alloc,
+        .failing_uri = panel.alloc.dupe(u8, uri_str) catch {
+            panel.alloc.free(host_owned);
+            _ = c.g_object_unref(retained_cert);
+            panel.alloc.destroy(ctx);
+            return 0;
+        },
+        .certificate = @ptrCast(@alignCast(retained_cert)),
+        .host = host_owned,
+        .next = null,
+    };
+    host_owned = &[_]u8{};
+
+    // Test seam: auto-approve when SEANCE_AUTO_PROCEED_TLS is set.
+    if (std.c.getenv("SEANCE_AUTO_PROCEED_TLS") != null) {
+        if (ctx.certificate) |crt| {
+            const session = c.webkit_web_view_get_network_session(panel.webview);
+            const host_z = panel.alloc.dupeZ(u8, ctx.host) catch {
+                releaseTlsCtx(ctx);
+                return 0;
+            };
+            defer panel.alloc.free(host_z);
+            c.webkit_network_session_allow_tls_certificate_for_host(session, crt, host_z);
+        }
+        panel.loadUrl(ctx.failing_uri);
+        releaseTlsCtx(ctx);
+        return 1;
+    }
+
+    ctx.next = panel.tls_head;
+    panel.tls_head = ctx;
 
     var msg_buf: [512:0]u8 = [_:0]u8{0} ** 512;
-    _ = std.fmt.bufPrint(&msg_buf, "The certificate for <b>{s}</b> is not trusted.\n\n{s}", .{ host, formatTlsErrorFlags(errors) }) catch {};
+    _ = std.fmt.bufPrint(&msg_buf, "The certificate for <b>{s}</b> is not trusted.\n\n{s}", .{ ctx.host, formatTlsErrorFlags(errors) }) catch {};
 
     const dialog = c.adw_alert_dialog_new("Insecure connection", &msg_buf);
     c.adw_alert_dialog_add_response(@as(*c.AdwAlertDialog, @ptrCast(dialog)), "cancel", "Cancel");
@@ -852,18 +899,6 @@ fn onTlsError(
     c.adw_alert_dialog_set_response_appearance(@as(*c.AdwAlertDialog, @ptrCast(dialog)), "proceed", c.ADW_RESPONSE_DESTRUCTIVE);
     c.adw_alert_dialog_set_default_response(@as(*c.AdwAlertDialog, @ptrCast(dialog)), "cancel");
     c.adw_alert_dialog_set_close_response(@as(*c.AdwAlertDialog, @ptrCast(dialog)), "cancel");
-
-    const ctx = panel.alloc.create(TlsErrorCtx) catch return 0;
-    ctx.* = .{
-        .panel = panel,
-        .alloc = panel.alloc,
-        .failing_uri = panel.alloc.dupe(u8, uri_str) catch {
-            panel.alloc.destroy(ctx);
-            return 0;
-        },
-        .next = panel.tls_head,
-    };
-    panel.tls_head = ctx;
 
     _ = c.g_signal_connect_data(@as(c.gpointer, @ptrCast(dialog)), "response", @as(c.GCallback, @ptrCast(&onTlsErrorResponse)), @ptrCast(ctx), null, 0);
     c.adw_dialog_present(@as(*c.AdwDialog, @ptrCast(dialog)), panel.widget);
@@ -877,6 +912,8 @@ const TlsErrorCtx = struct {
     /// release never depends on the panel.
     panel: ?*WebPanel,
     failing_uri: []u8,
+    certificate: ?*c.GTlsCertificate,
+    host: []u8,
     alloc: std.mem.Allocator,
     next: ?*TlsErrorCtx = null,
 };
@@ -890,10 +927,13 @@ fn onTlsErrorResponse(_: *c.AdwAlertDialog, response: [*:0]const u8, data: c.gpo
 
     if (!std.mem.eql(u8, std.mem.sliceTo(response, 0), "proceed")) return;
 
-    // Temporarily ignore TLS errors so the reload succeeds.
-    panel.setTlsPolicy(c.WEBKIT_TLS_ERRORS_POLICY_IGNORE);
-
-    panel.ignore_tls_errors = true;
+    // Approve only the retained certificate for the failing host.
+    if (ctx.certificate) |cert| {
+        const session = c.webkit_web_view_get_network_session(panel.webview);
+        const host_z = panel.alloc.dupeZ(u8, ctx.host) catch return;
+        defer panel.alloc.free(host_z);
+        c.webkit_network_session_allow_tls_certificate_for_host(session, cert, host_z);
+    }
 
     panel.loadUrl(ctx.failing_uri);
 }
@@ -1247,6 +1287,8 @@ test "tls contexts: invalidation turns the response into a pure release" {
         .panel = &panel,
         .alloc = alloc,
         .failing_uri = try alloc.dupe(u8, "https://example.com"),
+        .certificate = null,
+        .host = try alloc.dupe(u8, "example.com"),
         .next = null,
     };
     panel.tls_head = ctx;
@@ -1267,10 +1309,10 @@ test "tls contexts: a live-panel response unlinks before freeing" {
     panel.tls_head = null;
 
     const first = try alloc.create(TlsErrorCtx);
-    first.* = .{ .panel = &panel, .alloc = alloc, .failing_uri = try alloc.dupe(u8, "https://a"), .next = null };
+    first.* = .{ .panel = &panel, .alloc = alloc, .failing_uri = try alloc.dupe(u8, "https://a"), .certificate = null, .host = try alloc.dupe(u8, "a"), .next = null };
     panel.tls_head = first;
     const second = try alloc.create(TlsErrorCtx);
-    second.* = .{ .panel = &panel, .alloc = alloc, .failing_uri = try alloc.dupe(u8, "https://b"), .next = first };
+    second.* = .{ .panel = &panel, .alloc = alloc, .failing_uri = try alloc.dupe(u8, "https://b"), .certificate = null, .host = try alloc.dupe(u8, "b"), .next = first };
     panel.tls_head = second;
 
     // Response for the older context while the panel is alive: unlinked

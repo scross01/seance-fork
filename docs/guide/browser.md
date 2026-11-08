@@ -41,7 +41,7 @@ Browser panels support multiple tabs, like a tabbed browser within a single colu
 
 ## TLS Certificates
 
-When a page fails TLS verification (self-signed certificates, local CAs), Séance shows a dialog with the hostname and error details. Click **Proceed Anyway** to temporarily bypass the certificate check for that session. The override resets when you navigate away.
+When a page fails TLS verification (self-signed certificates, local CAs), Séance shows a dialog with the hostname and error details. Click **Proceed Anyway** to approve the specific certificate for that host using WebKit's certificate-for-host exception. The approval is scoped to the certificate and host shown in the dialog: other hosts, different certificates, and unrelated panels continue to validate TLS normally. The exception persists for the network session (it is not limited to a single navigation), so restarting Séance clears it. Clicking **Cancel** creates no exception.
 
 ## Developer Tools
 
