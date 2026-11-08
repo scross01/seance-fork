@@ -194,6 +194,25 @@ class TlsDialogCloseTests(PanelCallbackTests):
         self.assert_terminal_usable("AFTER_TLS_DIALOG_CLOSE")
 
 
+class ExplicitPanelIdTests(PanelCallbackTests):
+    def test_explicit_panel_ids_are_unique_and_addressable(self):
+        pid = self.app.call("browser.open", {"url": "about:blank"})["panel_id"]
+        terminal_ids = {s["id"] for s in self.app.call("surface.list")["surfaces"]}
+        # surface.list only reports terminal panels, so this is exactly the
+        # collision the two-counter scheme guarantees on first browser open.
+        self.assertNotIn(pid, terminal_ids,
+                         "browser panel id collides with a terminal id")
+        # Mirror direction: a surface.send_text targeted at a known terminal
+        # id still succeeds while a browser panel is open.
+        tid = next(iter(terminal_ids))
+        self.app.call("surface.send_text", {"surface_id": tid, "text": "echo MIRROR_OK\n"})
+        # Explicit-id close must address the browser panel directly.
+        self.app.call("browser.close", {"panel_id": pid})
+        self.app.wait(lambda: self.app.call("surface.read_screen").get("text"),
+                      "terminal after explicit-id browser close")
+        self.assert_terminal_usable("AFTER_EXPLICIT_ID_CLOSE")
+
+
 if __name__ == "__main__":
     import unittest
     unittest.main()

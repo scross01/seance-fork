@@ -5,11 +5,8 @@ const WEBKIT_LOAD_STARTED: c_int = 0;
 const WEBKIT_LOAD_COMMITTED: c_int = 2;
 const WEBKIT_LOAD_FINISHED: c_int = 3;
 
-var id_counter: u64 = 0;
-
 fn nextId() u64 {
-    id_counter += 1;
-    return id_counter;
+    return @import("panel_id.zig").next();
 }
 
 pub const CloseFn = *const fn (*anyopaque) callconv(.c) void;

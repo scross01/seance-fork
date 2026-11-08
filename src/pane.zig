@@ -1911,11 +1911,8 @@ fn escapeShellPath(path: []const u8, buf: []u8) usize {
     return pos;
 }
 
-var id_counter: u64 = 0;
-
 fn nextId() u64 {
-    id_counter += 1;
-    return id_counter;
+    return @import("panel_id.zig").next();
 }
 
 // ── Clipboard paste ─────────────────────────────────────────────────
