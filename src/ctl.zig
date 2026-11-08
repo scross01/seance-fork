@@ -2765,7 +2765,78 @@ const SessionStore = struct {
         return .{ .path = path, .alloc = alloc };
     }
 
+    const ReadResult = union(enum) {
+        missing,
+        ok: JsonValue,
+        malformed,
+    };
+
+    fn lockPath(self: SessionStore) []const u8 {
+        // adjacent stable lock inode
+        return std.fmt.allocPrint(self.alloc, "{s}.lock", .{self.path}) catch self.path;
+    }
+
+    fn acquireLock(self: SessionStore, exclusive: bool) ?std.posix.fd_t {
+        const lp = self.lockPath();
+        defer if (lp.ptr != self.path.ptr) self.alloc.free(lp);
+        // ensure parent dir
+        if (std.mem.lastIndexOfScalar(u8, self.path, '/')) |sep| {
+            std.Io.Dir.createDirAbsolute(io.get(), self.path[0..sep], .default_dir) catch |e| switch (e) {
+                error.PathAlreadyExists => {},
+                else => {},
+            };
+        }
+        const file = std.Io.Dir.createFileAbsolute(io.get(), lp, .{}) catch return null;
+        const fd = file.handle;
+        // bounded wait
+        const deadline = io.milliTimestamp() + 5000;
+        while (true) {
+            const op: c_int = if (exclusive) (std.posix.LOCK.EX | std.posix.LOCK.NB) else (std.posix.LOCK.SH | std.posix.LOCK.NB);
+            if (std.c.flock(fd, op) == 0) break;
+            if (io.milliTimestamp() >= deadline) {
+                _ = std.c.close(fd);
+                return null;
+            }
+            io.sleep(10_000_000); // 10ms
+        }
+        return fd;
+    }
+
+    fn releaseLock(fd: std.posix.fd_t) void {
+        _ = std.c.flock(fd, std.posix.LOCK.UN);
+        _ = std.c.close(fd);
+    }
+
+    fn readStoreChecked(self: SessionStore) ReadResult {
+        const file = std.Io.Dir.openFileAbsolute(io.get(), self.path, .{}) catch |e| switch (e) {
+            error.FileNotFound => return .missing,
+            else => return .malformed,
+        };
+        defer file.close(io.get());
+        const content = io.readToEndAlloc(file, self.alloc, 1024 * 1024) catch return .malformed;
+        if (content.len == 0) return .missing;
+        const parsed = std.json.parseFromSlice(JsonValue, self.alloc, content, .{}) catch return .malformed;
+        if (parsed.value != .object) return .malformed;
+        if (parsed.value.object.get("version")) |v| {
+            if (v != .integer or v.integer != 1) return .malformed;
+        }
+        return .{ .ok = parsed.value };
+    }
+
+    fn readStore(self: SessionStore) ?JsonValue {
+        return switch (self.readStoreChecked()) {
+            .ok => |v| v,
+            else => null,
+        };
+    }
+
     fn lookup(self: SessionStore, session_id: []const u8) ?JsonValue {
+        const fd = self.acquireLock(false) orelse return self.lookupUnlocked(session_id);
+        defer releaseLock(fd);
+        return self.lookupUnlocked(session_id);
+    }
+
+    fn lookupUnlocked(self: SessionStore, session_id: []const u8) ?JsonValue {
         const data = self.readStore() orelse return null;
         const sessions = data.object.get("sessions") orelse return null;
         if (sessions != .object) return null;
@@ -2773,6 +2844,12 @@ const SessionStore = struct {
     }
 
     fn upsert(self: SessionStore, session_id: []const u8, fields: JsonFields) void {
+        const fd = self.acquireLock(true) orelse return;
+        defer releaseLock(fd);
+
+        // malformed store: preserve, do not overwrite
+        if (self.readStoreChecked() == .malformed) return;
+
         var data = self.readStore() orelse blk: {
             var obj: std.json.ObjectMap = .empty;
             obj.put(self.alloc, "version", JsonValue{ .integer = 1 }) catch return;
@@ -2803,6 +2880,11 @@ const SessionStore = struct {
     }
 
     fn consume(self: SessionStore, session_id: []const u8) ?JsonValue {
+        const fd = self.acquireLock(true) orelse return null;
+        defer releaseLock(fd);
+
+        if (self.readStoreChecked() == .malformed) return null;
+
         var data = self.readStore() orelse return null;
         const sessions = if (data.object.getPtr("sessions")) |s| s else return null;
         if (sessions.* != .object) return null;
@@ -2815,21 +2897,7 @@ const SessionStore = struct {
         return null;
     }
 
-    fn readStore(self: SessionStore) ?JsonValue {
-        const file = std.Io.Dir.openFileAbsolute(io.get(), self.path, .{}) catch return null;
-        defer file.close(io.get());
-        const content = io.readToEndAlloc(file, self.alloc, 1024 * 1024) catch return null;
-        if (content.len == 0) return null;
-        const parsed = std.json.parseFromSlice(JsonValue, self.alloc, content, .{}) catch return null;
-        if (parsed.value != .object) return null;
-        if (parsed.value.object.get("version")) |v| {
-            if (v != .integer or v.integer != 1) return null;
-        }
-        return parsed.value;
-    }
-
     fn writeStore(self: SessionStore, data: JsonValue) void {
-        // Ensure parent directory exists
         if (std.mem.lastIndexOfScalar(u8, self.path, '/')) |sep| {
             std.Io.Dir.createDirAbsolute(io.get(), self.path[0..sep], .default_dir) catch |e| switch (e) {
                 error.PathAlreadyExists => {},
@@ -2837,18 +2905,29 @@ const SessionStore = struct {
             };
         }
 
-        // Write to a temp file, then atomically rename
+        // unique temp file
         var tmp_buf: [std.fs.max_path_bytes]u8 = undefined;
-        const tmp_path = std.fmt.bufPrint(&tmp_buf, "{s}.tmp", .{self.path}) catch return;
+        const tmp_path = std.fmt.bufPrint(&tmp_buf, "{s}.tmp.{d}.{d}", .{ self.path, std.c.getpid(), io.timestamp() }) catch return;
 
-        const file = std.Io.Dir.createFileAbsolute(io.get(), tmp_path, .{}) catch return;
-        defer file.close(io.get());
+        const file = std.Io.Dir.createFileAbsolute(io.get(), tmp_path, .{ .exclusive = true }) catch return;
+        defer {
+            file.close(io.get());
+        }
 
-        const json_bytes = Stringify.valueAlloc(self.alloc, data, .{ .whitespace = .indent_2 }) catch return;
-        file.writeStreamingAll(io.get(), json_bytes) catch return;
+        _ = std.c.fchmod(file.handle, 0o600);
 
-        // Atomic rename — on Linux, rename(2) is atomic for same-filesystem
-        std.Io.Dir.renameAbsolute(tmp_path, self.path, io.get()) catch {};
+        const json_bytes = Stringify.valueAlloc(self.alloc, data, .{ .whitespace = .indent_2 }) catch {
+            std.Io.Dir.deleteFileAbsolute(io.get(), tmp_path) catch {};
+            return;
+        };
+        file.writeStreamingAll(io.get(), json_bytes) catch {
+            std.Io.Dir.deleteFileAbsolute(io.get(), tmp_path) catch {};
+            return;
+        };
+
+        std.Io.Dir.renameAbsolute(tmp_path, self.path, io.get()) catch {
+            std.Io.Dir.deleteFileAbsolute(io.get(), tmp_path) catch {};
+        };
     }
 
     fn pruneOld(self: SessionStore, sessions: *JsonValue) void {
@@ -3238,6 +3317,11 @@ fn makeTempStore(alloc: Allocator) !SessionStore {
 
 fn cleanupTempStore(store: SessionStore) void {
     std.Io.Dir.deleteFileAbsolute(io.get(), store.path) catch {};
+    // remove lock file created by transactional store
+    var lock_buf: [std.fs.max_path_bytes]u8 = undefined;
+    if (std.fmt.bufPrint(&lock_buf, "{s}.lock", .{store.path})) |lp| {
+        std.Io.Dir.deleteFileAbsolute(io.get(), lp) catch {};
+    } else |_| {}
     if (std.fs.path.dirname(store.path)) |dir| {
         std.Io.Dir.deleteDirAbsolute(io.get(), dir) catch {};
     }
