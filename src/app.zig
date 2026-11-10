@@ -12,6 +12,7 @@ const config_mod = @import("config.zig");
 const hermes_config_file = @import("hermes_config_file.zig");
 const commandcode_config_file = @import("commandcode_config_file.zig");
 const pool_config_file = @import("pool_config_file.zig");
+const installer_file = @import("installer_file.zig");
 const vibe_hooks = @import("vibe_hooks.zig");
 const blur_mod = @import("blur.zig");
 const kde_decoration = @import("kde_decoration.zig");
@@ -67,13 +68,21 @@ fn parseMajor(output: []const u8) ?u32 {
     return null;
 }
 
+/// True when `path` opens as a directory. The probe handle is closed before
+/// returning so repeated integration syncs do not accumulate descriptors.
+fn dirExists(path: []const u8) bool {
+    var dir = std.Io.Dir.openDirAbsolute(io.get(), path, .{}) catch return false;
+    dir.close(io.get());
+    return true;
+}
+
 /// Auto-install OpenCode plugin if OpenCode config dir exists but plugin is missing.
 pub fn installOpenCodePlugin() void {
     const home = io.getenv("HOME") orelse return;
     const alloc = std.heap.page_allocator;
     const config_dir_path = std.fmt.allocPrint(alloc, "{s}/.config/opencode", .{home}) catch return;
     defer alloc.free(config_dir_path);
-    _ = std.Io.Dir.openDirAbsolute(io.get(), config_dir_path, .{}) catch return; // no opencode config dir → not installed
+    if (!dirExists(config_dir_path)) return; // no opencode config dir → not installed
 
     const major = detectOpenCodeMajor();
     std.log.info("opencode: detected OpenCode v{}", .{@intFromEnum(major)});
@@ -121,17 +130,9 @@ pub fn installOpenCodePlugin() void {
         std.log.info("opencode: installing plugin v{}", .{bundled_version});
     }
 
-    const tmp_path = std.fmt.allocPrint(alloc, "{s}.tmp", .{plugin_path}) catch return;
-    defer alloc.free(tmp_path);
-    // Use exclusive creation to prevent following an existing symlink at the tmp path
-    const dst = std.Io.Dir.createFileAbsolute(io.get(), tmp_path, .{ .exclusive = true }) catch return;
-    errdefer std.Io.Dir.deleteFileAbsolute(io.get(), tmp_path) catch {};
-    _ = dst.writeStreamingAll(io.get(), bundled_content) catch return;
-    // Verify destination is not a symlink before renaming
-    if (std.Io.Dir.cwd().statFile(io.get(), plugin_path, .{})) |stat| {
-        if (stat.kind == .sym_link) return;
-    } else |_| {}
-    std.Io.Dir.renameAbsolute(tmp_path, plugin_path, io.get()) catch return;
+    installer_file.install(plugin_path, bundled_content, .{}) catch |err| {
+        std.log.warn("opencode: failed to write plugin: {s}", .{@errorName(err)});
+    };
 }
 
 /// Remove OpenCode plugin if installed.
@@ -198,7 +199,7 @@ pub fn installKiloPlugin() void {
     const alloc = std.heap.page_allocator;
     const config_dir_path = std.fmt.allocPrint(alloc, "{s}/.config/kilo", .{home}) catch return;
     defer alloc.free(config_dir_path);
-    _ = std.Io.Dir.openDirAbsolute(io.get(), config_dir_path, .{}) catch return; // no kilo config dir → not installed
+    if (!dirExists(config_dir_path)) return; // no kilo config dir → not installed
 
     // Read bundled plugin
     const bundled_path = blk: {
@@ -239,17 +240,9 @@ pub fn installKiloPlugin() void {
         std.log.info("kilo: installing plugin v{}", .{bundled_version});
     }
 
-    const tmp_path = std.fmt.allocPrint(alloc, "{s}.tmp", .{plugin_path}) catch return;
-    defer alloc.free(tmp_path);
-    // Use exclusive creation to prevent following an existing symlink at the tmp path
-    const dst = std.Io.Dir.createFileAbsolute(io.get(), tmp_path, .{ .exclusive = true }) catch return;
-    errdefer std.Io.Dir.deleteFileAbsolute(io.get(), tmp_path) catch {};
-    _ = dst.writeStreamingAll(io.get(), bundled_content) catch return;
-    // Verify destination is not a symlink before renaming
-    if (std.Io.Dir.cwd().statFile(io.get(), plugin_path, .{})) |stat| {
-        if (stat.kind == .sym_link) return;
-    } else |_| {}
-    std.Io.Dir.renameAbsolute(tmp_path, plugin_path, io.get()) catch return;
+    installer_file.install(plugin_path, bundled_content, .{}) catch |err| {
+        std.log.warn("kilo: failed to write plugin: {s}", .{@errorName(err)});
+    };
 }
 
 /// Remove Kilo Code plugin if installed.
@@ -281,7 +274,7 @@ pub fn installMimocodePlugin() void {
     const alloc = std.heap.page_allocator;
     const config_dir_path = std.fmt.allocPrint(alloc, "{s}/.config/mimocode", .{home}) catch return;
     defer alloc.free(config_dir_path);
-    _ = std.Io.Dir.openDirAbsolute(io.get(), config_dir_path, .{}) catch return; // no mimocode config dir → not installed
+    if (!dirExists(config_dir_path)) return; // no mimocode config dir → not installed
 
     // Read bundled plugin
     const bundled_path = blk: {
@@ -322,17 +315,9 @@ pub fn installMimocodePlugin() void {
         std.log.info("mimocode: installing plugin v{}", .{bundled_version});
     }
 
-    const tmp_path = std.fmt.allocPrint(alloc, "{s}.tmp", .{plugin_path}) catch return;
-    defer alloc.free(tmp_path);
-    // Use exclusive creation to prevent following an existing symlink at the tmp path
-    const dst = std.Io.Dir.createFileAbsolute(io.get(), tmp_path, .{ .exclusive = true }) catch return;
-    errdefer std.Io.Dir.deleteFileAbsolute(io.get(), tmp_path) catch {};
-    _ = dst.writeStreamingAll(io.get(), bundled_content) catch return;
-    // Verify destination is not a symlink before renaming
-    if (std.Io.Dir.cwd().statFile(io.get(), plugin_path, .{})) |stat| {
-        if (stat.kind == .sym_link) return;
-    } else |_| {}
-    std.Io.Dir.renameAbsolute(tmp_path, plugin_path, io.get()) catch return;
+    installer_file.install(plugin_path, bundled_content, .{}) catch |err| {
+        std.log.warn("mimocode: failed to write plugin: {s}", .{@errorName(err)});
+    };
 }
 
 /// Remove MiMo Code plugin if installed.
@@ -366,7 +351,7 @@ pub fn installVibeHooks() void {
     // Check if Vibe config directory exists
     const config_dir_path = std.fmt.allocPrint(alloc, "{s}/.vibe", .{home}) catch return;
     defer alloc.free(config_dir_path);
-    _ = std.Io.Dir.openDirAbsolute(io.get(), config_dir_path, .{}) catch return; // no vibe config dir → not installed
+    if (!dirExists(config_dir_path)) return; // no vibe config dir → not installed
 
     // Fast path: if version marker matches, skip all further IO
     if (readVersionMarker(config_dir_path)) |marker_version| {
@@ -910,7 +895,7 @@ pub fn installHermesPlugin() void {
     // Check if Hermes config directory exists
     const hermes_dir = std.fmt.allocPrint(alloc, "{s}/.hermes", .{home}) catch return;
     defer alloc.free(hermes_dir);
-    _ = std.Io.Dir.openDirAbsolute(io.get(), hermes_dir, .{}) catch return; // no hermes dir → not installed
+    if (!dirExists(hermes_dir)) return; // no hermes dir → not installed
 
     // Fast path: if version marker matches, plugin files are already installed.
     // Still ensure enabled state in config.yaml (user may have edited it).
@@ -995,18 +980,10 @@ fn copyPluginFile(alloc: std.mem.Allocator, src_dir: []const u8, dst_dir: []cons
     const content = io.readToEndAlloc(src_file, alloc, 64 * 1024) catch return;
     defer alloc.free(content);
 
-    const tmp_path = try std.fmt.allocPrint(alloc, "{s}.tmp", .{dst_path});
-    defer alloc.free(tmp_path);
-    // Use exclusive creation to prevent following an existing symlink at the tmp path
-    const dst = std.Io.Dir.createFileAbsolute(io.get(), tmp_path, .{ .exclusive = true }) catch return;
-    errdefer std.Io.Dir.deleteFileAbsolute(io.get(), tmp_path) catch {};
-    _ = dst.writeStreamingAll(io.get(), content) catch return;
-    dst.close(io.get());
-    // Verify destination is not a symlink before renaming
-    if (std.Io.Dir.cwd().statFile(io.get(), dst_path, .{})) |stat| {
-        if (stat.kind == .sym_link) return error.IsSymlink;
-    } else |_| {}
-    std.Io.Dir.renameAbsolute(tmp_path, dst_path, io.get()) catch return;
+    installer_file.install(dst_path, content, .{}) catch |err| {
+        std.log.warn("hermes: failed to write plugin file {s}: {s}", .{ filename, @errorName(err) });
+        return err;
+    };
 }
 
 /// Find the `plugins.enabled:` line in config.yaml content.
