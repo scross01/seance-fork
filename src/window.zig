@@ -1580,6 +1580,15 @@ pub fn create(wm: *WindowManager) !*WindowState {
         c.G_CONNECT_AFTER,
     );
 
+    // Test instrumentation (SEANCE_NOTIF_FOCUS_LOG): which widget holds the
+    // keyboard each frame, which surface it sits on, and whether Tab/Return
+    // reach the popover at all. Diagnostics only; it never consumes a key.
+    if (std.c.getenv("SEANCE_NOTIF_FOCUS_LOG") != null) {
+        _ = c.gtk_widget_add_tick_callback(notif_popover, @ptrCast(&onNotifFocusFrame), @as(c.gpointer, @ptrCast(state)), null);
+        installNotifKeyProbe(notif_popover, state, c.GTK_PHASE_CAPTURE);
+        installNotifKeyProbe(notif_popover, state, c.GTK_PHASE_BUBBLE);
+    }
+
     // Create command palette and add as overlay
     state.command_palette = command_palette_mod.CommandPalette.create(state);
     c.gtk_overlay_add_overlay(@ptrCast(window_overlay), state.command_palette.overlay);
@@ -1902,6 +1911,80 @@ fn onNotifJump(workspace_id: u64, pane_group_id: u64, pane_id: u64) void {
             c.gtk_window_present(@as(*c.GtkWindow, @ptrCast(state.gtk_window)));
         }
     }
+}
+
+/// Diagnostic: the panel widget that currently holds keyboard focus.
+fn notifFocusKind(state: *WindowState) []const u8 {
+    const panel = &state.notif_panel;
+    const root = c.gtk_widget_get_root(panel.container) orelse return "none";
+    const focused = c.gtk_root_get_focus(root) orelse return "none";
+    const list: *c.GtkWidget = @as(*c.GtkWidget, @ptrCast(@alignCast(panel.list_box)));
+    const selected: ?*c.GtkWidget = if (c.gtk_list_box_get_selected_row(panel.list_box)) |row|
+        @as(*c.GtkWidget, @ptrCast(@alignCast(row)))
+    else
+        null;
+    var widget: ?*c.GtkWidget = focused;
+    while (widget) |w| {
+        if (w == panel.clear_btn) return "clear-all";
+        if (w == list) return "list";
+        if (w == panel.container) return "panel";
+        if (selected) |row| {
+            if (w == row) return if (focused == row) "selected-row" else "row-child";
+        }
+        widget = c.gtk_widget_get_parent(w);
+    }
+    return "outside";
+}
+
+/// Diagnostic: which native surface the focused widget belongs to.
+fn notifFocusSurface(state: *WindowState) []const u8 {
+    const panel = &state.notif_panel;
+    const popover = panel.popover orelse return "no-popover";
+    const root = c.gtk_widget_get_root(panel.container) orelse return "no-root";
+    const focused = c.gtk_root_get_focus(root) orelse return "no-focus";
+    const native = c.gtk_widget_get_native(focused) orelse return "no-native";
+    return if (@as(*c.GtkWidget, @ptrCast(@alignCast(native))) == popover) "popover" else "window";
+}
+
+fn onNotifFocusFrame(widget: *c.GtkWidget, _: ?*anyopaque, data: c.gpointer) callconv(.c) c.gboolean {
+    const state: *WindowState = @ptrCast(@alignCast(data));
+    if (state.destroyed) return 0;
+    if (c.gtk_widget_get_mapped(widget) == 0) return 0;
+    std.log.info("notif frame: visible={d} focus={s} focus_surface={s}", .{
+        c.gtk_widget_get_visible(widget),
+        notifFocusKind(state),
+        notifFocusSurface(state),
+    });
+    return 1; // keep logging while the popover is mapped
+}
+
+fn installNotifKeyProbe(popover: *c.GtkWidget, state: *WindowState, phase: c.GtkPropagationPhase) void {
+    const controller = c.gtk_event_controller_key_new();
+    c.gtk_event_controller_set_propagation_phase(@ptrCast(controller), phase);
+    _ = c.g_signal_connect_data(
+        @as(c.gpointer, @ptrCast(controller)),
+        "key-pressed",
+        @as(c.GCallback, @ptrCast(&onNotifKeyProbe)),
+        @as(c.gpointer, @ptrCast(state)),
+        null,
+        0,
+    );
+    c.gtk_widget_add_controller(popover, @ptrCast(controller));
+}
+
+fn onNotifKeyProbe(controller: *c.GtkEventControllerKey, keyval: c.guint, _: c.guint, _: c.GdkModifierType, data: c.gpointer) callconv(.c) c.gboolean {
+    const state: *WindowState = @ptrCast(@alignCast(data));
+    const phase = if (c.gtk_event_controller_get_propagation_phase(@ptrCast(controller)) == c.GTK_PHASE_CAPTURE)
+        "capture"
+    else
+        "bubble";
+    std.log.info("notif key: phase={s} keyval=0x{X} focus={s} focus_surface={s}", .{
+        phase,
+        keyval,
+        notifFocusKind(state),
+        notifFocusSurface(state),
+    });
+    return 0; // never consume
 }
 
 fn onNotifPopoverMapped(_: *c.GtkPopover, data: c.gpointer) callconv(.c) void {
