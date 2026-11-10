@@ -5,22 +5,22 @@ Séance integrates with [Codebuff](https://codebuff.com) through session log mon
 ## How It Works
 
 1. **Wrapper script** intercepts `codebuff` launches inside Séance terminals
-2. **Background monitor** watches the Codebuff session log directory for `.jsonl` file changes using `inotifywait`
-3. **Activity detection** — when files are modified, status changes to "Running"
-4. **Idle detection** — when no activity for 5 seconds, status changes to "Idle"
+2. **Background monitor** resolves *this launch's* `log.jsonl` — the recent log whose records carry the CLI's own process id — then watches that single file with `inotifywait`
+3. **Activity detection** — when the owned log grows, status changes to "Running"
+4. **Idle detection** — when the owned log stops growing for 5 seconds, status changes to "Idle"
 5. **Session end** — wrapper fires `session-end` on exit via trap
 
 ## Status Detection
 
 | State | How Detected |
 |-------|--------------|
-| **Running** | `inotifywait` detects file modification in session log directory |
-| **Idle** | No file modifications for 5 seconds (timeout) |
+| **Running** | The launch-owned log grows (an appended record) |
+| **Idle** | The owned log is unchanged for 5 seconds; also the fallback when no owned log is found |
 | **Needs input** | Not supported — shows "Running" instead |
 
 ## Features
 
-- **Per-surface status** — each terminal pane tracks its own agent status independently
+- **Per-surface status** — each terminal pane tracks its own agent status independently. Each pane watches only its own launch log, so another Codebuff or Freebuff session writing to the same project tree does not mark it Running.
 - **Session tracking** — tracks session lifecycle from start to end
 
 ## Requirements
@@ -37,7 +37,8 @@ codebuff-hooks = true
 
 ## Limitations
 
-- **Heuristic-based** — activity detection is based on file modification, not actual agent state. A file write doesn't necessarily mean the agent is "working".
+- **Heuristic-based** — activity is "this launch's log grew", not actual agent state. A write doesn't necessarily mean the agent is "working".
+- **Attribution depends on the log schema** — discovery matches the `pid` field Codebuff's JSON records carry. If that field disappears or changes, the monitor falls back to lifecycle-only tracking (Idle, session-end on exit) rather than watching the shared tree.
 - **Latency** — there's a 5-second idle timeout before status changes from "Running" to "Idle".
 - **No notification support** — Codebuff doesn't emit permission request events.
 - **No permission detection** — when Codebuff prompts for permission, the sidebar shows "Running" instead of "Waiting for input".
@@ -57,19 +58,22 @@ Codebuff uses **session log monitoring** with `inotifywait` — a Linux-specific
 The wrapper script starts a background process that:
 
 1. Initializes status to "Running" (matches the initial `prompt-submit` hook)
-2. Loops while the parent process is alive (`kill -0 $$`)
-3. Waits for `IN_MODIFY` events on `*.jsonl` files in the session log directory
-4. On activity: if current status is not "Running", sends `prompt-submit` hook
-5. On timeout (5 seconds): if current status is "Running", sends `stop` hook
-6. Cleans up temp state file on exit
+2. Resolves its launch log: recent `log.jsonl` files under the manicode projects tree, matched against the wrapper's descendant PIDs (the npm launcher spawns the real CLI binary as a child), for up to 30 seconds
+3. If no log is attributable, publishes "Idle" once and keeps lifecycle-only tracking (`session-end` on exit) instead of watching the shared tree
+4. Loops while the parent process is alive (`kill -0 $$`), watching that one file
+5. Compares file sizes on each wake: growth is activity, so an idle timeout is not mistaken for a write
+6. On growth: if current status is not "Running", sends `prompt-submit`
+7. On 5 seconds without growth: if current status is "Running", sends `prompt-submit` with `{"status":"Idle"}`
+8. Re-discovers once if the owned log disappears, then stops without attributing global activity
+9. Cleans up its state file and watcher on exit, HUP, TERM or INT
 
 ### Event Mapping
 
 | Trigger | Seance Hook | UI Status |
 |---|---|---|
 | Session start | `prompt-submit` | Running |
-| File modification detected | `prompt-submit` | Running |
-| No activity for 5s | `stop` | Idle |
+| Owned log grows | `prompt-submit` | Running |
+| No growth for 5s | `prompt-submit` (`{"status":"Idle"}`) | Idle |
 | Process exit | `session-end` | (cleared) |
 
 ### Key Implementation Details
@@ -78,5 +82,7 @@ The wrapper script starts a background process that:
 - `clear_status_on_end` is `true`.
 - `has_notification_hook` is `false`.
 - **Config toggle:** `codebuff-hooks = true` in `config.toml`.
-- **File pattern:** `*.jsonl`
+- **File:** one launch-owned `log.jsonl` (the log's `pid` records must match a wrapper descendant)
 - **Idle timeout:** 5 seconds
+- **Discovery deadline:** 30 seconds
+- **State file:** `mktemp "${TMPDIR:-/tmp}/codebuff-status-XXXXXX"`, removed on exit, HUP, TERM and INT

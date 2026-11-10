@@ -54,56 +54,158 @@ export SEANCE_CODEBUFF_PID=$$
 # ── Session-end cleanup trap ───────────────────────────────────────────────
 
 _STATUS_MONITOR_PID=""
+_STATUS_STATE_FILE=""
 _cleanup() {
-    kill $_STATUS_MONITOR_PID 2>/dev/null || true
+    if [[ -n "$_STATUS_MONITOR_PID" ]]; then
+        kill "$_STATUS_MONITOR_PID" 2>/dev/null || true
+    fi
+    # The monitor removes this itself on TERM; this backstop covers a monitor
+    # that died before installing its trap.
+    if [[ -n "$_STATUS_STATE_FILE" ]]; then
+        rm -f "$_STATUS_STATE_FILE"
+    fi
     timeout 0.5 "$REAL_SEANCE" ctl codebuff-hook session-end <<'EOF' >/dev/null 2>&1 &
 {}
 EOF
 }
 trap _cleanup EXIT
+# Run the same EXIT cleanup on termination: a HUP'd wrapper would otherwise
+# leave the monitor subshell and its watch child behind.
+trap 'exit 129' HUP
+trap 'exit 143' TERM
+trap 'exit 130' INT
 
 # ── Set initial "Running" status ───────────────────────────────────────────
 
 "$REAL_SEANCE" ctl codebuff-hook prompt-submit <<'EOF' >/dev/null 2>&1 || true
-{}
+{"status":"Running"}
 EOF
 
 # ── Start background status monitor ────────────────────────────────────────
-# Uses inotifywait on the manicode directory to detect session log writes.
-# Requires inotify-tools package.
+# Codebuff appends every session to the shared manicode tree, so a directory
+# watch cannot tell this pane's activity from another session's. Resolve the
+# log that carries this launch's own CLI pid, then watch that single file.
+# Requires inotify-tools.
+MANICODE_DIR="${HOME}/.config/manicode"
+
+_fire_status() {   # $1 = Running|Idle — one retry for transient socket failures
+    local payload="{\"status\":\"$1\"}"
+    if ! printf '%s\n' "$payload" | timeout 0.5 "$REAL_SEANCE" ctl \
+        codebuff-hook prompt-submit >/dev/null 2>&1; then
+        sleep 1
+        printf '%s\n' "$payload" | timeout 1 "$REAL_SEANCE" ctl \
+            codebuff-hook prompt-submit >/dev/null 2>&1 || true
+    fi
+}
+
 _start_status_monitor() {
-    local manicode_dir="${HOME}/.config/manicode"
-
+    _STATUS_STATE_FILE=$(mktemp "${TMPDIR:-/tmp}/codebuff-status-XXXXXX")
+    # Start from the state that was just published; starting Idle would let a
+    # quiet session keep a stale Running after the first idle transition.
+    echo "Running" > "$_STATUS_STATE_FILE"
     (
-        local idle_timeout=5
-        local state_file
-        state_file=$(mktemp /tmp/codebuff-status-XXXXXX)
-        # Initialize to Running to match the initial prompt-submit status
-        echo "Running" > "$state_file"
+        local idle_timeout=5 state_file="$_STATUS_STATE_FILE" watch_pid=""
+        # The wrapper's EXIT trap kills this subshell; reap our watch child
+        # and state file so nothing outlives the session. HUP covers pane
+        # teardown (tmux/session death) where the EXIT trap never runs.
+        trap '[[ -n "$watch_pid" ]] && kill "$watch_pid" 2>/dev/null; rm -f "$state_file"; exit 0' TERM INT HUP
 
+        _state() {   # last known status; recreate as Running if it vanished
+            cat "$state_file" 2>/dev/null || { echo Running > "$state_file"; printf Running; }
+        }
+
+        _set_state() { echo "$1" > "$state_file"; }
+
+        _log_candidates() {   # recent log.jsonl files, newest first
+            find "$MANICODE_DIR/projects" -name log.jsonl -newermt '-5 seconds' \
+                -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -25
+        }
+
+        _cli_pids() {   # wrapper's descendant PIDs (the npm launcher spawns
+            # the real CLI binary as its own child, hence the tree walk)
+            local ppid_map frontier next pid c p depth=0
+            ppid_map=$(ps -eo pid=,ppid= 2>/dev/null || true)
+            frontier="$$"
+            while [[ -n "$frontier" ]] && (( depth < 4 )); do
+                next=""
+                for pid in $frontier; do
+                    while read -r c p; do
+                        if [[ "$p" == "$pid" ]]; then next+=" $c"; fi
+                    done <<< "$ppid_map"
+                done
+                [[ -z "$next" ]] && break
+                echo "$next"
+                frontier=$next
+                depth=$((depth + 1))
+            done
+        }
+
+        _find_log() {   # candidate log whose tail carries this launch's CLI pid
+            local cands cand pid kids tailbuf
+            kids=$(_cli_pids)
+            cands=$(_log_candidates)
+            while IFS= read -r cand; do
+                [[ -z "$cand" ]] && continue
+                cand=${cand#* }
+                tailbuf=$(tail -c 8192 "$cand" 2>/dev/null || true)
+                for pid in $kids; do
+                    if grep -q "\"pid\":$pid[,}]" <<< "$tailbuf"; then
+                        echo "$cand"
+                        return 0
+                    fi
+                done
+            done <<< "$cands"
+            return 0
+        }
+
+        # ── discover phase ──
+        # 30s: the npm launcher may download or verify the CLI before it
+        # writes its first record.
+        local logfile="" deadline=$((SECONDS + 30))
+        while kill -0 $$ 2>/dev/null && (( SECONDS < deadline )); do
+            logfile=$(_find_log)
+            [[ -n "$logfile" ]] && break
+            sleep 0.25
+        done
+        if [[ -z "$logfile" ]]; then
+            # Lifecycle-only tracking: no log means no attributable activity,
+            # so stop claiming Running rather than watching the whole tree.
+            _fire_status "Idle"; rm -f "$state_file"; exit 0
+        fi
+
+        # ── watch phase ──
+        local offset=0 size activity last_activity rediscover=1
+        offset=$(wc -c < "$logfile" 2>/dev/null || echo 0)
+        last_activity=$SECONDS
         while kill -0 $$ 2>/dev/null; do
-            # Wait for IN_MODIFY events with timeout
-            if timeout "$idle_timeout" inotifywait -r -q -e modify \
-                --include '\.jsonl$' "$manicode_dir" >/dev/null 2>&1; then
-                # Activity detected
-                local current_status
-                current_status=$(cat "$state_file" 2>/dev/null || echo "Idle")
-                if [[ "$current_status" != "Running" ]]; then
-                    echo "Running" > "$state_file"
-                    timeout 0.5 "$REAL_SEANCE" ctl codebuff-hook prompt-submit <<'EOF' >/dev/null 2>&1 || true
-{"status":"Running"}
-EOF
+            timeout "$idle_timeout" inotifywait -q -e modify \
+                "$logfile" >/dev/null 2>&1 &
+            watch_pid=$!
+            if ! wait "$watch_pid" && [[ ! -f "$logfile" ]]; then
+                # File vanished (no rotation expected): re-discover once, then
+                # give up without falling back to any global activity.
+                if (( rediscover )); then
+                    rediscover=0
+                    logfile=$(_find_log)
+                    [[ -n "$logfile" ]] || { rm -f "$state_file"; exit 0; }
+                    offset=$(wc -c < "$logfile" 2>/dev/null || echo 0)
+                    last_activity=$SECONDS
+                    continue
                 fi
-            else
-                # Timeout — no activity for idle_timeout seconds
-                local current_status
-                current_status=$(cat "$state_file" 2>/dev/null || echo "Idle")
-                if [[ "$current_status" == "Running" ]]; then
-                    echo "Idle" > "$state_file"
-                    timeout 0.5 "$REAL_SEANCE" ctl codebuff-hook prompt-submit <<'EOF' >/dev/null 2>&1 || true
-{"status":"Idle"}
-EOF
+                rm -f "$state_file"; exit 0
+            fi
+            # Compare sizes rather than trusting a single event: the idle
+            # timeout also lands here with no append, and old records do not
+            # count because offset starts at the current end of file.
+            size=$(wc -c < "$logfile" 2>/dev/null || echo "$offset")
+            if (( size > offset )); then
+                offset=$size
+                last_activity=$SECONDS
+                if [[ "$(_state)" != "Running" ]]; then
+                    _set_state Running; _fire_status "Running"
                 fi
+            elif (( SECONDS - last_activity >= idle_timeout )) && [[ "$(_state)" == "Running" ]]; then
+                _set_state Idle; _fire_status "Idle"
             fi
         done
         rm -f "$state_file"
@@ -114,7 +216,6 @@ _start_status_monitor
 
 # ── Launch codebuff (no exec — wrapper must survive for cleanup) ───────────
 
-"$REAL_CODEBUFF" "$@"
-rc=$?
+"$REAL_CODEBUFF" "$@" || rc=$?
 
-exit $rc
+exit ${rc:-0}

@@ -7,9 +7,10 @@ Session log monitoring is used for agents that don't have native hook systems. I
 1. A wrapper script intercepts agent launches inside Séance terminals
 2. The wrapper starts a background monitor process
 3. The monitor watches the agent's session log directory using `inotifywait`
-   (Freebuff is different: it resolves this session's own `log.jsonl` first —
-   bounded, pid-verified discovery — then watches that single file; the
-   directory-watch steps below describe the Codebuff/Poolside-era variant.)
+   (Freebuff and Codebuff are different: each resolves this session's own
+   `log.jsonl` first — bounded, pid-verified discovery — then watches that
+   single file; the directory-watch steps below describe the Poolside-era
+   variant.)
 4. When files are modified, the monitor detects activity and reports "Running" status
 5. When no activity is detected for a timeout period, the monitor reports "Idle" status
 6. The wrapper fires `session-end` on exit via a trap
@@ -78,12 +79,15 @@ EOF
 }
 ```
 
-**Note:** this is the generic recursive-watch pattern. Codebuff follows it
-(and Poolside did before its native-hooks migration). Freebuff
-0.2.x does **not** — it creates a fresh chat directory per launch, so a
-recursive watch established before startup misses it. Freebuff uses a
-discover-then-single-file-watch variant with log-content marker parsing;
-`resources/bin/freebuff` is the reference implementation.
+**Note:** this is the generic recursive-watch pattern. Poolside followed it
+before its native-hooks migration. Freebuff and Codebuff do **not** — every
+session appends to the same manicode projects tree, so a recursive watch
+attributes another session's writes to this pane, and a watch established
+before startup can miss a fresh chat directory. Both use a
+discover-then-single-file-watch variant; `resources/bin/freebuff` and
+`resources/bin/codebuff` are the reference implementations. Freebuff also
+parses agent-step markers from its log; Codebuff treats growth of its own log
+as activity.
 
 ### State Machine
 
@@ -108,7 +112,7 @@ The monitor process:
 | Agent | Log Directory | File Pattern |
 |-------|---------------|--------------|
 | Poolside | `~/.local/state/poolside/trajectories` | `*.ndjson` (native hooks now; monitor removed in the Pool migration) |
-| Codebuff | *(agent-specific)* | `*.jsonl` |
+| Codebuff | `~/.config/manicode/projects/<project>/chats/<timestamp>/` | log.jsonl (one launch-owned file, discovered by pid) |
 | Freebuff | `~/.config/manicode/projects/<project>/chats/<timestamp>/` | log.jsonl (one active file, discovered at launch) |
 
 ## Supported Agents
