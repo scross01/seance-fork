@@ -18,7 +18,6 @@ import select
 import shutil
 import socket
 import subprocess
-import time
 import unittest
 from unittest.mock import patch
 
@@ -78,20 +77,32 @@ class MixedPanelTransferTest(unittest.TestCase):
         self.fail(f"{note}: application exited with status "
                   f"{self.app.process.returncode}\n{self.app.log.read()[-4000:]}")
 
-    def key(self, chord):
+    def key(self, chord, until):
+        """Press chord, wait for it to take effect, then for a settled layout.
+
+        Expel and layout transitions animate over frame ticks, so the state a
+        later key depends on (row seating, AdwTabView membership, removal of an
+        emptied column) is only final once system.tree reports the workspace
+        settled.
+        """
         self.run_x("xdotool", "key", "--clearmodifiers", chord)
-        # Layout and expulsion transitions run on frame ticks; give them a
-        # couple of frames before the next event, then insist the app is alive.
-        time.sleep(0.5)
+        self.app.wait(until, f"{chord} takes effect")
+        self.app.wait(self.settled, f"layout settles after {chord}")
         self.assert_running(f"after {chord}")
 
-    def groups(self):
+    def active_workspace(self):
         tree = self.app.call("system.tree")
         windows = [w for w in tree["windows"] if w["active"]]
         self.assertEqual(len(windows), 1, tree)
         workspaces = [w for w in windows[0]["workspaces"] if w["active"]]
         self.assertEqual(len(workspaces), 1, windows)
-        return workspaces[0]["pane_groups"]
+        return workspaces[0]
+
+    def groups(self):
+        return self.active_workspace()["pane_groups"]
+
+    def settled(self):
+        return self.active_workspace()["settled"]
 
     def group(self, group_id):
         matched = [g for g in self.groups() if g["id"] == group_id]
@@ -138,22 +149,25 @@ class MixedPanelTransferTest(unittest.TestCase):
     def browser_tab(self):
         """Add a browser panel to the focused column as another panel."""
         before = self.browser_ids()
-        self.key("ctrl+alt+e")
-        self.app.wait(lambda: len(self.browser_ids()) == len(before) + 1,
-                      "browser tab")
+        self.key("ctrl+alt+e", lambda: len(self.browser_ids()) == len(before) + 1)
         created = [pid for pid in self.browser_ids() if pid not in before]
         self.assertEqual(len(created), 1, created)
         return created[0]
 
     def toggle_layout(self):
         """Flip the focused column between stacked and tabbed."""
-        self.key("ctrl+shift+l")
+        mode = self.focused_group()["layout_mode"]
+        self.key("ctrl+shift+l",
+                 lambda: self.focused_group()["layout_mode"] != mode)
 
     def focus_column(self, side):
-        self.key("ctrl+shift+" + side)
+        target = self.groups()[0 if side == "Left" else -1]["id"]
+        self.key("ctrl+shift+" + side,
+                 lambda: self.focused_group()["id"] == target)
 
     def transfer(self, side="Left"):
-        self.key("ctrl+alt+" + side)
+        before = self.groups()
+        self.key("ctrl+alt+" + side, lambda: self.groups() != before)
 
     def wait_groups(self, count, description):
         """Wait for a column count: emptied columns close on a later frame."""
@@ -227,7 +241,7 @@ class MixedPanelTransferTest(unittest.TestCase):
         self.transfer()
 
         self.assert_running("after emptying a browser column")
-        self.wait_groups(1, "empty browser column closes")
+        self.assertEqual(len(self.groups()), 1, self.groups())
         self.assert_browser_is_active(target)
         self.assert_browser_usable(panel_id)
         self.app.call("surface.send_text", {"surface_id": terminal,
@@ -244,7 +258,7 @@ class MixedPanelTransferTest(unittest.TestCase):
 
         self.transfer()
         self.assert_running("after first transfer")
-        self.wait_groups(1, "emptied browser column closes")
+        self.assertEqual(len(self.groups()), 1, self.groups())
         self.assert_browser_usable(panel_id)
 
         self.transfer("Right")
@@ -266,9 +280,9 @@ class MixedPanelTransferTest(unittest.TestCase):
 
     def test_terminal_slow_path_still_transfers(self):
         self.split_terminal()
-        self.key("ctrl+shift+t")  # second terminal, so the source column survives
-        self.app.wait(lambda: len(self.app.call("surface.list")["surfaces"]) == 3,
-                      "second terminal")
+        # Second terminal, so the source column survives the expel.
+        self.key("ctrl+shift+t",
+                 lambda: len(self.app.call("surface.list")["surfaces"]) == 3)
         moved = [s["id"] for s in self.app.call("surface.list")["surfaces"]
                  if s["focused"]][0]
         target = self.groups()[0]["id"]

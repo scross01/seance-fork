@@ -708,12 +708,13 @@ pub const SocketServer = struct {
                 const escaped_ws_title = jsonEscapeString(ws.getTitle(), &ws_title_esc);
                 const is_active_ws = (ws_idx == state.active_workspace);
 
-                W.print(&result_buf, &pos, &overflow, "{{\"id\":{d},\"index\":{d},\"title\":\"{s}\",\"active\":{s},\"pinned\":{s},\"pane_groups\":[", .{
+                W.print(&result_buf, &pos, &overflow, "{{\"id\":{d},\"index\":{d},\"title\":\"{s}\",\"active\":{s},\"pinned\":{s},\"settled\":{s},\"pane_groups\":[", .{
                     ws.id,
                     ws_idx,
                     escaped_ws_title,
                     if (is_active_ws) "true" else "false",
                     if (ws.is_pinned) "true" else "false",
+                    if (ws.layoutSettled()) "true" else "false",
                 });
 
                 const fg = ws.focusedGroup();
@@ -727,9 +728,10 @@ pub const SocketServer = struct {
 
                         const is_focused_grp = if (fg) |f| f.id == grp.id else false;
 
-                        W.print(&result_buf, &pos, &overflow, "{{\"id\":{d},\"focused\":{s},\"surfaces\":[", .{
+                        W.print(&result_buf, &pos, &overflow, "{{\"id\":{d},\"focused\":{s},\"layout_mode\":\"{s}\",\"surfaces\":[", .{
                             grp.id,
                             if (is_focused_grp) "true" else "false",
+                            @tagName(col.layout_mode),
                         });
 
                         var first_surf = true;

@@ -307,6 +307,25 @@ pub const Workspace = struct {
         return col.groups.items[0];
     }
 
+    /// True once no column animation, width lerp or pending stacked layout is
+    /// still in flight. Reported by system.tree so GUI tests can wait for a
+    /// settled layout instead of sleeping before the next synthetic key.
+    pub fn layoutSettled(self: *const Workspace) bool {
+        if (@abs(self.camera - self.camera_target) > 0.0005) return false;
+        for (self.columns.items) |*col| {
+            if (col.closing or col.open_anim < 1.0 or col.isModeTransitioning()) return false;
+            if (@abs(col.target_width - col.width) > 0.001) return false;
+            for (col.groups.items) |grp| {
+                if (grp.needs_stacked_layout) return false;
+                if (!grp.in_stacked_mode) continue;
+                for (grp.panels.items) |panel| {
+                    if (panel.stacked_closing() or panel.getStackedOpenAnim() < 1.0) return false;
+                }
+            }
+        }
+        return true;
+    }
+
     /// Clear pane history if it references the given pane.
     pub fn clearPaneHistoryFor(self: *Workspace, pane_id: u64) void {
         if (self.last_focused_pane_id) |lid| {
@@ -2690,6 +2709,52 @@ test "expelling a tabbed row into a tabbed column transfers the page in the same
     const parent = c.gtk_widget_get_parent(expelled.getWidget());
     try std.testing.expect(parent != null);
     try std.testing.expect(parent.? != ws.fixed);
+}
+
+test "layoutSettled reports in-flight column and panel animations" {
+    if (c.gtk_init_check() == 0) return error.SkipZigTest;
+    const alloc = std.testing.allocator;
+    const ws = try Workspace.create(alloc, "settle");
+    const container = ws.container;
+    _ = c.g_object_ref_sink(@ptrCast(container));
+    defer {
+        ws.destroy();
+        _ = c.g_object_unref(@ptrCast(container));
+    }
+
+    const col = &ws.columns.items[0];
+    const grp = col.groups.items[0];
+    ws.camera = ws.camera_target;
+    col.closing = false;
+    col.open_anim = 1.0;
+    col.layout_mode = .stacked;
+    col.stacked_anim = 1.0;
+    col.width = col.target_width;
+    grp.needs_stacked_layout = false;
+    grp.in_stacked_mode = true;
+    for (grp.panels.items) |panel| panel.setStackedOpenAnim(1.0);
+    try testing.expect(ws.layoutSettled());
+
+    col.width = col.target_width - 0.5;
+    try testing.expect(!ws.layoutSettled());
+    col.width = col.target_width;
+
+    col.stacked_anim = 0.5;
+    try testing.expect(!ws.layoutSettled());
+    col.stacked_anim = 1.0;
+
+    col.closing = true;
+    try testing.expect(!ws.layoutSettled());
+    col.closing = false;
+
+    grp.needs_stacked_layout = true;
+    try testing.expect(!ws.layoutSettled());
+    grp.needs_stacked_layout = false;
+
+    grp.panels.items[0].setStackedOpenAnim(0.5);
+    try testing.expect(!ws.layoutSettled());
+    grp.panels.items[0].setStackedOpenAnim(1.0);
+    try testing.expect(ws.layoutSettled());
 }
 
 test "WorkspaceMetadata: setStatus inserts new entry" {
