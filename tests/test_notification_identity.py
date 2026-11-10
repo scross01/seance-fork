@@ -114,6 +114,23 @@ class NotificationIdentityTests(keyboard.PhysicalKeyboardTestCase):
         self.assertTrue(self.unread()[self.background["id"]],
                         "the unread sibling keeps the badge")
 
+    def test_reopened_popover_dismisses_displayed_record(self):
+        self.emit("ALPHA")
+        self.emit("CHARLIE")
+        self.open_panel()
+        self.press("Return")
+        self.app.wait(lambda: self.notifications()[0]["read"], "CHARLIE read")
+        focused = [pane["id"] for pane in self.panes() if pane["focused"]]
+        self.assertEqual(focused, [self.background["id"]], "activation jumps to the record's pane")
+
+        self.open_panel()
+        self.press("Tab", "Return")
+        self.app.wait(lambda: [n["title"] for n in self.notifications()] == ["ALPHA"],
+                      "dismiss reopened row")
+        self.assertFalse(self.notifications()[0]["read"],
+                         "dismissing the read record must not read the survivor")
+        self.assertTrue(self.unread()[self.background["id"]])
+
     def test_ring_eviction_keeps_displayed_identity_addressable(self):
         self.emit("EVICTED")
         evicted_id = self.notifications()[0]["id"]

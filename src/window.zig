@@ -1905,8 +1905,16 @@ fn onNotifJump(workspace_id: u64, pane_group_id: u64, pane_id: u64) void {
 }
 
 fn onNotifPopoverMapped(_: *c.GtkPopover, data: c.gpointer) callconv(.c) void {
+    // GTK assigns focus to the popover's first focusable child during mapping,
+    // which would leave the next Return on the header's Clear all button.
+    // Defer one turn so this lands after that assignment.
+    _ = c.g_idle_add(@ptrCast(&onNotifFocusIdle), data);
+}
+
+fn onNotifFocusIdle(data: c.gpointer) callconv(.c) c.gboolean {
     const state: *WindowState = @ptrCast(@alignCast(data));
-    state.notif_panel.focusSelectedRow();
+    if (!state.destroyed) state.notif_panel.focusSelectedRow();
+    return c.G_SOURCE_REMOVE;
 }
 
 fn onNotifPopoverClosed(_: *c.GtkPopover, data: c.gpointer) callconv(.c) void {

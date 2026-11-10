@@ -268,7 +268,14 @@ pub const Pane = struct {
             const Window = @import("window.zig");
             if (Window.window_manager) |wm| {
                 if (wm.findByWorkspaceId(self.workspace_id)) |state| {
-                    if (!state.notif_center.suppress_focus_mark_read) {
+                    // While the notification popover owns the keyboard, a focus
+                    // event it triggers must not blanket-read the pane's
+                    // remaining alerts; only the record acted on was read.
+                    const popover_open = if (state.notif_popover) |popover|
+                        c.gtk_widget_get_visible(popover) != 0
+                    else
+                        false;
+                    if (!state.notif_center.suppress_focus_mark_read and !popover_open) {
                         state.notif_center.markReadForPane(self.id, @ptrCast(self));
                     }
                 }
