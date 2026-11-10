@@ -568,6 +568,10 @@ pub const PaneGroup = struct {
         } else if (from > self.active_panel and to <= self.active_panel) {
             self.active_panel += 1;
         }
+
+        // Every row is visible, so the new order is seated now rather than
+        // animating from the previous positions.
+        if (self.in_stacked_mode) self.tileStackedRows();
     }
 
     /// Update the tab bar title for a panel by its pane ID.
@@ -1206,6 +1210,73 @@ test "tileStackedRows repairs rows that already overlapped" {
         try testing.expectApproxEqAbs(i_f / 3.0, panel.getStackedFracY(), 1e-9);
         try testing.expectApproxEqAbs(@as(f64, 1.0 / 3.0), panel.getStackedFracH(), 1e-9);
     }
+}
+
+test "dropping a tab in a resized stacked column reseats rows by weight" {
+    if (c.gtk_init_check() == 0) return error.SkipZigTest;
+    const alloc = std.testing.allocator;
+    const group = try makeTestGroup(alloc, 3);
+    const container = group.getWidget();
+    _ = c.g_object_ref_sink(@ptrCast(container));
+    test_group = group;
+    defer destroyTestGroup(group, container);
+    group.in_stacked_mode = true;
+
+    switch (group.panels.items[0]) {
+        .terminal => |p| p.height_weight = 3.0,
+        .webkit => unreachable,
+    }
+    const heavy = group.panels.items[0];
+    group.tileStackedRows();
+
+    // AdwTabView drag and `surface.reorder` both land in reorderPanel.
+    group.reorderPanel(0, 2);
+
+    try testing.expectEqual(heavy.getWidget(), group.panels.items[2].getWidget());
+    try testing.expectApproxEqAbs(@as(f64, 3.0), group.panels.items[2].getHeightWeight(), 1e-9);
+
+    // Weights 1 : 1 : 3 follow the new order, seated without waiting a tick.
+    try testing.expectApproxEqAbs(@as(f64, 0.0), group.panels.items[0].getStackedFracY(), 1e-9);
+    try testing.expectApproxEqAbs(@as(f64, 1.0 / 5.0), group.panels.items[0].getStackedFracH(), 1e-9);
+    try testing.expectApproxEqAbs(@as(f64, 1.0 / 5.0), group.panels.items[1].getStackedFracY(), 1e-9);
+    try testing.expectApproxEqAbs(@as(f64, 1.0 / 5.0), group.panels.items[1].getStackedFracH(), 1e-9);
+    try testing.expectApproxEqAbs(@as(f64, 2.0 / 5.0), group.panels.items[2].getStackedFracY(), 1e-9);
+    try testing.expectApproxEqAbs(@as(f64, 3.0 / 5.0), group.panels.items[2].getStackedFracH(), 1e-9);
+}
+
+test "transfer into a resized stacked column tiles the whole column in one frame" {
+    if (c.gtk_init_check() == 0) return error.SkipZigTest;
+    const alloc = std.testing.allocator;
+    const target = try makeTestGroup(alloc, 2);
+    const container = target.getWidget();
+    _ = c.g_object_ref_sink(@ptrCast(container));
+    test_group = target;
+    defer destroyTestGroup(target, container);
+    target.in_stacked_mode = true;
+
+    switch (target.panels.items[0]) {
+        .terminal => |p| p.height_weight = 3.0,
+        .webkit => unreachable,
+    }
+    target.tileStackedRows();
+
+    // expelPane appends the transferred panel and, because it is visible at
+    // once, re-tiles the whole target column instead of only its own slot.
+    _ = try appendTestPanel(target, alloc);
+    target.tileStackedRows();
+
+    try testing.expectEqual(@as(usize, 3), target.panels.items.len);
+    try testing.expectApproxEqAbs(@as(f64, 3.0 / 5.0), target.panels.items[0].getStackedFracH(), 1e-9);
+    try testing.expectApproxEqAbs(@as(f64, 1.0 / 5.0), target.panels.items[1].getStackedFracH(), 1e-9);
+    try testing.expectApproxEqAbs(@as(f64, 1.0 / 5.0), target.panels.items[2].getStackedFracH(), 1e-9);
+
+    // Rows are contiguous: each starts where the previous one ends.
+    var y: f64 = 0.0;
+    for (target.panels.items) |panel| {
+        try testing.expectApproxEqAbs(y, panel.getStackedFracY(), 1e-9);
+        y += panel.getStackedFracH();
+    }
+    try testing.expectApproxEqAbs(@as(f64, 1.0), y, 1e-9);
 }
 
 test "tab dialog context is released once by the dialog destroy notify" {
