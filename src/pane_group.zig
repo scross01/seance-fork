@@ -570,8 +570,13 @@ pub const PaneGroup = struct {
         }
 
         // Every row is visible, so the new order is seated now rather than
-        // animating from the previous positions.
-        if (self.in_stacked_mode) self.tileStackedRows();
+        // animating from the previous positions. The seated fractions are
+        // already at their targets, so the tick sees no delta and will not
+        // dirty the layout on its own: request the pass explicitly.
+        if (self.in_stacked_mode) {
+            self.tileStackedRows();
+            self.needs_stacked_layout = true;
+        }
     }
 
     /// Update the tab bar title for a panel by its pane ID.
@@ -1228,9 +1233,14 @@ test "dropping a tab in a resized stacked column reseats rows by weight" {
     }
     const heavy = group.panels.items[0];
     group.tileStackedRows();
+    group.needs_stacked_layout = false;
 
     // AdwTabView drag and `surface.reorder` both land in reorderPanel.
     group.reorderPanel(0, 2);
+
+    // Seated fractions equal their targets, so the tick would not request a
+    // relayout; reorderPanel must ask for one itself.
+    try testing.expect(group.needs_stacked_layout);
 
     try testing.expectEqual(heavy.getWidget(), group.panels.items[2].getWidget());
     try testing.expectApproxEqAbs(@as(f64, 3.0), group.panels.items[2].getHeightWeight(), 1e-9);
