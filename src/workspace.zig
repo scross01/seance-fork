@@ -2510,6 +2510,50 @@ const testing = std.testing;
 
 // --- WorkspaceMetadata: setStatus / clearStatus ---
 
+test "expelling a row into a stacked column seats every row in the same frame" {
+    if (c.gtk_init_check() == 0) return error.SkipZigTest;
+    const alloc = std.testing.allocator;
+    const ws = try Workspace.create(alloc, "expel");
+    const container = ws.container;
+    _ = c.g_object_ref_sink(@ptrCast(container));
+    defer {
+        ws.destroy();
+        _ = c.g_object_unref(@ptrCast(container));
+    }
+
+    // Target column: a heavy row above a light one.
+    const target = ws.columns.items[0].groups.items[0];
+    switch (target.panels.items[0]) {
+        .terminal => |p| p.height_weight = 3.0,
+        .webkit => unreachable,
+    }
+    const light = Panel{ .terminal = try Pane.create(alloc, null, target.workspace_id, target.id) };
+    try target.addPanel(light);
+    target.tileStackedRows();
+
+    // Source column: two rows, the second one is focused and expelled.
+    const source = try ws.addColumn(null);
+    const extra = Panel{ .terminal = try Pane.create(alloc, null, source.workspace_id, source.id) };
+    try source.addPanel(extra);
+    source.tileStackedRows();
+    try std.testing.expectEqual(@as(usize, 1), ws.focused_column);
+
+    const expelled = source.panels.items[1];
+    ws.expelPane(.left);
+
+    // Same frame, no tick: the newcomer is in the target and the whole
+    // column is seated by weight, so the tick has nothing left to correct.
+    try std.testing.expectEqual(@as(usize, 3), target.panels.items.len);
+    try std.testing.expectEqual(expelled.getWidget(), target.panels.items[2].getWidget());
+    try std.testing.expectApproxEqAbs(@as(f64, 0.0), target.panels.items[0].getStackedFracY(), 1e-9);
+    try std.testing.expectApproxEqAbs(@as(f64, 3.0 / 5.0), target.panels.items[0].getStackedFracH(), 1e-9);
+    try std.testing.expectApproxEqAbs(@as(f64, 3.0 / 5.0), target.panels.items[1].getStackedFracY(), 1e-9);
+    try std.testing.expectApproxEqAbs(@as(f64, 1.0 / 5.0), target.panels.items[1].getStackedFracH(), 1e-9);
+    try std.testing.expectApproxEqAbs(@as(f64, 4.0 / 5.0), target.panels.items[2].getStackedFracY(), 1e-9);
+    try std.testing.expectApproxEqAbs(@as(f64, 1.0 / 5.0), target.panels.items[2].getStackedFracH(), 1e-9);
+    try std.testing.expectApproxEqAbs(@as(f64, 1.0), expelled.getStackedOpenAnim(), 1e-9);
+}
+
 test "WorkspaceMetadata: setStatus inserts new entry" {
     var meta = WorkspaceMetadata{};
     meta.setStatus("agent", "running", 0, true, "Claude");
