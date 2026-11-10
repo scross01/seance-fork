@@ -2115,6 +2115,14 @@ pub const Workspace = struct {
 
         const src_now_empty = src_grp.panels.items.len == 0;
 
+        // A stacked source that keeps rows must seat what is left in this
+        // frame: the freed row's share would otherwise stay empty until the
+        // tick redistributes it.
+        if (src_grp.in_stacked_mode and src_grp.panels.items.len > 0) {
+            src_grp.tileStackedRows();
+            src_grp.needs_stacked_layout = true;
+        }
+
         if (target_col_idx) |tgt_idx_raw| {
             // --- Target column exists ---
 
@@ -2552,6 +2560,90 @@ test "expelling a row into a stacked column seats every row in the same frame" {
     try std.testing.expectApproxEqAbs(@as(f64, 4.0 / 5.0), target.panels.items[2].getStackedFracY(), 1e-9);
     try std.testing.expectApproxEqAbs(@as(f64, 1.0 / 5.0), target.panels.items[2].getStackedFracH(), 1e-9);
     try std.testing.expectApproxEqAbs(@as(f64, 1.0), expelled.getStackedOpenAnim(), 1e-9);
+}
+
+test "expelling a tabbed row into a stacked column seats the target in the same frame" {
+    if (c.gtk_init_check() == 0) return error.SkipZigTest;
+    const alloc = std.testing.allocator;
+    const ws = try Workspace.create(alloc, "expel");
+    const container = ws.container;
+    _ = c.g_object_ref_sink(@ptrCast(container));
+    defer {
+        ws.destroy();
+        _ = c.g_object_unref(@ptrCast(container));
+    }
+
+    const target = ws.columns.items[0].groups.items[0];
+    switch (target.panels.items[0]) {
+        .terminal => |p| p.height_weight = 3.0,
+        .webkit => unreachable,
+    }
+    try target.addPanel(.{ .terminal = try Pane.create(alloc, null, target.workspace_id, target.id) });
+    target.tileStackedRows();
+
+    // The source column starts stacked (addColumn) and is switched to tabs, so
+    // the expelled row has to come out of an AdwTabView page.
+    const source = try ws.addColumn(null);
+    try source.addPanel(.{ .terminal = try Pane.create(alloc, null, source.workspace_id, source.id) });
+    source.exitStackedMode();
+    try std.testing.expect(!source.in_stacked_mode);
+    try std.testing.expectEqual(@as(usize, 1), ws.focused_column);
+
+    const expelled = source.panels.items[source.active_panel];
+    ws.expelPane(.left);
+
+    // Same frame, no tick: the tab moved into the column and every row of the
+    // target is seated by weight.
+    try std.testing.expectEqual(@as(usize, 3), target.panels.items.len);
+    try std.testing.expectEqual(expelled.getWidget(), target.panels.items[2].getWidget());
+    try std.testing.expectApproxEqAbs(@as(f64, 0.0), target.panels.items[0].getStackedFracY(), 1e-9);
+    try std.testing.expectApproxEqAbs(@as(f64, 3.0 / 5.0), target.panels.items[0].getStackedFracH(), 1e-9);
+    try std.testing.expectApproxEqAbs(@as(f64, 3.0 / 5.0), target.panels.items[1].getStackedFracY(), 1e-9);
+    try std.testing.expectApproxEqAbs(@as(f64, 1.0 / 5.0), target.panels.items[1].getStackedFracH(), 1e-9);
+    try std.testing.expectApproxEqAbs(@as(f64, 4.0 / 5.0), target.panels.items[2].getStackedFracY(), 1e-9);
+    try std.testing.expectApproxEqAbs(@as(f64, 1.0 / 5.0), target.panels.items[2].getStackedFracH(), 1e-9);
+    try std.testing.expectApproxEqAbs(@as(f64, 1.0), expelled.getStackedOpenAnim(), 1e-9);
+}
+
+test "expelling a stacked row into a tabbed column reseats the source in the same frame" {
+    if (c.gtk_init_check() == 0) return error.SkipZigTest;
+    const alloc = std.testing.allocator;
+    const ws = try Workspace.create(alloc, "expel");
+    const container = ws.container;
+    _ = c.g_object_ref_sink(@ptrCast(container));
+    defer {
+        ws.destroy();
+        _ = c.g_object_unref(@ptrCast(container));
+    }
+
+    // Target column is tabbed, so it has no rows to seat.
+    const target = ws.columns.items[0].groups.items[0];
+    target.exitStackedMode();
+    try std.testing.expect(!target.in_stacked_mode);
+
+    const source = try ws.addColumn(null);
+    try source.addPanel(.{ .terminal = try Pane.create(alloc, null, source.workspace_id, source.id) });
+    source.tileStackedRows();
+    try std.testing.expectEqual(@as(usize, 1), ws.focused_column);
+
+    // Two equal rows before the expel, so the surviving row has to grow.
+    try std.testing.expectApproxEqAbs(@as(f64, 0.5), source.panels.items[0].getStackedFracH(), 1e-9);
+
+    const expelled = source.panels.items[1];
+    ws.expelPane(.left);
+
+    // The source keeps one row and fills the column with it at once.
+    try std.testing.expectEqual(@as(usize, 1), source.panels.items.len);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.0), source.panels.items[0].getStackedFracY(), 1e-9);
+    try std.testing.expectApproxEqAbs(@as(f64, 1.0), source.panels.items[0].getStackedFracH(), 1e-9);
+    try std.testing.expect(source.needs_stacked_layout);
+
+    // And the row arrived as the selected tab in the target.
+    try std.testing.expectEqual(@as(usize, 2), target.panels.items.len);
+    try std.testing.expectEqual(expelled.getWidget(), target.panels.items[1].getWidget());
+    const page = c.adw_tab_view_get_page(target.tab_view, expelled.getWidget());
+    try std.testing.expect(page != null);
+    try std.testing.expectEqual(page, c.adw_tab_view_get_selected_page(target.tab_view));
 }
 
 test "WorkspaceMetadata: setStatus inserts new entry" {
