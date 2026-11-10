@@ -1110,6 +1110,13 @@ fn restoreGroupPanels(group: *PaneGroup, obj: std.json.ObjectMap, ws: *Workspace
     // Restore active panel
     const active = jsonIndex(obj, "active_panel");
     group.switchToPanel(@min(active, if (group.panels.items.len > 0) group.panels.items.len - 1 else 0));
+
+    // Each panel is seated as it is inserted, before its saved weight is
+    // applied, so the rows do not match the saved layout until re-seated.
+    if (group.in_stacked_mode) {
+        group.tileStackedRows();
+        group.needs_stacked_layout = true;
+    }
 }
 
 fn applyWorkspaceMetadata(ws: *Workspace, obj: std.json.ObjectMap) void {

@@ -292,6 +292,11 @@ pub const PaneGroup = struct {
         }
         if (!self.in_stacked_mode) {
             self.switchToPanel(self.active_panel);
+        } else {
+            // The freed row would leave a gap until the tick lerped the rest
+            // back; the remaining weights are known now, so seat them.
+            self.tileStackedRows();
+            self.needs_stacked_layout = true;
         }
         // Ensure keyboard focus lands on the new active panel.
         // In tabbed mode switchToPanel may be a no-op when the page
@@ -1287,6 +1292,33 @@ test "transfer into a resized stacked column tiles the whole column in one frame
         y += panel.getStackedFracH();
     }
     try testing.expectApproxEqAbs(@as(f64, 1.0), y, 1e-9);
+}
+
+test "closing a row reseats the remaining stacked rows by weight" {
+    if (c.gtk_init_check() == 0) return error.SkipZigTest;
+    const alloc = std.testing.allocator;
+    const group = try makeTestGroup(alloc, 3);
+    const container = group.getWidget();
+    _ = c.g_object_ref_sink(@ptrCast(container));
+    test_group = group;
+    defer destroyTestGroup(group, container);
+    group.in_stacked_mode = true;
+
+    switch (group.panels.items[2]) {
+        .terminal => |p| p.height_weight = 3.0,
+        .webkit => unreachable,
+    }
+    group.tileStackedRows();
+    group.needs_stacked_layout = false;
+
+    try testing.expect(!group.removePanel(2));
+    try testing.expect(group.needs_stacked_layout);
+
+    // Weights 1 : 1 fill the column at once, with no gap from the freed row.
+    try testing.expectApproxEqAbs(@as(f64, 0.0), group.panels.items[0].getStackedFracY(), 1e-9);
+    try testing.expectApproxEqAbs(@as(f64, 0.5), group.panels.items[0].getStackedFracH(), 1e-9);
+    try testing.expectApproxEqAbs(@as(f64, 0.5), group.panels.items[1].getStackedFracY(), 1e-9);
+    try testing.expectApproxEqAbs(@as(f64, 0.5), group.panels.items[1].getStackedFracH(), 1e-9);
 }
 
 test "tab dialog context is released once by the dialog destroy notify" {
