@@ -155,6 +155,10 @@ class MixedPanelTransferTest(unittest.TestCase):
     def transfer(self, side="Left"):
         self.key("ctrl+alt+" + side)
 
+    def wait_groups(self, count, description):
+        """Wait for a column count: emptied columns close on a later frame."""
+        self.app.wait(lambda: len(self.groups()) == count, description)
+
     def assert_browser_is_active(self, group_id):
         group = self.group(group_id)
         self.assertTrue(group["focused"], group)
@@ -223,7 +227,7 @@ class MixedPanelTransferTest(unittest.TestCase):
         self.transfer()
 
         self.assert_running("after emptying a browser column")
-        self.assertEqual(len(self.groups()), 1, self.groups())
+        self.wait_groups(1, "empty browser column closes")
         self.assert_browser_is_active(target)
         self.assert_browser_usable(panel_id)
         self.app.call("surface.send_text", {"surface_id": terminal,
@@ -233,13 +237,14 @@ class MixedPanelTransferTest(unittest.TestCase):
             "terminal after browser transfer")
 
     def test_browser_round_trip_keeps_ownership(self):
+        terminal = self.app.call("surface.list")["surfaces"][0]["id"]
         panel_id = self.app.call("browser.open", {"url": "about:blank"})["panel_id"]
         self.app.wait(lambda: panel_id in self.browser_ids(), "browser column")
         self.assertEqual(len(self.groups()), 2, self.groups())
 
         self.transfer()
         self.assert_running("after first transfer")
-        self.assertEqual(len(self.groups()), 1, self.groups())
+        self.wait_groups(1, "emptied browser column closes")
         self.assert_browser_usable(panel_id)
 
         self.transfer("Right")
@@ -251,8 +256,12 @@ class MixedPanelTransferTest(unittest.TestCase):
 
         self.app.call("browser.close", {"panel_id": panel_id})
         self.app.wait(lambda: panel_id not in self.browser_ids(), "browser close")
-        self.assertEqual(len(self.groups()), 1, self.groups())
-        self.app.wait(lambda: self.app.call("surface.read_screen").get("text"),
+        self.wait_groups(1, "closed browser column closes")
+        self.app.call("surface.send_text", {"surface_id": terminal,
+                                            "text": "echo ROUND_TRIP_HOME\n"})
+        self.app.wait(lambda: "ROUND_TRIP_HOME" in (
+            self.app.call("surface.read_screen",
+                          {"surface_id": terminal}).get("text") or ""),
                       "terminal after browser close")
 
     def test_terminal_slow_path_still_transfers(self):
