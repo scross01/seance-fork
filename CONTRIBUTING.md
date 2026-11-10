@@ -114,6 +114,32 @@ typing and shortcuts still work after switching back. The automated X11 tests do
 not replace this check with your usual IME on Wayland. Switch back to your normal
 input method when finished.
 
+## Required GUI regression suites
+
+GUI regressions must run against the installed binary, and a skip counts as a
+failure. Build with assets, then run the strict runner:
+
+```bash
+make check-zig
+make build
+SEANCE_TEST_BINARY="$PWD/AppDir/usr/bin/seance" G_DEBUG=fatal-criticals GTK_A11Y=none \
+  xvfb-run -a python3 -B tests/run_required_gui.py
+```
+
+It fails on a missing or non-executable binary, a missing display, a missing
+suite file, an import error, a zero-test module, any skip, or any failure, and
+prints per-suite `tests=` counts so an absent suite cannot pass for a green run.
+Adding a GUI regression means adding its module to `REQUIRED_SUITES` in
+`tests/run_required_gui.py`.
+
+The runner needs `Xvfb`, `xvfb-run`, `xdotool`, `setxkbmap` (`x11-xkb-utils`),
+`openbox`, `zsh`, `openssl` and `inotify-tools`. Fullscreen and IME tests also
+need a C compiler and GTK4 headers. The broad
+`python3 -m unittest discover -s tests -v` run still covers the wrapper and
+plugin suites; GUI modules skip there without a binary, so it is not a substitute
+for the runner. Live-agent checks (`SEANCE_TEST_CODEX`, `SEANCE_TEST_OPENCODE`)
+remain opt-in outside the runner.
+
 ## Code style
 
 - Match existing style. Zig source uses the standard formatter (`zig fmt`).

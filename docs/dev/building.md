@@ -157,6 +157,28 @@ zig build e2e
 
 Requires Xvfb for a virtual display.
 
+### Required GUI Regression Suites
+
+GUI suites run against the installed binary under a strict runner. A skip is a
+failure there, so an environment gap cannot masquerade as a passing run:
+
+```bash
+make check-zig
+make build
+SEANCE_TEST_BINARY="$PWD/AppDir/usr/bin/seance" G_DEBUG=fatal-criticals GTK_A11Y=none \
+  xvfb-run -a python3 -B tests/run_required_gui.py
+```
+
+The runner rejects a missing or non-executable binary, a missing display, a
+missing suite file, an import error, a zero-test module, any skip and any
+failure, and prints `tests=` counts per suite. Its inventory lives in
+`REQUIRED_SUITES` in `tests/run_required_gui.py`; add new GUI regressions there.
+Required host tools: `Xvfb`/`xvfb-run`, `xdotool`, `setxkbmap`, `openbox`, `zsh`,
+`openssl`, `inotify-tools`, plus a C compiler with GTK4 headers for the fullscreen
+and IME suites. `python3 -m unittest discover -s tests -v` still runs the wrapper
+and plugin suites; its GUI modules skip without `SEANCE_TEST_BINARY`, so it does
+not replace the runner. Real-agent checks stay opt-in.
+
 ### Test Files
 
 - `src/osc_parser.zig` — OSC protocol parser tests

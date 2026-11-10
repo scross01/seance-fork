@@ -49,6 +49,8 @@ jobs:
             libfreetype-dev \
             libharfbuzz-dev \
             libonig-dev \
+            inotify-tools \
+            openssl \
             xdotool \
             x11-xkb-utils \
             openbox \
@@ -56,7 +58,7 @@ jobs:
             xvfb
 
       - name: Build
-        run: zig build
+        run: make check-zig && make build
 
       - name: Unit tests
         run: G_DEBUG=fatal-criticals GTK_A11Y=none xvfb-run -a zig build test
@@ -74,37 +76,12 @@ jobs:
       - name: E2E tests
         run: xvfb-run zig build e2e
 
-      - name: Ghostty embedding tests
-        run: xvfb-run python3 -m unittest discover -s tests -p 'test_ghostty_integration.py' -v
+      - name: Required GUI regression suites
+        # One strict step: every listed suite must run against the installed
+        # binary, and a skip, missing file, zero-test module or failure fails
+        # the job. Broad discovery above covers wrappers and plugins only.
+        run: xvfb-run -a python3 -B tests/run_required_gui.py
         env:
-          SEANCE_TEST_BINARY: ${{ github.workspace }}/zig-out/bin/seance
-
-      - name: Keyboard remap tests
-        run: python3 -m unittest discover -s tests -p 'test_keyboard_remaps.py' -v
-        env:
-          SEANCE_TEST_BINARY: ${{ github.workspace }}/zig-out/bin/seance
-
-      - name: Pane close tests
-        run: python3 -m unittest discover -s tests -p 'test_pane_close.py' -v
-        env:
-          SEANCE_TEST_BINARY: ${{ github.workspace }}/zig-out/bin/seance
-
-      - name: Socket robustness tests
-        run: xvfb-run -a python3 -m unittest discover -s tests -p 'test_socket_server.py' -v
-        env:
-          SEANCE_TEST_BINARY: ${{ github.workspace }}/zig-out/bin/seance
-
-      - name: Fullscreen tests
-        run: python3 -m unittest discover -s tests -p 'test_fullscreen.py' -v
-        env:
-          SEANCE_TEST_BINARY: ${{ github.workspace }}/zig-out/bin/seance
-
-      - name: Shell integration tests
-        run: xvfb-run -a python3 -m unittest discover -s tests -p 'test_shell_integration.py' -v
-        env:
-          SEANCE_TEST_BINARY: ${{ github.workspace }}/zig-out/bin/seance
-
-      - name: IME tests
-        run: python3 -m unittest discover -s tests -p 'test_ime.py' -v
-        env:
-          SEANCE_TEST_BINARY: ${{ github.workspace }}/zig-out/bin/seance
+          SEANCE_TEST_BINARY: ${{ github.workspace }}/AppDir/usr/bin/seance
+          G_DEBUG: fatal-criticals
+          GTK_A11Y: none
