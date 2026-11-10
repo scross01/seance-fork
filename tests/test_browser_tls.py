@@ -1,4 +1,4 @@
-"""Browser TLS exception regressions. Run under Xvfb with SEANCE_TEST_BINARY set.
+"""Browser TLS exception regressions, each case on its own isolated X server.
 
 Verifies that certificate approval is scoped to the approved certificate and
 host rather than disabling TLS validation process-wide.
@@ -19,6 +19,8 @@ the dialog with Escape and wait for the logged cancel response.
 """
 import json
 import os
+import select
+import shutil
 import socket
 import ssl
 import subprocess
@@ -124,6 +126,35 @@ class _Page:
 class BrowserTlsTestCase(GhosttyTestCase):
     env_extra = {"G_DEBUG": "fatal-criticals", "SEANCE_TLS_DIALOG_LOG": "1"}
 
+    def setUp(self):
+        # A bare X server, not the developer's session: with a window manager
+        # in the way the mounted dialog never receives the keyboard, so the
+        # approval keys land in the terminal.
+        for command in ("Xvfb", "xdotool"):
+            if not shutil.which(command):
+                self.skipTest(f"browser TLS tests require {command}")
+        server = subprocess.Popen(
+            ["Xvfb", "-displayfd", "1", "-screen", "0", "1280x800x24",
+             "-nolisten", "tcp", "-noreset"],
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        self.addCleanup(self.stop_server, server)
+        if not select.select([server.stdout], [], [], 10)[0]:
+            self.fail("Xvfb startup timed out")
+        display = ":" + server.stdout.readline().decode().strip()
+        self.assertNotEqual(display, ":", "Xvfb failed to start")
+        self.env_extra = dict(type(self).env_extra, DISPLAY=display)
+        super().setUp()
+
+    @staticmethod
+    def stop_server(server):
+        server.terminate()
+        try:
+            server.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            server.kill()
+            server.wait()
+        server.stdout.close()
+
     def prepare(self):
         pass
 
@@ -214,6 +245,11 @@ class BrowserTlsTestCase(GhosttyTestCase):
                 pass
             time.sleep(0.2)
 
+    def x(self, *args, check=False):
+        """Run an X tool against this case's own server."""
+        return subprocess.run(args, env=self.env, check=check, capture_output=True,
+                              text=True, timeout=10)
+
     def _focus_app_window(self):
         """Focus the app's largest visible toplevel.
 
@@ -222,26 +258,21 @@ class BrowserTlsTestCase(GhosttyTestCase):
         largest visible window and focusing it explicitly keeps the keyboard
         harness deterministic.
         """
-        windows = subprocess.run(
-            ["xdotool", "search", "--onlyvisible", "--pid", str(self.process.pid)],
-            capture_output=True, text=True, timeout=5).stdout.split()
+        windows = self.x("xdotool", "search", "--onlyvisible", "--pid",
+                         str(self.process.pid)).stdout.split()
         best, best_area = None, -1
         for window in windows:
-            geometry = subprocess.run(
-                ["xdotool", "getwindowgeometry", "--shell", window],
-                capture_output=True, text=True, timeout=5).stdout
+            geometry = self.x("xdotool", "getwindowgeometry", "--shell", window).stdout
             fields = dict(line.split("=", 1) for line in geometry.splitlines() if "=" in line)
             area = int(fields.get("WIDTH", 0)) * int(fields.get("HEIGHT", 0))
             if area > best_area:
                 best, best_area = window, area
         if best:
-            subprocess.run(["xdotool", "windowfocus", "--sync", best],
-                           capture_output=True, timeout=5)
+            self.x("xdotool", "windowfocus", "--sync", best)
 
     def send_keys(self, *keys):
         self._focus_app_window()
-        subprocess.run(["xdotool", "key", "--delay", "150", *keys],
-                       check=True, capture_output=True, timeout=10)
+        self.x("xdotool", "key", "--delay", "150", *keys, check=True)
 
     def approve_dialog(self, page, panel_id, presented):
         """Approve exactly one dialog: the one raised by `page`'s failing host.
@@ -251,9 +282,6 @@ class BrowserTlsTestCase(GhosttyTestCase):
         """
         self.wait(lambda: page.accepts > 0, "TLS handshake attempt")
         self.wait_dialog(presented)
-        # The dialog is presented from the TLS-error callback; let its entrance
-        # animation finish before typing so the keystroke is not swallowed.
-        time.sleep(0.4)
         self.send_keys("shift+Tab", "Return")
         self.wait_loaded(panel_id, page)
 
