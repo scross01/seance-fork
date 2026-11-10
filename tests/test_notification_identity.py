@@ -52,10 +52,6 @@ class NotificationIdentityTests(keyboard.PhysicalKeyboardTestCase):
         self.press("ctrl+shift+i")
         time.sleep(1.0)
 
-    def close_panel(self):
-        self.press("Escape")
-        time.sleep(0.3)
-
     def ctl(self, *args):
         # Global flags must precede the command name.
         return self.run_x(self.app.binary, "ctl", "--socket",

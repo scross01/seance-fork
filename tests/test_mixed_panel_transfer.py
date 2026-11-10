@@ -87,22 +87,11 @@ class MixedPanelTransferTest(unittest.TestCase):
         """
         self.run_x("xdotool", "key", "--clearmodifiers", chord)
         self.app.wait(until, f"{chord} takes effect")
-        self.app.wait(self.settled, f"layout settles after {chord}")
+        self.app.wait(self.app.settled, f"layout settles after {chord}")
         self.assert_running(f"after {chord}")
 
-    def active_workspace(self):
-        tree = self.app.call("system.tree")
-        windows = [w for w in tree["windows"] if w["active"]]
-        self.assertEqual(len(windows), 1, tree)
-        workspaces = [w for w in windows[0]["workspaces"] if w["active"]]
-        self.assertEqual(len(workspaces), 1, windows)
-        return workspaces[0]
-
     def groups(self):
-        return self.active_workspace()["pane_groups"]
-
-    def settled(self):
-        return self.active_workspace()["settled"]
+        return self.app.system_tree()["pane_groups"]
 
     def group(self, group_id):
         matched = [g for g in self.groups() if g["id"] == group_id]

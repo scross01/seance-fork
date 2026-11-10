@@ -37,8 +37,10 @@ class PaneCloseTests(keyboard.PhysicalKeyboardTestCase):
 
     def test_close_last_tab_in_tabbed_column(self):
         self.run_x("xdotool", "key", "ctrl+shift+l")
-        # Panels enter AdwTabView only after the layout animation completes.
-        time.sleep(1)
+        # Panels enter AdwTabView only when the layout animation completes.
+        self.app.wait(lambda: self.app.system_tree()["pane_groups"][0]["layout_mode"] == "tabbed",
+                      "column switches to tabbed")
+        self.app.wait_settled("tabbed column settles")
         self.close_last_pane()
 
     def test_close_last_pane_with_pane_shortcut(self):

@@ -108,6 +108,21 @@ class GhosttyTestCase(unittest.TestCase):
         self.wait(lambda: "SEANCE_" + marker in self.call(
             "surface.read_screen", {"surface_id": surface} if surface else None)["text"],
             "terminal output")
+    def system_tree(self):
+        """The active window's active workspace entry from system.tree."""
+        tree = self.call("system.tree")
+        windows = [w for w in tree["windows"] if w["active"]]
+        self.assertEqual(len(windows), 1, tree)
+        workspaces = [w for w in windows[0]["workspaces"] if w["active"]]
+        self.assertEqual(len(workspaces), 1, windows)
+        return workspaces[0]
+
+    def settled(self):
+        return self.system_tree()["settled"]
+
+    def wait_settled(self, description="layout settle"):
+        """Wait for in-flight column and row animations to finish."""
+        self.wait(self.settled, description)
 
 
 class GhosttyIntegrationTests(GhosttyTestCase):
