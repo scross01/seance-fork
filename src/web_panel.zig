@@ -914,6 +914,12 @@ fn onTlsError(
     _ = c.g_signal_connect_data(@as(c.gpointer, @ptrCast(dialog)), "response", @as(c.GCallback, @ptrCast(&onTlsErrorResponse)), @ptrCast(ctx), null, 0);
     c.adw_dialog_present(@as(*c.AdwDialog, @ptrCast(dialog)), panel.widget);
 
+    // Test instrumentation: the GUI harness waits for this line before typing
+    // at the dialog, so it never guesses when the dialog became interactive.
+    if (std.c.getenv("SEANCE_TLS_DIALOG_LOG") != null) {
+        std.log.info("tls dialog presented for host {s}", .{ctx.host});
+    }
+
     return 1; // handled
 }
 
@@ -932,6 +938,11 @@ const TlsErrorCtx = struct {
 fn onTlsErrorResponse(_: *c.AdwAlertDialog, response: [*:0]const u8, data: c.gpointer) callconv(.c) void {
     const ctx: *TlsErrorCtx = @ptrCast(@alignCast(data));
     defer releaseTlsCtx(ctx);
+
+    // Test instrumentation, paired with the presentation line above.
+    if (std.c.getenv("SEANCE_TLS_DIALOG_LOG") != null) {
+        std.log.info("tls dialog response {s}", .{std.mem.sliceTo(response, 0)});
+    }
 
     const panel = ctx.panel orelse return; // panel gone: harmless cancellation
     unlinkTlsCtx(panel, ctx);
