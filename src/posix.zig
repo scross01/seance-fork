@@ -87,6 +87,16 @@ pub fn fchmod(fd: c.fd_t, mode: c.mode_t) !void {
     if (rc < 0) return failure(std.posix.errno(rc));
 }
 
+/// chmod a pathname without following a final symlink. A socket file cannot be
+/// restricted through fchmod(fd): Linux ignores mode changes on socket fds, so
+/// the inode has to be reached through its pathname.
+pub fn chmodPath(path: []const u8, mode: c.mode_t) !void {
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const path_z = try std.fmt.bufPrintZ(&buf, "{s}", .{path});
+    const rc = c.fchmodat(std.posix.AT.FDCWD, path_z, mode, std.posix.AT.SYMLINK_NOFOLLOW);
+    if (rc < 0) return failure(std.posix.errno(rc));
+}
+
 pub fn listen(fd: c.fd_t, backlog: u31) !void {
     const rc = c.listen(fd, backlog);
     if (rc < 0) return failure(std.posix.errno(rc));
@@ -142,7 +152,7 @@ pub const FileIdentity = struct {
 pub fn fdIdentity(fd: c.fd_t) !FileIdentity {
     var st: std.os.linux.Statx = undefined;
     const rc = std.os.linux.statx(fd, "", 0x1000, std.os.linux.STATX.BASIC_STATS, &st);
-    if (rc != 0) return failure(std.posix.errno(@as(c_int, @intCast(rc))));
+    if (rc != 0) return failure(@enumFromInt(@intFromEnum(std.os.linux.errno(rc))));
     const dev = (@as(u64, st.dev_major) << 32) | @as(u64, st.dev_minor);
     return .{ .dev = dev, .ino = st.ino };
 }
@@ -151,8 +161,9 @@ pub fn pathIdentity(path: []const u8) !FileIdentity {
     var buf: [std.fs.max_path_bytes]u8 = undefined;
     const path_z = try std.fmt.bufPrintZ(&buf, "{s}", .{path});
     var st: std.os.linux.Statx = undefined;
+    // AT_SYMLINK_NOFOLLOW: a swapped symlink must not impersonate the path.
     const rc = std.os.linux.statx(-100, path_z, 0x100, std.os.linux.STATX.BASIC_STATS, &st);
-    if (rc != 0) return failure(std.posix.errno(@as(c_int, @intCast(rc))));
+    if (rc != 0) return failure(@enumFromInt(@intFromEnum(std.os.linux.errno(rc))));
     const dev = (@as(u64, st.dev_major) << 32) | @as(u64, st.dev_minor);
     return .{ .dev = dev, .ino = st.ino };
 }

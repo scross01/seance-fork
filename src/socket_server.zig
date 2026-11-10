@@ -3,6 +3,13 @@ const io = @import("io.zig");
 const posix = @import("posix.zig");
 const c = @import("c.zig").c;
 
+/// Longest pathname a sockaddr_un can represent, including its NUL slot.
+const max_socket_path_len = @sizeOf(@FieldType(posix.sockaddr.un, "path"));
+
+fn socketPathTooLong(path: []const u8) bool {
+    return path.len == 0 or path.len >= max_socket_path_len;
+}
+
 pub const SocketServer = struct {
     fd: c_int = -1,
     watch_id: c.guint = 0,
@@ -11,6 +18,9 @@ pub const SocketServer = struct {
     bound: bool = false,
     bound_dev: u64 = 0,
     bound_ino: u64 = 0,
+    /// Test seam: force the post-bind failure path instead of depending on a
+    /// rare fchmod/listen error. Production code never sets this.
+    test_fail_after_bind: bool = false,
 
     /// Return the resolved socket path (expanded, no ~).
     /// Prefers XDG_RUNTIME_DIR for runtime sockets, falls back to $HOME/.seance/.
@@ -30,7 +40,23 @@ pub const SocketServer = struct {
     }
 
     pub fn start(self: *SocketServer) void {
-        const path = resolvedPath(&self.path_buf) orelse return;
+        var resolved: [std.fs.max_path_bytes]u8 = undefined;
+        const path = resolvedPath(&resolved) orelse return;
+        self.startAt(path);
+    }
+
+    /// Bind `path` and arm pathname ownership. Separate from `start` so tests
+    /// can use an isolated path without touching the user's configuration.
+    fn startAt(self: *SocketServer, path: []const u8) void {
+        // A Unix socket address cannot represent a longer pathname. Reject it
+        // instead of truncating: a truncated bind leaves a stale socket at a
+        // path this server never recorded, so cleanup could never remove it.
+        if (socketPathTooLong(path)) {
+            std.log.err("seance: socket path is too long for a Unix socket ({d} bytes); refusing to bind a truncated endpoint", .{path.len});
+            self.path_len = 0;
+            return;
+        }
+        @memcpy(self.path_buf[0..path.len], path);
         self.path_len = path.len;
 
         // Ensure parent directory exists (owner-only access)
@@ -69,27 +95,44 @@ pub const SocketServer = struct {
         // Bind
         var addr = posix.sockaddr.un{ .path = undefined, .family = posix.AF.UNIX };
         @memset(&addr.path, 0);
-        const copy_len = @min(path.len, addr.path.len - 1);
-        for (0..copy_len) |i| {
+        // The length check above guarantees the path plus its NUL fits.
+        for (0..path.len) |i| {
             addr.path[i] = @intCast(path[i]);
         }
         posix.bind(fd, @ptrCast(&addr), @sizeOf(posix.sockaddr.un)) catch {
-            posix.close(fd);
-            self.fd = -1;
+            self.releaseSocket();
             return;
         };
 
-        // Restrict socket to owner-only access
-        posix.fchmod(fd, 0o600) catch {
-            posix.close(fd);
-            self.fd = -1;
+        // Capture the pathname this bind just created before anything else can
+        // fail, so cleanup removes exactly this file and nothing else.
+        // `pathIdentity` uses AT_SYMLINK_NOFOLLOW, so a swapped symlink cannot
+        // impersonate the socket; fstat(fd) is a different inode and unusable.
+        const identity = posix.pathIdentity(path) catch {
+            // Ownership is unproven: leave the path in place rather than risk
+            // unlinking a file another process owns.
+            self.releaseSocket();
+            return;
+        };
+        self.bound = true;
+        self.bound_dev = identity.dev;
+        self.bound_ino = identity.ino;
+
+        if (self.test_fail_after_bind) {
+            self.releaseSocket();
+            return;
+        }
+
+        // Restrict socket to owner-only access. fchmod on a socket descriptor
+        // is ignored by Linux, so the pathname itself must be chmodded.
+        posix.chmodPath(path, 0o600) catch {
+            self.releaseSocket();
             return;
         };
 
         // Listen
         posix.listen(fd, 128) catch {
-            posix.close(fd);
-            self.fd = -1;
+            self.releaseSocket();
             return;
         };
 
@@ -106,6 +149,12 @@ pub const SocketServer = struct {
             _ = c.g_source_remove(self.watch_id);
             self.watch_id = 0;
         }
+        self.releaseSocket();
+    }
+
+    /// Close this server's descriptor, then remove its pathname only when the
+    /// path still resolves to the file this server bound.
+    fn releaseSocket(self: *SocketServer) void {
         if (self.fd >= 0) {
             posix.close(@intCast(self.fd));
             self.fd = -1;
@@ -121,7 +170,10 @@ pub const SocketServer = struct {
                 }
             } else |_| {}
         }
+        // Idempotent: repeated stop and post-failure cleanup both land here.
         self.bound = false;
+        self.bound_dev = 0;
+        self.bound_ino = 0;
         self.path_len = 0;
     }
 
@@ -2997,4 +3049,120 @@ test "browser eval: completion cancels the pending deadline source" {
     while (c.g_main_context_iteration(null, 0) != 0) {}
     try testing.expectEqual(@as(usize, 0), Counter.ran);
     ctx.cleanup();
+}
+
+// ── Socket pathname ownership ─────────────────────────────────────────
+
+fn socketTestPath(tmp: *const std.testing.TmpDir, name: []const u8, buf: []u8) ![]const u8 {
+    var fd_buf: [64]u8 = undefined;
+    const fd_path = try std.fmt.bufPrint(&fd_buf, "/proc/self/fd/{d}", .{tmp.dir.handle});
+    var dir_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir_len = try std.Io.Dir.readLinkAbsolute(io.get(), fd_path, &dir_buf);
+    return std.fmt.bufPrint(buf, "{s}/{s}", .{ dir_buf[0..dir_len], name });
+}
+
+fn socketTestMode(path: []const u8) !u16 {
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const path_z = try std.fmt.bufPrintZ(&buf, "{s}", .{path});
+    var st: std.os.linux.Statx = undefined;
+    const rc = std.os.linux.statx(-100, path_z, 0x100, std.os.linux.STATX.BASIC_STATS, &st);
+    if (rc != 0) return error.Unexpected;
+    return st.mode & 0o777;
+}
+
+test "bind arms pathname ownership and repeated stop removes the socket" {
+    const testing = std.testing;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const path = try socketTestPath(&tmp, "owned.sock", &buf);
+
+    var server: SocketServer = .{};
+    server.startAt(path);
+
+    try testing.expect(server.bound);
+    try testing.expect(server.fd >= 0);
+    try testing.expectEqual(path.len, server.path_len);
+    const identity = try posix.pathIdentity(path);
+    try testing.expectEqual(identity.dev, server.bound_dev);
+    try testing.expectEqual(identity.ino, server.bound_ino);
+    try testing.expectEqual(@as(u16, 0o600), try socketTestMode(path));
+
+    server.stop();
+    try testing.expect(!server.bound);
+    try testing.expect(server.fd < 0);
+    try testing.expectEqual(@as(usize, 0), server.path_len);
+    try testing.expectError(error.FileNotFound, posix.pathIdentity(path));
+
+    server.stop();
+    try testing.expect(!server.bound);
+}
+
+test "a bound server is detected as a live endpoint" {
+    const testing = std.testing;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const path = try socketTestPath(&tmp, "live.sock", &buf);
+
+    var owner: SocketServer = .{};
+    owner.startAt(path);
+    try testing.expect(owner.bound);
+    defer owner.stop();
+
+    try testing.expect(SocketServer.isSocketAlive(path));
+}
+
+test "a replacement at the socket path survives cleanup" {
+    const testing = std.testing;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const path = try socketTestPath(&tmp, "swapped.sock", &buf);
+
+    var server: SocketServer = .{};
+    server.startAt(path);
+    try testing.expect(server.bound);
+
+    try posix.unlink(path);
+    const file = try std.Io.Dir.createFileAbsolute(io.get(), path, .{});
+    try file.writeStreamingAll(io.get(), "replacement");
+    file.close(io.get());
+
+    server.stop();
+
+    const reader = try std.Io.Dir.openFileAbsolute(io.get(), path, .{});
+    defer reader.close(io.get());
+    var read_buf: [32]u8 = undefined;
+    const n = try io.readAll(reader, &read_buf);
+    try testing.expectEqualStrings("replacement", read_buf[0..n]);
+}
+
+test "socket path length boundary matches what a sockaddr_un holds" {
+    const testing = std.testing;
+    var name_buf: [max_socket_path_len + 8]u8 = undefined;
+    @memset(&name_buf, 'x');
+
+    try testing.expect(!socketPathTooLong("/tmp/s.sock"));
+    try testing.expect(!socketPathTooLong(name_buf[0 .. max_socket_path_len - 1]));
+    try testing.expect(socketPathTooLong(name_buf[0..max_socket_path_len]));
+    try testing.expect(socketPathTooLong(name_buf[0 .. max_socket_path_len + 1]));
+    try testing.expect(socketPathTooLong(""));
+}
+
+test "a post-bind startup failure releases the bound socket" {
+    const testing = std.testing;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const path = try socketTestPath(&tmp, "failed.sock", &buf);
+
+    var server: SocketServer = .{};
+    server.test_fail_after_bind = true;
+    server.startAt(path);
+
+    try testing.expect(!server.bound);
+    try testing.expect(server.fd < 0);
+    try testing.expectEqual(@as(usize, 0), server.path_len);
+    try testing.expectError(error.FileNotFound, posix.pathIdentity(path));
 }
