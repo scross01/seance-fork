@@ -5,6 +5,7 @@ const Pane = @import("pane.zig").Pane;
 const Panel = @import("panel.zig").Panel;
 const Column = @import("column.zig").Column;
 const WebPanel = @import("web_panel.zig").WebPanel;
+const text_mod = @import("text.zig");
 
 pub const StatusEntry = struct {
     key: [64]u8 = undefined,
@@ -1719,9 +1720,7 @@ pub const Workspace = struct {
     }
 
     pub fn setTitle(self: *Workspace, title: []const u8) void {
-        const len = @min(title.len, self.title.len);
-        @memcpy(self.title[0..len], title[0..len]);
-        self.title_len = len;
+        self.title_len = text_mod.copy(&self.title, title);
     }
 
     pub fn getTitle(self: *const Workspace) []const u8 {
@@ -2152,11 +2151,8 @@ pub const Workspace = struct {
                 const tab_page = c.adw_tab_view_insert(tgt_grp.tab_view, pw, @intCast(insert_pos));
                 const title = panel.title();
                 var buf: [65:0]u8 = [_:0]u8{0} ** 65;
-                var tlen = @min(title.len, 64);
-                // Avoid splitting a multi-byte UTF-8 codepoint.
-                while (tlen > 0 and (title[tlen - 1] & 0xC0) == 0x80) tlen -= 1;
-                if (tlen > 0 and title[tlen - 1] >= 0xC0) tlen -= 1;
-                @memcpy(buf[0..tlen], title[0..tlen]);
+                const tlen = text_mod.copy(buf[0..], title);
+                buf[tlen] = 0;
                 c.adw_tab_page_set_title(tab_page, &buf);
                 {
                     const icon = c.g_themed_icon_new(panel.iconName());

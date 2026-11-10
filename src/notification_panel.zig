@@ -2,6 +2,7 @@ const std = @import("std");
 const io = @import("io.zig");
 const c = @import("c.zig").c;
 const notification = @import("notification.zig");
+const text_mod = @import("text.zig");
 
 /// Callback for navigating to a notification's source pane.
 pub const JumpCallback = *const fn (workspace_id: u64, pane_group_id: u64, pane_id: u64) void;
@@ -272,8 +273,7 @@ fn buildNotificationRow(notif: *notification.Notification, now: i64, panel: *Not
     // Title
     const title = notif.getTitle();
     var title_z: [257]u8 = undefined;
-    const tlen = @min(title.len, title_z.len - 1);
-    @memcpy(title_z[0..tlen], title[0..tlen]);
+    const tlen = text_mod.copy(title_z[0..], title);
     title_z[tlen] = 0;
     c.adw_preferences_row_set_title(@as(*c.AdwPreferencesRow, @ptrCast(row)), &title_z);
 
@@ -284,18 +284,18 @@ fn buildNotificationRow(notif: *notification.Notification, now: i64, panel: *Not
         var sub_z: [770]u8 = undefined; // 256 subtitle + \n + 512 body + null
         var spos: usize = 0;
         if (sub.len > 0) {
-            const slen = @min(sub.len, 256);
-            @memcpy(sub_z[spos..][0..slen], sub[0..slen]);
-            spos += slen;
+            const kept = text_mod.prefix(sub, 256).text;
+            @memcpy(sub_z[spos..][0..kept.len], kept);
+            spos += kept.len;
         }
         if (sub.len > 0 and body.len > 0) {
             sub_z[spos] = '\n';
             spos += 1;
         }
         if (body.len > 0) {
-            const blen = @min(body.len, 512);
-            @memcpy(sub_z[spos..][0..blen], body[0..blen]);
-            spos += blen;
+            const kept = text_mod.prefix(body, 512).text;
+            @memcpy(sub_z[spos..][0..kept.len], kept);
+            spos += kept.len;
         }
         sub_z[spos] = 0;
         c.adw_action_row_set_subtitle(action_row, &sub_z);

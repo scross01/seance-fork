@@ -6,6 +6,7 @@ const port_allocation = @import("port_allocation.zig");
 const SearchOverlay = @import("search_overlay.zig").SearchOverlay;
 const ghostty_bridge = @import("ghostty_bridge.zig");
 const ime_state = @import("ime_state.zig");
+const text_mod = @import("text.zig");
 
 pub const Pane = struct {
     pub const cwd_cap = 512;
@@ -424,9 +425,7 @@ pub const Pane = struct {
     }
 
     pub fn setCustomTitle(self: *Pane, title: []const u8) void {
-        const len = @min(title.len, self.custom_title.len);
-        @memcpy(self.custom_title[0..len], title[0..len]);
-        self.custom_title_len = len;
+        self.custom_title_len = text_mod.copy(&self.custom_title, title);
     }
 
     pub fn clearCustomTitle(self: *Pane) void {
@@ -1636,16 +1635,16 @@ pub fn handleBell(pane: *Pane) void {
 
 pub fn handleSetTitle(pane: *Pane, title: []const u8) void {
     if (title.len == 0) return;
-    const tlen = @min(title.len, pane.cached_title.len);
+    const bounded = text_mod.prefix(title, pane.cached_title.len);
 
     // Skip entirely if the title hasn't changed — avoids triggering a
     // sidebar rebuild on every single prompt.
-    if (tlen == pane.cached_title_len and
-        std.mem.eql(u8, pane.cached_title[0..tlen], title[0..tlen]))
+    if (bounded.text.len == pane.cached_title_len and
+        std.mem.eql(u8, pane.cached_title[0..bounded.text.len], bounded.text))
         return;
 
-    @memcpy(pane.cached_title[0..tlen], title[0..tlen]);
-    pane.cached_title_len = tlen;
+    @memcpy(pane.cached_title[0..bounded.text.len], bounded.text);
+    pane.cached_title_len = bounded.text.len;
 
     // Debounce sidebar refresh: short-lived commands (e.g. `ls`) cause
     // rapid title changes (command name → prompt title) that flash in

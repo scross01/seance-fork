@@ -3,6 +3,7 @@ const c = @import("c.zig").c;
 const Pane = @import("pane.zig").Pane;
 const Panel = @import("panel.zig").Panel;
 const WebPanel = @import("web_panel.zig").WebPanel;
+const text_mod = @import("text.zig");
 
 // Module-level state for cross-group tab transfer via AdwTabView.
 // When a page is detached during a transfer, we stash the panel here
@@ -205,8 +206,8 @@ pub const PaneGroup = struct {
             const page = c.adw_tab_view_append(self.tab_view, panel.getWidget());
             const title = panel.title();
             var buf: [65:0]u8 = [_:0]u8{0} ** 65;
-            const len = @min(title.len, 64);
-            @memcpy(buf[0..len], title[0..len]);
+            const tlen = text_mod.copy(buf[0..], title);
+            buf[tlen] = 0;
             c.adw_tab_page_set_title(page, &buf);
             setTabIcon(page, panel.iconName());
 
@@ -469,8 +470,8 @@ pub const PaneGroup = struct {
             const page = c.adw_tab_view_append(self.tab_view, w);
             const title = panel.title();
             var buf: [65:0]u8 = [_:0]u8{0} ** 65;
-            const len = @min(title.len, 64);
-            @memcpy(buf[0..len], title[0..len]);
+            const tlen = text_mod.copy(buf[0..], title);
+            buf[tlen] = 0;
             c.adw_tab_page_set_title(page, &buf);
             setTabIcon(page, panel.iconName());
             _ = c.g_object_unref(@ptrCast(w));
@@ -580,8 +581,8 @@ pub const PaneGroup = struct {
             if (panel.getId() == pane_id) {
                 const page = c.adw_tab_view_get_nth_page(self.tab_view, @intCast(i));
                 var buf: [65:0]u8 = [_:0]u8{0} ** 65;
-                const tlen = @min(title.len, 64);
-                @memcpy(buf[0..tlen], title[0..tlen]);
+                const tlen = text_mod.copy(buf[0..], title);
+                buf[tlen] = 0;
                 c.adw_tab_page_set_title(page, &buf);
                 setTabIcon(page, panel.iconName());
                 return;
@@ -691,8 +692,8 @@ fn onPageAttached(_: *c.AdwTabView, page: *c.AdwTabPage, position: c.gint, user_
 
         const title = panel.title();
         var buf: [65:0]u8 = [_:0]u8{0} ** 65;
-        const len = @min(title.len, 64);
-        @memcpy(buf[0..len], title[0..len]);
+        const tlen = text_mod.copy(buf[0..], title);
+        buf[tlen] = 0;
         c.adw_tab_page_set_title(page, &buf);
         setTabIcon(page, panel.iconName());
     }
@@ -760,10 +761,9 @@ fn showRenameDialog(alloc: std.mem.Allocator, group: *PaneGroup, pane: *Pane) ?*
 
     const entry = c.gtk_entry_new();
     c.gtk_entry_set_activates_default(@ptrCast(entry), 1);
-    var title_z: [257]u8 = undefined;
     const display_title = pane.getDisplayTitle() orelse "Terminal";
-    const tlen = @min(display_title.len, title_z.len - 1);
-    @memcpy(title_z[0..tlen], display_title[0..tlen]);
+    var title_z: [257]u8 = undefined;
+    const tlen = text_mod.copy(title_z[0..], display_title);
     title_z[tlen] = 0;
     c.gtk_editable_set_text(@ptrCast(entry), &title_z);
     c.adw_alert_dialog_set_extra_child(@as(*c.AdwAlertDialog, @ptrCast(dialog)), entry);

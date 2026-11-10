@@ -1,5 +1,6 @@
 const std = @import("std");
 const io = @import("io.zig");
+const text_mod = @import("text.zig");
 
 /// Identity 0 is never assigned, so it can stand for "no notification".
 pub const invalid_id: u64 = 0;
@@ -35,21 +36,15 @@ pub const Notification = struct {
     }
 
     pub fn setTitle(self: *Notification, text: []const u8) void {
-        const len = @min(text.len, self.title.len);
-        @memcpy(self.title[0..len], text[0..len]);
-        self.title_len = len;
+        self.title_len = text_mod.copy(&self.title, text);
     }
 
     pub fn setSubtitle(self: *Notification, text: []const u8) void {
-        const len = @min(text.len, self.subtitle.len);
-        @memcpy(self.subtitle[0..len], text[0..len]);
-        self.subtitle_len = len;
+        self.subtitle_len = text_mod.copy(&self.subtitle, text);
     }
 
     pub fn setBody(self: *Notification, text: []const u8) void {
-        const len = @min(text.len, self.body.len);
-        @memcpy(self.body[0..len], text[0..len]);
-        self.body_len = len;
+        self.body_len = text_mod.copy(&self.body, text);
     }
 };
 
@@ -394,26 +389,25 @@ pub const NotificationCenter = struct {
         if (opts.desktop_notify and !vis.in_active_group) {
             if (self.on_desktop_notify) |cb| {
                 var title_z: [257]u8 = undefined;
-                const tlen = @min(opts.title.len, title_z.len - 1);
-                @memcpy(title_z[0..tlen], opts.title[0..tlen]);
+                const tlen = text_mod.copy(title_z[0..], opts.title);
                 title_z[tlen] = 0;
 
                 // Build combined body: subtitle + body
                 var body_z: [770]u8 = undefined;
                 var bpos: usize = 0;
                 if (opts.subtitle.len > 0) {
-                    const slen = @min(opts.subtitle.len, 256);
-                    @memcpy(body_z[bpos..][0..slen], opts.subtitle[0..slen]);
-                    bpos += slen;
+                    const sub = text_mod.prefix(opts.subtitle, 256).text;
+                    @memcpy(body_z[bpos..][0..sub.len], sub);
+                    bpos += sub.len;
                     if (opts.body.len > 0) {
                         body_z[bpos] = '\n';
                         bpos += 1;
                     }
                 }
                 if (opts.body.len > 0) {
-                    const blen = @min(opts.body.len, 512);
-                    @memcpy(body_z[bpos..][0..blen], opts.body[0..blen]);
-                    bpos += blen;
+                    const body = text_mod.prefix(opts.body, 512).text;
+                    @memcpy(body_z[bpos..][0..body.len], body);
+                    bpos += body.len;
                 }
                 body_z[bpos] = 0;
 
@@ -902,4 +896,25 @@ test "NotificationStore: identity exhaustion refuses instead of reusing" {
     try testing.expectEqual(@as(usize, 1), store.count);
     try testing.expectEqual(max_notification_id, store.getByIndex(0).?.id);
     try testing.expectEqual(@as(u64, 1), store.getByIndex(0).?.pane_id);
+}
+
+test "bounded fields keep complete characters at capacity" {
+    var notif = Notification{ .pane_id = 1, .workspace_id = 1, .pane_group_id = 1, .timestamp = 0 };
+    const split_title = ("a" ** 253) ++ "\xf0\x9f\x98\x80"; // 257 bytes
+    notif.setTitle(split_title);
+    try std.testing.expectEqual(@as(usize, 253), notif.getTitle().len);
+    try std.testing.expect(std.unicode.utf8ValidateSlice(notif.getTitle()));
+
+    const exact_title = ("a" ** 252) ++ "\xf0\x9f\x98\x80"; // exactly 256 bytes
+    notif.setTitle(exact_title);
+    try std.testing.expectEqual(@as(usize, 256), notif.getTitle().len);
+    try std.testing.expectEqualStrings(exact_title, notif.getTitle());
+
+    const split_body = ("b" ** 510) ++ "\xe2\x82\xac"; // 513 bytes
+    notif.setBody(split_body);
+    try std.testing.expectEqual(@as(usize, 510), notif.getBody().len);
+    try std.testing.expect(std.unicode.utf8ValidateSlice(notif.getBody()));
+
+    notif.setSubtitle("\xc3\xa9\xc3\xa9");
+    try std.testing.expectEqualStrings("\xc3\xa9\xc3\xa9", notif.getSubtitle());
 }
