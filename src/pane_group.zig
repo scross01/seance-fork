@@ -187,15 +187,13 @@ pub const PaneGroup = struct {
                 c.gtk_fixed_put(@ptrCast(fixed), panel.getWidget(), 0, 0);
                 // Start with open animation at 0 (will animate in)
                 panel.setStackedOpenAnim(0.0);
-                // Initialize layout fraction at target so new panel doesn't slide
-                const n_f: f64 = @floatFromInt(self.panels.items.len);
-                const i_f: f64 = @floatFromInt(self.panels.items.len - 1);
-                panel.setStackedFracY(i_f / n_f);
-                panel.setStackedFracH(1.0 / n_f);
                 // Signal workspace to run a layout pass so
                 // set_size_request is applied on the next tick.
                 self.needs_stacked_layout = true;
             }
+            // Seat the newcomer in the row its weight owns, with or without a
+            // fixed, so it never starts in a row another panel already fills.
+            self.seatStackedRow(self.panels.items.len - 1);
             // Focus the newly added panel
             if (self.active_panel < self.panels.items.len - 1) {
                 self.panels.items[self.active_panel].unfocus();
@@ -215,38 +213,38 @@ pub const PaneGroup = struct {
         }
     }
 
-    /// Give the panel at `index` the bottom row of the stacked layout and
-    /// spread the height above it over the other panels in proportion to the
-    /// rows they occupy now. A panel joining a stacked group from another
-    /// column keeps its own fraction otherwise, which lays it over the panels
-    /// already here; this makes the column tile again, gaps included, without
-    /// flattening the rows a user resized.
-    pub fn assignLastRow(self: *PaneGroup, index: usize) void {
-        const count = self.panels.items.len;
-        if (index >= count) return;
-
-        const count_f: f64 = @floatFromInt(count);
-        const above = (count_f - 1.0) / count_f;
-        // Only reached with one panel (which then takes the whole column), so
-        // the loop below never divides by zero.
-        const uniform = if (count > 1) 1.0 / (count_f - 1.0) else 1.0;
-
-        var weights: f64 = 0.0;
-        for (self.panels.items, 0..) |panel, i| {
-            if (i != index) weights += panel.getStackedFracH();
-        }
-
+    /// Assign every panel the row its height weight owns, matching the fixed
+    /// point the tick animates toward: `frac_y` is the prefix weight over the
+    /// total and `frac_h` its own share. Used where the whole column must be
+    /// correct in the same frame, such as a panel expelled into it.
+    pub fn tileStackedRows(self: *PaneGroup) void {
+        const total = self.totalHeightWeight();
         var y: f64 = 0.0;
-        for (self.panels.items, 0..) |panel, i| {
-            if (i == index) continue;
-            const share = if (weights > 0.0) panel.getStackedFracH() / weights else uniform;
+        for (self.panels.items) |panel| {
+            const share = panel.getHeightWeight() / total;
             panel.setStackedFracY(y);
-            panel.setStackedFracH(above * share);
-            y += above * share;
+            panel.setStackedFracH(share);
+            y += share;
         }
+    }
 
-        self.panels.items[index].setStackedFracY(y);
-        self.panels.items[index].setStackedFracH(1.0 / count_f);
+    /// Seat only the panel at `index` at its weight-based position, leaving the
+    /// other rows where they are so the tick keeps animating their squeeze.
+    /// Used when a panel fades in and must not start in a row it does not own.
+    pub fn seatStackedRow(self: *PaneGroup, index: usize) void {
+        if (index >= self.panels.items.len) return;
+        const total = self.totalHeightWeight();
+        var y: f64 = 0.0;
+        for (self.panels.items[0..index]) |panel| y += panel.getHeightWeight() / total;
+        const panel = self.panels.items[index];
+        panel.setStackedFracY(y);
+        panel.setStackedFracH(panel.getHeightWeight() / total);
+    }
+
+    fn totalHeightWeight(self: *const PaneGroup) f64 {
+        var total: f64 = 0.0;
+        for (self.panels.items) |panel| total += panel.getHeightWeight();
+        return if (total > 0.0) total else 1.0;
     }
 
     pub fn newPanel(self: *PaneGroup, cwd: ?[*:0]const u8) !*Pane {
@@ -407,16 +405,14 @@ pub const PaneGroup = struct {
         // Hide tab_view
         c.gtk_widget_set_visible(asWidget(self.tab_view), 0);
 
-        // Add all panel widgets to GtkFixed and initialize layout fractions.
-        const n_f: f64 = @floatFromInt(self.panels.items.len);
-        for (self.panels.items, 0..) |panel, i| {
+        // Add all panel widgets to GtkFixed, then seat every row at its
+        // weight-based position so the first stacked frame is already tiled.
+        for (self.panels.items) |panel| {
             const w = panel.getWidget();
             c.gtk_fixed_put(@ptrCast(fixed), w, 0, 0);
             _ = c.g_object_unref(@ptrCast(w));
-            const i_f: f64 = @floatFromInt(i);
-            panel.setStackedFracY(i_f / n_f);
-            panel.setStackedFracH(1.0 / n_f);
         }
+        self.tileStackedRows();
 
         self.programmatic_close = false;
     }
@@ -1094,7 +1090,72 @@ fn appendTestPanel(group: *PaneGroup, alloc: std.mem.Allocator) !Panel {
     return panel;
 }
 
-test "assignLastRow gives a panel joining a stacked group its own row" {
+test "adding to a resized stacked group seats the newcomer by weight" {
+    if (c.gtk_init_check() == 0) return error.SkipZigTest;
+    const alloc = std.testing.allocator;
+    const group = try makeTestGroup(alloc, 2);
+    const container = group.getWidget();
+    _ = c.g_object_ref_sink(@ptrCast(container));
+    test_group = group;
+    defer destroyTestGroup(group, container);
+
+    switch (group.panels.items[0]) {
+        .terminal => |p| p.height_weight = 3.0,
+        .webkit => unreachable,
+    }
+    group.in_stacked_mode = true;
+
+    _ = try group.newPanel(null);
+
+    // Prefix weight is 3 + 1 = 4 of 5, so the newcomer owns the bottom fifth.
+    try testing.expectApproxEqAbs(@as(f64, 4.0 / 5.0), group.panels.items[2].getStackedFracY(), 1e-9);
+    try testing.expectApproxEqAbs(@as(f64, 1.0 / 5.0), group.panels.items[2].getStackedFracH(), 1e-9);
+}
+
+test "tiling a resized stacked group fills the column by weight" {
+    if (c.gtk_init_check() == 0) return error.SkipZigTest;
+    const alloc = std.testing.allocator;
+    const group = try makeTestGroup(alloc, 3);
+    const container = group.getWidget();
+    _ = c.g_object_ref_sink(@ptrCast(container));
+    test_group = group;
+    defer destroyTestGroup(group, container);
+    group.in_stacked_mode = true;
+
+    switch (group.panels.items[0]) {
+        .terminal => |p| p.height_weight = 3.0,
+        .webkit => unreachable,
+    }
+    group.tileStackedRows();
+
+    try testing.expectApproxEqAbs(@as(f64, 0.0), group.panels.items[0].getStackedFracY(), 1e-9);
+    try testing.expectApproxEqAbs(@as(f64, 3.0 / 5.0), group.panels.items[0].getStackedFracH(), 1e-9);
+    try testing.expectApproxEqAbs(@as(f64, 3.0 / 5.0), group.panels.items[1].getStackedFracY(), 1e-9);
+    try testing.expectApproxEqAbs(@as(f64, 1.0 / 5.0), group.panels.items[1].getStackedFracH(), 1e-9);
+    try testing.expectApproxEqAbs(@as(f64, 4.0 / 5.0), group.panels.items[2].getStackedFracY(), 1e-9);
+    try testing.expectApproxEqAbs(@as(f64, 1.0 / 5.0), group.panels.items[2].getStackedFracH(), 1e-9);
+}
+
+test "tiling equal weights keeps exact thirds" {
+    if (c.gtk_init_check() == 0) return error.SkipZigTest;
+    const alloc = std.testing.allocator;
+    const group = try makeTestGroup(alloc, 3);
+    const container = group.getWidget();
+    _ = c.g_object_ref_sink(@ptrCast(container));
+    test_group = group;
+    defer destroyTestGroup(group, container);
+    group.in_stacked_mode = true;
+
+    group.tileStackedRows();
+
+    for (group.panels.items, 0..) |panel, i| {
+        const i_f: f64 = @floatFromInt(i);
+        try testing.expectApproxEqAbs(i_f / 3.0, panel.getStackedFracY(), 1e-9);
+        try testing.expectApproxEqAbs(@as(f64, 1.0 / 3.0), panel.getStackedFracH(), 1e-9);
+    }
+}
+
+test "seatStackedRow gives a panel joining a stacked group its own row" {
     if (c.gtk_init_check() == 0) return error.SkipZigTest;
     const alloc = std.testing.allocator;
     const group = try makeTestGroup(alloc, 1);
@@ -1109,15 +1170,17 @@ test "assignLastRow gives a panel joining a stacked group its own row" {
     group.panels.items[0].setStackedFracH(1.0);
 
     _ = try appendTestPanel(group, alloc);
-    group.assignLastRow(1);
+    group.seatStackedRow(1);
 
+    // The newcomer starts in the bottom half; the row above keeps its current
+    // size so the tick can animate the squeeze instead of snapping.
     try testing.expectApproxEqAbs(@as(f64, 0.0), group.panels.items[0].getStackedFracY(), 1e-9);
-    try testing.expectApproxEqAbs(@as(f64, 0.5), group.panels.items[0].getStackedFracH(), 1e-9);
+    try testing.expectApproxEqAbs(@as(f64, 1.0), group.panels.items[0].getStackedFracH(), 1e-9);
     try testing.expectApproxEqAbs(@as(f64, 0.5), group.panels.items[1].getStackedFracY(), 1e-9);
     try testing.expectApproxEqAbs(@as(f64, 0.5), group.panels.items[1].getStackedFracH(), 1e-9);
 }
 
-test "assignLastRow repairs rows that already overlapped" {
+test "tileStackedRows repairs rows that already overlapped" {
     if (c.gtk_init_check() == 0) return error.SkipZigTest;
     const alloc = std.testing.allocator;
     const group = try makeTestGroup(alloc, 2);
@@ -1135,15 +1198,14 @@ test "assignLastRow repairs rows that already overlapped" {
     group.panels.items[1].setStackedFracH(0.5);
 
     _ = try appendTestPanel(group, alloc);
-    group.assignLastRow(2);
+    group.tileStackedRows();
 
-    // Rows keep their relative sizes (1 : 1/2) and fill the column exactly.
-    try testing.expectApproxEqAbs(@as(f64, 0.0), group.panels.items[0].getStackedFracY(), 1e-9);
-    try testing.expectApproxEqAbs(@as(f64, 4.0 / 9.0), group.panels.items[0].getStackedFracH(), 1e-9);
-    try testing.expectApproxEqAbs(@as(f64, 4.0 / 9.0), group.panels.items[1].getStackedFracY(), 1e-9);
-    try testing.expectApproxEqAbs(@as(f64, 2.0 / 9.0), group.panels.items[1].getStackedFracH(), 1e-9);
-    try testing.expectApproxEqAbs(@as(f64, 2.0 / 3.0), group.panels.items[2].getStackedFracY(), 1e-9);
-    try testing.expectApproxEqAbs(@as(f64, 1.0 / 3.0), group.panels.items[2].getStackedFracH(), 1e-9);
+    // Equal weights: the overlapped rows are replaced by exact thirds.
+    for (group.panels.items, 0..) |panel, i| {
+        const i_f: f64 = @floatFromInt(i);
+        try testing.expectApproxEqAbs(i_f / 3.0, panel.getStackedFracY(), 1e-9);
+        try testing.expectApproxEqAbs(@as(f64, 1.0 / 3.0), panel.getStackedFracH(), 1e-9);
+    }
 }
 
 test "tab dialog context is released once by the dialog destroy notify" {

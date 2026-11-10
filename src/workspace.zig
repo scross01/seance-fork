@@ -2181,10 +2181,10 @@ pub const Workspace = struct {
                 const tgt_col_left = self.columnLeft(tgt_idx);
                 const new_screen_x = (tgt_col_left - self.camera) * fw;
                 panel.setStackedOffsetX(old_screen_x - new_screen_x);
-                // The column already shows other panels: give the newcomer its
-                // own row instead of the fraction it had in the source, which
-                // would cover the panels already here.
-                tgt_grp.assignLastRow(insert_pos);
+                // The column already shows other panels: re-tile it by height
+                // weight in the same frame, or the newcomer (visible
+                // immediately) lands over rows that have not shrunk yet.
+                tgt_grp.tileStackedRows();
                 panel.setStackedOpenAnim(1.0);
                 panel.setStackedClosing(false);
             }
