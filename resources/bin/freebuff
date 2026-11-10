@@ -54,18 +54,31 @@ export SEANCE_FREEBUFF_PID=$$
 # ── Session-end cleanup trap ───────────────────────────────────────────────
 
 _STATUS_MONITOR_PID=""
+_STATUS_STATE_FILE=""
 _cleanup() {
-    kill $_STATUS_MONITOR_PID 2>/dev/null || true
+    if [[ -n "$_STATUS_MONITOR_PID" ]]; then
+        kill "$_STATUS_MONITOR_PID" 2>/dev/null || true
+    fi
+    # The monitor removes this itself on TERM; this backstop covers a monitor
+    # that died before installing its trap.
+    if [[ -n "$_STATUS_STATE_FILE" ]]; then
+        rm -f "$_STATUS_STATE_FILE"
+    fi
     timeout 0.5 "$REAL_SEANCE" ctl freebuff-hook session-end <<'EOF' >/dev/null 2>&1 &
 {}
 EOF
 }
 trap _cleanup EXIT
+# Run the same EXIT cleanup on termination: a HUP'd wrapper would otherwise
+# leave the monitor subshell and its watch child behind.
+trap 'exit 129' HUP
+trap 'exit 143' TERM
+trap 'exit 130' INT
 
 # ── Set initial "Running" status ───────────────────────────────────────────
 
 "$REAL_SEANCE" ctl freebuff-hook prompt-submit <<'EOF' >/dev/null 2>&1 || true
-{}
+{"status":"Running"}
 EOF
 
 # ── Start background status monitor ────────────────────────────────────────
@@ -85,10 +98,13 @@ _fire_status() {   # $1 = Running|Idle — one retry for transient socket failur
 }
 
 _start_status_monitor() {
+    _STATUS_STATE_FILE=$(mktemp "${TMPDIR:-/tmp}/freebuff-status-XXXXXX")
+    # Start from the state that was just published. Starting Idle here made a
+    # silent prompt or a first completion marker invisible: neither condition
+    # corrected the Running status already on screen.
+    echo "Running" > "$_STATUS_STATE_FILE"
     (
-        local idle_timeout=5 state_file watch_pid=""
-        state_file=$(mktemp /tmp/freebuff-status-XXXXXX)
-        echo "Idle" > "$state_file"
+        local idle_timeout=5 state_file="$_STATUS_STATE_FILE" watch_pid=""
         # The wrapper's EXIT trap kills this subshell; reap our watch child
         # and state file so nothing outlives the session. HUP covers pane
         # teardown (tmux/session death) where the EXIT trap never runs.
