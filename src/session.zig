@@ -1041,7 +1041,9 @@ fn getFirstCwdFromGroupObj(obj: std.json.ObjectMap) ?[]const u8 {
     return jsonStr(first_panel, "cwd");
 }
 
-fn restoreGroupPanels(group: *PaneGroup, obj: std.json.ObjectMap, ws: *Workspace) void {
+/// `ws` is only needed to wire browser-panel callbacks, so a group can be
+/// restored without a workspace for tests.
+fn restoreGroupPanels(group: *PaneGroup, obj: std.json.ObjectMap, ws: ?*Workspace) void {
     const panels_array = switch (obj.get("panels") orelse return) {
         .array => |a| a,
         else => return,
@@ -1064,8 +1066,10 @@ fn restoreGroupPanels(group: *PaneGroup, obj: std.json.ObjectMap, ws: *Workspace
                 }
                 const url = jsonStr(fpo, "url") orelse "about:blank";
                 const wp = group.newBrowserPanel(url) catch return;
-                wp.setCloseCallback(&Workspace.closeBrowserColumn, @ptrCast(ws));
-                wp.setFocusCallback(&Workspace.onBrowserEntryFocus, @ptrCast(ws));
+                if (ws) |workspace| {
+                    wp.setCloseCallback(&Workspace.closeBrowserColumn, @ptrCast(workspace));
+                    wp.setFocusCallback(&Workspace.onBrowserEntryFocus, @ptrCast(workspace));
+                }
             } else {
                 // Terminal: restore scrollback, title, weight as before
                 if (group.panels.items.len > 0) {
@@ -1102,8 +1106,10 @@ fn restoreGroupPanels(group: *PaneGroup, obj: std.json.ObjectMap, ws: *Workspace
         } else if (std.mem.eql(u8, panel_type, "webkit")) {
             const url = jsonStr(panel_obj, "url") orelse "about:blank";
             const wp = group.newBrowserPanel(url) catch continue;
-            wp.setCloseCallback(&Workspace.closeBrowserColumn, @ptrCast(ws));
-            wp.setFocusCallback(&Workspace.onBrowserEntryFocus, @ptrCast(ws));
+            if (ws) |workspace| {
+                wp.setCloseCallback(&Workspace.closeBrowserColumn, @ptrCast(workspace));
+                wp.setFocusCallback(&Workspace.onBrowserEntryFocus, @ptrCast(workspace));
+            }
         }
     }
 
@@ -1258,6 +1264,43 @@ fn skipLeadingOscColors(input: []const u8) []const u8 {
 const testing = std.testing;
 
 // --- truncateScrollback ---
+
+test "restore seats stacked rows from saved weights before the first frame" {
+    if (c.gtk_init_check() == 0) return error.SkipZigTest;
+    const alloc = std.testing.allocator;
+    const group = try PaneGroup.createEmpty(alloc, 1);
+    const container = group.getWidget();
+    _ = c.g_object_ref_sink(@ptrCast(container));
+    defer {
+        group.destroy();
+        _ = c.g_object_unref(@ptrCast(container));
+    }
+
+    // A restored workspace already owns its first terminal; the saved panels
+    // are layered onto it and the group runs stacked from creation.
+    _ = try group.newPanel(null);
+    group.in_stacked_mode = true;
+
+    var parsed = try std.json.parseFromSlice(std.json.Value, alloc,
+        \\{"active_panel":0,"panels":[
+        \\{"type":"terminal","cwd":null,"height_weight":3.0,"scrollback":null},
+        \\{"type":"terminal","cwd":null,"height_weight":1.0,"scrollback":null},
+        \\{"type":"terminal","cwd":null,"height_weight":1.0,"scrollback":null}]}
+    , .{});
+    defer parsed.deinit();
+
+    restoreGroupPanels(group, parsed.value.object, null);
+
+    // Seated in the restore call itself, without waiting for a tick.
+    try std.testing.expectEqual(@as(usize, 3), group.panels.items.len);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.0), group.panels.items[0].getStackedFracY(), 1e-9);
+    try std.testing.expectApproxEqAbs(@as(f64, 3.0 / 5.0), group.panels.items[0].getStackedFracH(), 1e-9);
+    try std.testing.expectApproxEqAbs(@as(f64, 3.0 / 5.0), group.panels.items[1].getStackedFracY(), 1e-9);
+    try std.testing.expectApproxEqAbs(@as(f64, 1.0 / 5.0), group.panels.items[1].getStackedFracH(), 1e-9);
+    try std.testing.expectApproxEqAbs(@as(f64, 4.0 / 5.0), group.panels.items[2].getStackedFracY(), 1e-9);
+    try std.testing.expectApproxEqAbs(@as(f64, 1.0 / 5.0), group.panels.items[2].getStackedFracH(), 1e-9);
+    try std.testing.expect(group.needs_stacked_layout);
+}
 
 test "truncateScrollback: short text unchanged" {
     const text = "Hello\nWorld\n";
