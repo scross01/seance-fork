@@ -1,7 +1,15 @@
 const std = @import("std");
 const io = @import("io.zig");
 
+/// Identity 0 is never assigned, so it can stand for "no notification".
+pub const invalid_id: u64 = 0;
+/// Highest identity the store will assign; hitting it refuses new pushes
+/// instead of wrapping onto a live record.
+pub const max_notification_id: u64 = std.math.maxInt(u64) - 1;
+
 pub const Notification = struct {
+    /// Stable identity, assigned by `NotificationStore.push`.
+    id: u64 = invalid_id,
     pane_id: u64,
     workspace_id: u64,
     pane_group_id: u64,
@@ -49,13 +57,31 @@ pub const NotificationStore = struct {
     items: [100]?Notification = [_]?Notification{null} ** 100,
     head: usize = 0,
     count: usize = 0,
+    next_id: u64 = 1,
 
-    pub fn push(self: *NotificationStore, notif: Notification) void {
-        self.items[self.head] = notif;
+    /// Assign the next identity and store `notif`; any id on the argument is
+    /// ignored. Returns false when identities are exhausted, in which case the
+    /// notification is dropped rather than reusing a live identity.
+    pub fn push(self: *NotificationStore, notif: Notification) bool {
+        const id = self.allocateId() orelse {
+            std.log.warn("notification: identity space exhausted; dropping notification", .{});
+            return false;
+        };
+        var stored = notif;
+        stored.id = id;
+        self.items[self.head] = stored;
         self.head = (self.head + 1) % self.items.len;
         if (self.count < self.items.len) {
             self.count += 1;
         }
+        return true;
+    }
+
+    fn allocateId(self: *NotificationStore) ?u64 {
+        if (self.next_id == invalid_id or self.next_id > max_notification_id) return null;
+        const id = self.next_id;
+        self.next_id = id + 1;
+        return id;
     }
 
     pub fn unreadCount(self: *const NotificationStore) usize {
@@ -97,6 +123,17 @@ pub const NotificationStore = struct {
                 if (item.pane_id == pane_id) item.read = true;
             }
         }
+    }
+
+    pub fn unreadForPane(self: *const NotificationStore, pane_id: u64) usize {
+        var n: usize = 0;
+        for (0..self.count) |i| {
+            const idx = self.ringIndex(i);
+            if (self.items[idx]) |item| {
+                if (!item.read and item.pane_id == pane_id) n += 1;
+            }
+        }
+        return n;
     }
 
     /// Mark the notification at logical index (0 = newest) as read.
@@ -145,6 +182,47 @@ pub const NotificationStore = struct {
         const offset = self.count - 1 - index;
         const idx = self.ringIndex(offset);
         if (self.items[idx]) |*item| return item else return null;
+    }
+
+    /// Identity of the record at logical index (0 = newest).
+    pub fn idAtIndex(self: *const NotificationStore, index: usize) ?u64 {
+        if (index >= self.count) return null;
+        const offset = self.count - 1 - index;
+        const idx = self.ringIndex(offset);
+        if (self.items[idx]) |item| return item.id;
+        return null;
+    }
+
+    /// Logical index (0 = newest) of a live identity.
+    pub fn indexOfId(self: *const NotificationStore, id: u64) ?usize {
+        if (id == invalid_id) return null;
+        for (0..self.count) |i| {
+            const idx = self.ringIndex(i);
+            if (self.items[idx]) |item| {
+                if (item.id == id) return self.count - 1 - i;
+            }
+        }
+        return null;
+    }
+
+    /// Live record for an identity; null for invalid, evicted or cleared ids.
+    pub fn findById(self: *NotificationStore, id: u64) ?*Notification {
+        const index = self.indexOfId(id) orelse return null;
+        return self.getByIndex(index);
+    }
+
+    /// Mark one record read by identity. False when the id is no longer live.
+    pub fn markReadById(self: *NotificationStore, id: u64) bool {
+        const item = self.findById(id) orelse return false;
+        item.read = true;
+        return true;
+    }
+
+    /// Remove one record by identity. False when the id is no longer live.
+    pub fn removeById(self: *NotificationStore, id: u64) bool {
+        const index = self.indexOfId(id) orelse return false;
+        self.removeAt(index);
+        return true;
     }
 
     /// Remove notification at logical index (0 = newest).
@@ -244,6 +322,10 @@ pub const NotificationCenter = struct {
     on_check_visible: ?*const fn (*anyopaque, u64, u64) Visibility = null,
     on_clear_ws_visuals: ?*const fn (*anyopaque) void = null,
     on_clear_all_visuals: ?*const fn (*anyopaque) void = null,
+    /// Called once after a mutation that changes what the panel should show.
+    /// Reentrant mutations are coalesced: the outer call refreshes.
+    on_store_changed: ?*const fn (*anyopaque) void = null,
+    store_change_depth: u32 = 0,
 
     pub const Visibility = struct { visible: bool, in_active_group: bool };
 
@@ -284,7 +366,7 @@ pub const NotificationCenter = struct {
         notif.setTitle(opts.title);
         notif.setSubtitle(opts.subtitle);
         notif.setBody(opts.body);
-        self.store.push(notif);
+        if (!self.store.push(notif)) return;
 
         // 3. Mark pane as unread + CSS
         if (self.on_find_pane) |find| {
@@ -338,6 +420,8 @@ pub const NotificationCenter = struct {
                 cb(@ptrCast(title_z[0..tlen :0]), @ptrCast(body_z[0..bpos :0]));
             }
         }
+
+        self.notifyStoreChanged();
     }
 
     /// Central mark-read for a pane (called on focus). Marks the pane's alerts
@@ -356,6 +440,8 @@ pub const NotificationCenter = struct {
 
         // Refresh sidebar
         if (self.on_sidebar_refresh) |cb| cb(ctx);
+
+        self.notifyStoreChanged();
     }
 
     /// Mark all notifications read for a workspace + clear pane/tab visuals + refresh UI.
@@ -364,6 +450,7 @@ pub const NotificationCenter = struct {
         self.store.markAllRead(ws_id);
         if (self.on_clear_ws_visuals) |cb| cb(ws_ptr);
         if (self.on_sidebar_refresh) |cb| cb(ctx);
+        self.notifyStoreChanged();
     }
 
     /// Clear all notifications globally + clear pane/tab visuals + refresh UI.
@@ -372,13 +459,59 @@ pub const NotificationCenter = struct {
         self.store.clearAll();
         if (self.on_clear_all_visuals) |cb| cb(ctx);
         if (self.on_sidebar_refresh) |cb| cb(ctx);
+        self.notifyStoreChanged();
     }
 
-    /// Remove one notification by panel index + refresh sidebar.
+    /// Remove one notification by panel index (ctl compatibility). The index
+    /// is translated to the record's identity at call time.
     pub fn clearAt(self: *NotificationCenter, index: usize) void {
+        const id = self.store.idAtIndex(index) orelse return;
+        self.clearById(id);
+    }
+
+    /// Remove one notification by identity. A stale or evicted id is a no-op,
+    /// so a row that outlived its record can never remove a replacement.
+    pub fn clearById(self: *NotificationCenter, id: u64) void {
         const ctx = self.ctx orelse return;
-        self.store.removeAt(index);
+        const item = self.store.findById(id) orelse return;
+        const pane_id = item.pane_id;
+        if (!self.store.removeById(id)) return;
+        self.refreshPaneVisuals(pane_id);
         if (self.on_sidebar_refresh) |cb| cb(ctx);
+        self.notifyStoreChanged();
+    }
+
+    /// Mark one notification read by identity. Siblings for the same pane keep
+    /// their unread state.
+    pub fn markReadById(self: *NotificationCenter, id: u64) void {
+        const ctx = self.ctx orelse return;
+        const item = self.store.findById(id) orelse return;
+        const pane_id = item.pane_id;
+        if (!self.store.markReadById(id)) return;
+        self.refreshPaneVisuals(pane_id);
+        if (self.on_sidebar_refresh) |cb| cb(ctx);
+        self.notifyStoreChanged();
+    }
+
+    /// Recompute one pane's unread visuals from the surviving records, so
+    /// dismissing one alert does not clear a sibling that is still unread.
+    pub fn refreshPaneVisuals(self: *NotificationCenter, pane_id: u64) void {
+        const ctx = self.ctx orelse return;
+        const unread = self.store.unreadForPane(pane_id) > 0;
+        if (self.on_find_pane) |find| {
+            if (find(ctx, pane_id)) |pane_ptr| {
+                if (self.on_pane_notify) |cb| cb(pane_ptr, unread);
+            }
+        }
+        if (self.on_tab_badge_update) |cb| cb(ctx, pane_id, unread);
+    }
+
+    fn notifyStoreChanged(self: *NotificationCenter) void {
+        const ctx = self.ctx orelse return;
+        if (self.store_change_depth > 0) return;
+        self.store_change_depth += 1;
+        defer self.store_change_depth -= 1;
+        if (self.on_store_changed) |cb| cb(ctx);
     }
 };
 
@@ -402,9 +535,9 @@ fn makeTestNotifRead(pane_id: u64, ws_id: u64) Notification {
 
 test "NotificationStore: push and getByIndex ordering" {
     var store = NotificationStore{};
-    store.push(makeTestNotif(1, 10));
-    store.push(makeTestNotif(2, 10));
-    store.push(makeTestNotif(3, 10));
+    _ = store.push(makeTestNotif(1, 10));
+    _ = store.push(makeTestNotif(2, 10));
+    _ = store.push(makeTestNotif(3, 10));
 
     try testing.expectEqual(@as(usize, 3), store.count);
     try testing.expectEqual(@as(u64, 3), store.getByIndex(0).?.pane_id); // newest
@@ -415,13 +548,13 @@ test "NotificationStore: push and getByIndex ordering" {
 
 test "NotificationStore: push past capacity evicts oldest" {
     var store = NotificationStore{};
-    for (0..100) |i| store.push(makeTestNotif(@intCast(i), 1));
+    for (0..100) |i| _ = store.push(makeTestNotif(@intCast(i), 1));
     try testing.expectEqual(@as(usize, 100), store.count);
     try testing.expectEqual(@as(u64, 99), store.getByIndex(0).?.pane_id);
     try testing.expectEqual(@as(u64, 0), store.getByIndex(99).?.pane_id);
 
     // Push one more — item 0 evicted
-    store.push(makeTestNotif(100, 1));
+    _ = store.push(makeTestNotif(100, 1));
     try testing.expectEqual(@as(usize, 100), store.count);
     try testing.expectEqual(@as(u64, 100), store.getByIndex(0).?.pane_id);
     try testing.expectEqual(@as(u64, 1), store.getByIndex(99).?.pane_id);
@@ -430,7 +563,7 @@ test "NotificationStore: push past capacity evicts oldest" {
 test "NotificationStore: full scan after multiple wraps" {
     var store = NotificationStore{};
     // Push 250 items — wraps twice
-    for (0..250) |i| store.push(makeTestNotif(@intCast(i), 1));
+    for (0..250) |i| _ = store.push(makeTestNotif(@intCast(i), 1));
     try testing.expectEqual(@as(usize, 100), store.count);
     // Buffer should contain items 150..249
     for (0..100) |i| {
@@ -443,10 +576,10 @@ test "NotificationStore: full scan after multiple wraps" {
 
 test "NotificationStore: unreadCount and markAllRead" {
     var store = NotificationStore{};
-    store.push(makeTestNotif(1, 10)); // unread, ws 10
-    store.push(makeTestNotifRead(2, 10)); // read, ws 10
-    store.push(makeTestNotif(3, 20)); // unread, ws 20
-    store.push(makeTestNotif(4, 10)); // unread, ws 10
+    _ = store.push(makeTestNotif(1, 10)); // unread, ws 10
+    _ = store.push(makeTestNotifRead(2, 10)); // read, ws 10
+    _ = store.push(makeTestNotif(3, 20)); // unread, ws 20
+    _ = store.push(makeTestNotif(4, 10)); // unread, ws 10
 
     try testing.expectEqual(@as(usize, 3), store.unreadCount());
     try testing.expectEqual(@as(usize, 2), store.unreadForWorkspace(10));
@@ -462,9 +595,9 @@ test "NotificationStore: unreadCount and markAllRead" {
 
 test "NotificationStore: removeAt from non-full buffer" {
     var store = NotificationStore{};
-    store.push(makeTestNotif(1, 1));
-    store.push(makeTestNotif(2, 1));
-    store.push(makeTestNotif(3, 1));
+    _ = store.push(makeTestNotif(1, 1));
+    _ = store.push(makeTestNotif(2, 1));
+    _ = store.push(makeTestNotif(3, 1));
 
     store.removeAt(1); // remove middle (pane_id=2)
     try testing.expectEqual(@as(usize, 2), store.count);
@@ -474,7 +607,7 @@ test "NotificationStore: removeAt from non-full buffer" {
 
 test "NotificationStore: removeAt newest from wrapped buffer" {
     var store = NotificationStore{};
-    for (0..105) |i| store.push(makeTestNotif(@intCast(i), 1));
+    for (0..105) |i| _ = store.push(makeTestNotif(@intCast(i), 1));
     // Contains items 5..104
     store.removeAt(0); // remove 104
     try testing.expectEqual(@as(usize, 99), store.count);
@@ -484,7 +617,7 @@ test "NotificationStore: removeAt newest from wrapped buffer" {
 
 test "NotificationStore: removeAt oldest from wrapped buffer" {
     var store = NotificationStore{};
-    for (0..105) |i| store.push(makeTestNotif(@intCast(i), 1));
+    for (0..105) |i| _ = store.push(makeTestNotif(@intCast(i), 1));
     store.removeAt(99); // remove oldest (5)
     try testing.expectEqual(@as(usize, 99), store.count);
     try testing.expectEqual(@as(u64, 104), store.getByIndex(0).?.pane_id);
@@ -493,7 +626,7 @@ test "NotificationStore: removeAt oldest from wrapped buffer" {
 
 test "NotificationStore: removeAt middle from wrapped buffer" {
     var store = NotificationStore{};
-    for (0..105) |i| store.push(makeTestNotif(@intCast(i), 1));
+    for (0..105) |i| _ = store.push(makeTestNotif(@intCast(i), 1));
     // Item at index 50 has pane_id 104-50=54
     try testing.expectEqual(@as(u64, 54), store.getByIndex(50).?.pane_id);
     store.removeAt(50);
@@ -507,7 +640,7 @@ test "NotificationStore: removeAt middle from wrapped buffer" {
 
 test "NotificationStore: full scan after removeAt from wrapped buffer" {
     var store = NotificationStore{};
-    for (0..105) |i| store.push(makeTestNotif(@intCast(i), 1));
+    for (0..105) |i| _ = store.push(makeTestNotif(@intCast(i), 1));
     store.removeAt(0); // remove 104
     // Should be 103, 102, ..., 5
     for (0..99) |i| {
@@ -518,11 +651,11 @@ test "NotificationStore: full scan after removeAt from wrapped buffer" {
 
 test "NotificationStore: push after removeAt from non-full buffer" {
     var store = NotificationStore{};
-    store.push(makeTestNotif(1, 1));
-    store.push(makeTestNotif(2, 1));
-    store.push(makeTestNotif(3, 1));
+    _ = store.push(makeTestNotif(1, 1));
+    _ = store.push(makeTestNotif(2, 1));
+    _ = store.push(makeTestNotif(3, 1));
     store.removeAt(0); // remove newest (3)
-    store.push(makeTestNotif(10, 1));
+    _ = store.push(makeTestNotif(10, 1));
     try testing.expectEqual(@as(usize, 3), store.count);
     try testing.expectEqual(@as(u64, 10), store.getByIndex(0).?.pane_id);
     try testing.expectEqual(@as(u64, 2), store.getByIndex(1).?.pane_id);
@@ -531,9 +664,9 @@ test "NotificationStore: push after removeAt from non-full buffer" {
 
 test "NotificationStore: push after removeAt from wrapped buffer" {
     var store = NotificationStore{};
-    for (0..105) |i| store.push(makeTestNotif(@intCast(i), 1));
+    for (0..105) |i| _ = store.push(makeTestNotif(@intCast(i), 1));
     store.removeAt(0); // remove 104
-    store.push(makeTestNotif(200, 1));
+    _ = store.push(makeTestNotif(200, 1));
     try testing.expectEqual(@as(usize, 100), store.count);
     try testing.expectEqual(@as(u64, 200), store.getByIndex(0).?.pane_id);
     try testing.expectEqual(@as(u64, 5), store.getByIndex(99).?.pane_id);
@@ -541,7 +674,7 @@ test "NotificationStore: push after removeAt from wrapped buffer" {
 
 test "NotificationStore: multiple removeAt from wrapped buffer" {
     var store = NotificationStore{};
-    for (0..105) |i| store.push(makeTestNotif(@intCast(i), 1));
+    for (0..105) |i| _ = store.push(makeTestNotif(@intCast(i), 1));
     store.removeAt(0); // remove 104
     store.removeAt(0); // remove 103
     store.removeAt(0); // remove 102
@@ -554,11 +687,11 @@ test "NotificationStore: multiple removeAt from wrapped buffer" {
 
 test "NotificationStore: removeForWorkspace preserves order" {
     var store = NotificationStore{};
-    store.push(makeTestNotif(1, 10));
-    store.push(makeTestNotif(2, 20));
-    store.push(makeTestNotif(3, 10));
-    store.push(makeTestNotif(4, 20));
-    store.push(makeTestNotif(5, 30));
+    _ = store.push(makeTestNotif(1, 10));
+    _ = store.push(makeTestNotif(2, 20));
+    _ = store.push(makeTestNotif(3, 10));
+    _ = store.push(makeTestNotif(4, 20));
+    _ = store.push(makeTestNotif(5, 30));
 
     const removed = store.removeForWorkspace(20);
     try testing.expectEqual(@as(usize, 2), removed);
@@ -571,7 +704,7 @@ test "NotificationStore: removeForWorkspace preserves order" {
 test "NotificationStore: removeForWorkspace from wrapped buffer" {
     var store = NotificationStore{};
     for (0..105) |i| {
-        store.push(makeTestNotif(@intCast(i), if (i % 2 == 0) @as(u64, 10) else @as(u64, 20)));
+        _ = store.push(makeTestNotif(@intCast(i), if (i % 2 == 0) @as(u64, 10) else @as(u64, 20)));
     }
     const removed = store.removeForWorkspace(10);
     try testing.expect(removed > 0);
@@ -582,9 +715,9 @@ test "NotificationStore: removeForWorkspace from wrapped buffer" {
 
 test "NotificationStore: removeForPane" {
     var store = NotificationStore{};
-    store.push(makeTestNotif(1, 10));
-    store.push(makeTestNotif(2, 10));
-    store.push(makeTestNotif(1, 20)); // same pane_id=1 as first
+    _ = store.push(makeTestNotif(1, 10));
+    _ = store.push(makeTestNotif(2, 10));
+    _ = store.push(makeTestNotif(1, 20)); // same pane_id=1 as first
     const removed = store.removeForPane(1);
     try testing.expectEqual(@as(usize, 2), removed);
     try testing.expectEqual(@as(usize, 1), store.count);
@@ -595,9 +728,9 @@ test "NotificationStore: removeForPane" {
 
 test "NotificationStore: markAllReadForPane keeps history" {
     var store = NotificationStore{};
-    store.push(makeTestNotif(1, 10));
-    store.push(makeTestNotif(2, 10));
-    store.push(makeTestNotif(3, 20));
+    _ = store.push(makeTestNotif(1, 10));
+    _ = store.push(makeTestNotif(2, 10));
+    _ = store.push(makeTestNotif(3, 20));
 
     store.markAllReadForPane(1);
     try testing.expectEqual(@as(usize, 3), store.count); // nothing removed
@@ -609,7 +742,7 @@ test "NotificationStore: markAllReadForPane keeps history" {
 test "NotificationStore: markAllReadForPane from wrapped buffer" {
     var store = NotificationStore{};
     for (0..105) |i| {
-        store.push(makeTestNotif(@intCast(1 + (i % 2)), 1)); // alternating pane_id 1/2
+        _ = store.push(makeTestNotif(@intCast(1 + (i % 2)), 1)); // alternating pane_id 1/2
     }
     store.markAllReadForPane(1);
     try testing.expectEqual(@as(usize, 100), store.count);
@@ -621,9 +754,9 @@ test "NotificationStore: markAllReadForPane from wrapped buffer" {
 
 test "NotificationStore: markReadAt" {
     var store = NotificationStore{};
-    store.push(makeTestNotif(1, 10));
-    store.push(makeTestNotif(2, 10));
-    store.push(makeTestNotif(3, 10));
+    _ = store.push(makeTestNotif(1, 10));
+    _ = store.push(makeTestNotif(2, 10));
+    _ = store.push(makeTestNotif(3, 10));
 
     store.markReadAt(1);
     try testing.expect(store.getByIndex(1).?.read);
@@ -633,7 +766,7 @@ test "NotificationStore: markReadAt" {
 
 test "NotificationStore: markReadAt out of range is a no-op" {
     var store = NotificationStore{};
-    store.push(makeTestNotif(1, 10));
+    _ = store.push(makeTestNotif(1, 10));
 
     store.markReadAt(5);
     try testing.expectEqual(@as(usize, 1), store.count);
@@ -644,31 +777,31 @@ test "NotificationStore: markReadAt out of range is a no-op" {
 
 test "NotificationStore: latestForWorkspace returns newest unread" {
     var store = NotificationStore{};
-    store.push(makeTestNotif(1, 10));
-    store.push(makeTestNotifRead(2, 10));
-    store.push(makeTestNotif(3, 10));
+    _ = store.push(makeTestNotif(1, 10));
+    _ = store.push(makeTestNotifRead(2, 10));
+    _ = store.push(makeTestNotif(3, 10));
     try testing.expectEqual(@as(u64, 3), store.latestForWorkspace(10).?.pane_id);
 }
 
 test "NotificationStore: latestForWorkspace falls back to newest read" {
     var store = NotificationStore{};
-    store.push(makeTestNotifRead(1, 10));
-    store.push(makeTestNotifRead(2, 10));
-    store.push(makeTestNotif(3, 20)); // different ws
+    _ = store.push(makeTestNotifRead(1, 10));
+    _ = store.push(makeTestNotifRead(2, 10));
+    _ = store.push(makeTestNotif(3, 20)); // different ws
     try testing.expectEqual(@as(u64, 2), store.latestForWorkspace(10).?.pane_id);
 }
 
 test "NotificationStore: latestForWorkspace prefers old unread over newer read" {
     var store = NotificationStore{};
-    store.push(makeTestNotif(1, 10)); // older unread
-    store.push(makeTestNotifRead(2, 10)); // newer read
+    _ = store.push(makeTestNotif(1, 10)); // older unread
+    _ = store.push(makeTestNotifRead(2, 10)); // newer read
     try testing.expectEqual(@as(u64, 1), store.latestForWorkspace(10).?.pane_id);
 }
 
 test "NotificationStore: latestForWorkspace null for unknown workspace" {
     var store = NotificationStore{};
     try testing.expect(store.latestForWorkspace(10) == null);
-    store.push(makeTestNotif(1, 20));
+    _ = store.push(makeTestNotif(1, 20));
     try testing.expect(store.latestForWorkspace(10) == null);
 }
 
@@ -676,15 +809,15 @@ test "NotificationStore: latestForWorkspace null for unknown workspace" {
 
 test "NotificationStore: mostRecentUnread" {
     var store = NotificationStore{};
-    store.push(makeTestNotif(1, 10));
-    store.push(makeTestNotifRead(2, 20));
-    store.push(makeTestNotif(3, 30));
+    _ = store.push(makeTestNotif(1, 10));
+    _ = store.push(makeTestNotifRead(2, 20));
+    _ = store.push(makeTestNotif(3, 30));
     try testing.expectEqual(@as(u64, 3), store.mostRecentUnread().?.pane_id);
 }
 
 test "NotificationStore: mostRecentUnread null when all read" {
     var store = NotificationStore{};
-    store.push(makeTestNotifRead(1, 10));
+    _ = store.push(makeTestNotifRead(1, 10));
     try testing.expect(store.mostRecentUnread() == null);
 }
 
@@ -692,8 +825,81 @@ test "NotificationStore: mostRecentUnread null when all read" {
 
 test "NotificationStore: clearAll" {
     var store = NotificationStore{};
-    for (0..50) |i| store.push(makeTestNotif(@intCast(i), 1));
+    for (0..50) |i| _ = store.push(makeTestNotif(@intCast(i), 1));
     store.clearAll();
     try testing.expectEqual(@as(usize, 0), store.count);
     try testing.expect(store.getByIndex(0) == null);
+}
+
+// --- identities ---
+
+test "NotificationStore: ids follow records as the ring shifts" {
+    var store = NotificationStore{};
+    for (0..105) |i| _ = store.push(makeTestNotif(@intCast(i), 1));
+    // Pane 5 is the oldest survivor and was the sixth push, so its identity
+    // is 6; identities move with the record, never with the slot index.
+    try testing.expectEqual(@as(u64, 5), store.findById(6).?.pane_id);
+    try testing.expectEqual(@as(u64, 105), store.getByIndex(0).?.id);
+    try testing.expectEqual(@as(usize, 99), store.indexOfId(6).?);
+    // Pane 4 (identity 5) was evicted with the ring wrap.
+    try testing.expect(store.findById(5) == null);
+}
+
+test "NotificationStore: removeById targets the record, not its slot" {
+    var store = NotificationStore{};
+    for (0..105) |i| _ = store.push(makeTestNotif(@intCast(i), 1));
+    const middle = store.getByIndex(50).?;
+    const middle_id = middle.id;
+    const middle_pane = middle.pane_id;
+
+    try testing.expect(store.removeById(middle_id));
+    try testing.expectEqual(@as(usize, 99), store.count);
+    try testing.expect(store.findById(middle_id) == null);
+    try testing.expect(!store.removeById(middle_id)); // already gone
+
+    // Neighbours shifted down a slot but kept their own identities.
+    try testing.expectEqual(middle_pane + 1, store.getByIndex(49).?.pane_id);
+    try testing.expectEqual(middle_pane - 1, store.getByIndex(50).?.pane_id);
+}
+
+test "NotificationStore: stale identities are inert and never reused" {
+    var store = NotificationStore{};
+    _ = store.push(makeTestNotif(1, 1));
+    const old_id = store.getByIndex(0).?.id;
+    store.clearAll();
+    _ = store.push(makeTestNotif(2, 1));
+
+    try testing.expect(store.findById(old_id) == null);
+    try testing.expect(!store.removeById(old_id));
+    try testing.expect(!store.markReadById(old_id));
+    try testing.expectEqual(@as(usize, 1), store.count);
+    try testing.expect(store.getByIndex(0).?.id > old_id);
+    try testing.expect(!store.getByIndex(0).?.read);
+}
+
+test "NotificationStore: markReadById preserves sibling unread alerts" {
+    var store = NotificationStore{};
+    _ = store.push(makeTestNotif(1, 10));
+    _ = store.push(makeTestNotif(1, 10));
+    _ = store.push(makeTestNotif(2, 10));
+    const middle_id = store.getByIndex(1).?.id;
+
+    try testing.expect(store.markReadById(middle_id));
+    try testing.expect(store.findById(middle_id).?.read);
+    try testing.expectEqual(@as(usize, 1), store.unreadForPane(1));
+    try testing.expectEqual(@as(usize, 1), store.unreadForPane(2));
+    try testing.expectEqual(@as(usize, 2), store.unreadCount());
+}
+
+test "NotificationStore: identity exhaustion refuses instead of reusing" {
+    var store = NotificationStore{};
+    store.next_id = max_notification_id;
+    try testing.expect(store.push(makeTestNotif(1, 1)));
+    try testing.expectEqual(max_notification_id, store.getByIndex(0).?.id);
+
+    // The refusal logs a warning and leaves the live record untouched.
+    try testing.expect(!store.push(makeTestNotif(2, 1)));
+    try testing.expectEqual(@as(usize, 1), store.count);
+    try testing.expectEqual(max_notification_id, store.getByIndex(0).?.id);
+    try testing.expectEqual(@as(u64, 1), store.getByIndex(0).?.pane_id);
 }

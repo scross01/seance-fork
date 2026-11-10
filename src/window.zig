@@ -1568,6 +1568,18 @@ pub fn create(wm: *WindowManager) !*WindowState {
         0,
     );
 
+    // Focus the selected record once the popover is mapped. Without this the
+    // first keystroke lands on the header's Clear all button and wipes the
+    // whole list.
+    _ = c.g_signal_connect_data(
+        @as(c.gpointer, @ptrCast(notif_popover)),
+        "map",
+        @as(c.GCallback, @ptrCast(&onNotifPopoverMapped)),
+        @as(c.gpointer, @ptrCast(state)),
+        null,
+        c.G_CONNECT_AFTER,
+    );
+
     // Create command palette and add as overlay
     state.command_palette = command_palette_mod.CommandPalette.create(state);
     c.gtk_overlay_add_overlay(@ptrCast(window_overlay), state.command_palette.overlay);
@@ -1892,6 +1904,11 @@ fn onNotifJump(workspace_id: u64, pane_group_id: u64, pane_id: u64) void {
     }
 }
 
+fn onNotifPopoverMapped(_: *c.GtkPopover, data: c.gpointer) callconv(.c) void {
+    const state: *WindowState = @ptrCast(@alignCast(data));
+    state.notif_panel.focusSelectedRow();
+}
+
 fn onNotifPopoverClosed(_: *c.GtkPopover, data: c.gpointer) callconv(.c) void {
     const state: *WindowState = @ptrCast(@alignCast(data));
 
@@ -1954,6 +1971,17 @@ fn initNotificationCenter(state: *WindowState) void {
     state.notif_center.on_check_visible = &ncCheckVisible;
     state.notif_center.on_clear_ws_visuals = &ncClearWsVisuals;
     state.notif_center.on_clear_all_visuals = &ncClearAllVisuals;
+    state.notif_center.on_store_changed = &ncStoreChanged;
+}
+
+/// A store mutation should update an open notification list; the panel defers
+/// the rebuild to an idle callback when it arrives from one of its signals.
+fn ncStoreChanged(ctx: *anyopaque) void {
+    const state: *WindowState = @ptrCast(@alignCast(ctx));
+    if (state.destroyed) return;
+    if (state.notif_popover) |popover| {
+        if (c.gtk_widget_get_visible(popover) != 0) state.notif_panel.refresh();
+    }
 }
 
 fn ncSidebarRefresh(ctx: *anyopaque) void {
@@ -1971,7 +1999,9 @@ fn ncPaneNotify(pane_ptr: *anyopaque, unread: bool) void {
     const Pane = @import("pane.zig").Pane;
     const pane: *Pane = @ptrCast(@alignCast(pane_ptr));
     if (unread) {
-        pane.notify();
+        // Recomputing visuals from surviving records re-asserts an already
+        // unread pane; only a transition should flash it again.
+        if (!pane.has_unread) pane.notify();
     } else {
         pane.has_unread = false;
         if (pane.notif_border_timeout != 0) {

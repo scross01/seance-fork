@@ -1720,8 +1720,9 @@ pub const SocketServer = struct {
             var body_esc: [1024]u8 = undefined;
             const escaped_body = jsonEscapeString(notif.getBody(), &body_esc);
 
-            W.print(&result_buf, &pos, &overflow, "{{\"index\":{d},\"title\":\"{s}\",\"subtitle\":\"{s}\",\"body\":\"{s}\",\"workspace_id\":{d},\"surface_id\":{d},\"pane_group_id\":{d},\"read\":{s},\"timestamp\":{d}}}", .{
+            W.print(&result_buf, &pos, &overflow, "{{\"index\":{d},\"id\":{d},\"title\":\"{s}\",\"subtitle\":\"{s}\",\"body\":\"{s}\",\"workspace_id\":{d},\"surface_id\":{d},\"pane_group_id\":{d},\"read\":{s},\"timestamp\":{d}}}", .{
                 i,
+                notif.id,
                 escaped_title,
                 escaped_subtitle,
                 escaped_body,

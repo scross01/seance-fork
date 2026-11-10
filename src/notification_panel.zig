@@ -17,6 +17,11 @@ pub const NotificationPanel = struct {
     on_jump: ?JumpCallback = null,
     on_show_sidebar: ?*const fn () void = null,
     popover: ?*c.GtkWidget = null,
+    /// Guards against rebuilding the list from inside a row signal: the
+    /// rebuild removes the widget whose handler is still on the stack.
+    refreshing: bool = false,
+    refresh_pending: bool = false,
+    refresh_idle_id: c.guint = 0,
 
     pub fn create(center: *notification.NotificationCenter) NotificationPanel {
         // Header row: title + clear all
@@ -111,6 +116,19 @@ pub const NotificationPanel = struct {
     }
 
     pub fn refresh(self: *NotificationPanel) void {
+        if (self.refreshing) {
+            self.refresh_pending = true;
+            return;
+        }
+        self.refreshing = true;
+        defer {
+            self.refreshing = false;
+            if (self.refresh_pending) {
+                self.refresh_pending = false;
+                self.scheduleRefresh();
+            }
+        }
+
         // Update header with unread count
         const unread = self.center.store.unreadCount();
         var header_buf: [64]u8 = undefined;
@@ -119,6 +137,15 @@ pub const NotificationPanel = struct {
         else
             "Notifications";
         c.gtk_label_set_text(@ptrCast(self.header_label), header_text.ptr);
+
+        // Preserve the selected record by identity and whether focus was in
+        // the panel: arrivals shift indices and destroy the focused row, which
+        // would otherwise leave the next Return on the header's Clear all.
+        const restore_focus = self.focusWithinPanel();
+        const selected_id: ?u64 = blk: {
+            const row = c.gtk_list_box_get_selected_row(self.list_box) orelse break :blk null;
+            break :blk notificationIdOf(@as(*c.GObject, @ptrCast(row)));
+        };
 
         // Clear existing rows
         var child = c.gtk_widget_get_first_child(@as(*c.GtkWidget, @ptrCast(@alignCast(self.list_box))));
@@ -146,13 +173,93 @@ pub const NotificationPanel = struct {
             c.gtk_list_box_append(self.list_box, row_widget);
         }
 
-        // Auto-select first row (Feature 4.2)
-        const first_row = c.gtk_list_box_get_row_at_index(self.list_box, 0);
-        if (first_row) |row| {
-            c.gtk_list_box_select_row(self.list_box, row);
+        // Restore the previous selection, or auto-select the first row. A
+        // rebuild also destroys the focused row, so an open popover would send
+        // the next keystroke to the header's Clear all button.
+        if (selected_id) |id| {
+            if (self.rowForId(id)) |row| c.gtk_list_box_select_row(self.list_box, row);
+        }
+        if (c.gtk_list_box_get_selected_row(self.list_box) == null) {
+            if (c.gtk_list_box_get_row_at_index(self.list_box, 0)) |row| {
+                c.gtk_list_box_select_row(self.list_box, row);
+            }
+        }
+        if (restore_focus) self.restoreListFocus();
+    }
+
+    /// Focus the selected record so the first keystroke acts on a
+    /// notification rather than the header's Clear all button.
+    pub fn focusSelectedRow(self: *NotificationPanel) void {
+        self.restoreListFocus();
+    }
+
+    fn restoreListFocus(self: *NotificationPanel) void {
+        const list: *c.GtkWidget = @as(*c.GtkWidget, @ptrCast(@alignCast(self.list_box)));
+        if (c.gtk_list_box_get_selected_row(self.list_box)) |row| {
+            if (c.gtk_widget_grab_focus(@as(*c.GtkWidget, @ptrCast(@alignCast(row)))) != 0) return;
+        }
+        _ = c.gtk_widget_grab_focus(list);
+    }
+
+    /// True when keyboard focus is anywhere inside this panel (the popover
+    /// container, a row or its suffix button).
+    fn focusWithinPanel(self: *NotificationPanel) bool {
+        const root = c.gtk_widget_get_root(self.container) orelse return false;
+        var widget: ?*c.GtkWidget = c.gtk_root_get_focus(root);
+        while (widget) |w| {
+            if (w == self.container) return true;
+            widget = c.gtk_widget_get_parent(w);
+        }
+        return false;
+    }
+
+    fn rowForId(self: *NotificationPanel, id: u64) ?*c.GtkListBoxRow {
+        var index: c_int = 0;
+        while (c.gtk_list_box_get_row_at_index(self.list_box, index)) |row| : (index += 1) {
+            if (notificationIdOf(@as(*c.GObject, @ptrCast(row)))) |row_id| {
+                if (row_id == id) return row;
+            }
+        }
+        return null;
+    }
+
+    /// Rebuild after the current signal returns, coalescing bursts.
+    fn scheduleRefresh(self: *NotificationPanel) void {
+        if (self.refresh_idle_id != 0) return;
+        self.refresh_idle_id = c.g_idle_add(@ptrCast(&onIdleRefresh), @ptrCast(self));
+    }
+
+    fn beginSignalGuard(self: *NotificationPanel) bool {
+        const was = self.refreshing;
+        self.refreshing = true;
+        return was;
+    }
+
+    fn endSignalGuard(self: *NotificationPanel, was: bool) void {
+        self.refreshing = was;
+        if (!was) {
+            self.refresh_pending = false;
+            self.scheduleRefresh();
         }
     }
 };
+
+fn onIdleRefresh(data: c.gpointer) callconv(.c) c.gboolean {
+    const self: *NotificationPanel = @ptrCast(@alignCast(data));
+    self.refresh_idle_id = 0;
+    self.refresh();
+    return c.G_SOURCE_REMOVE;
+}
+
+/// Rows and dismiss buttons carry their notification identity as a pointer-
+/// sized value (identities are never 0), so no record pointer is retained.
+fn notificationIdOf(obj: *c.GObject) ?u64 {
+    const raw = c.g_object_get_data(obj, "notif-id");
+    if (raw == null) return null;
+    const value = @intFromPtr(raw.?);
+    if (value == 0) return null;
+    return @as(u64, @intCast(value));
+}
 
 fn buildNotificationRow(notif: *notification.Notification, now: i64, panel: *NotificationPanel) *c.GtkWidget {
     const row = c.adw_action_row_new();
@@ -219,8 +326,12 @@ fn buildNotificationRow(notif: *notification.Notification, now: i64, panel: *Not
     c.gtk_widget_set_tooltip_text(@ptrCast(dismiss_btn), "Dismiss");
     c.adw_action_row_add_suffix(action_row, @ptrCast(dismiss_btn));
 
-    // Store the panel pointer on the button for the dismiss handler
+    // Store the panel pointer on the button for the dismiss handler, and the
+    // stable identity on both the button and its row for activation.
     c.g_object_set_data(@as(*c.GObject, @ptrCast(dismiss_btn)), "panel", @ptrCast(panel));
+    const id_value: *anyopaque = @ptrFromInt(@as(usize, @intCast(notif.id)));
+    c.g_object_set_data(@as(*c.GObject, @ptrCast(dismiss_btn)), "notif-id", id_value);
+    c.g_object_set_data(@as(*c.GObject, @ptrCast(row)), "notif-id", id_value);
     _ = c.g_signal_connect_data(
         @as(c.gpointer, @ptrCast(dismiss_btn)),
         "clicked",
@@ -259,27 +370,16 @@ fn onClearAllClicked(_: *c.GtkButton, data: c.gpointer) callconv(.c) void {
 }
 
 fn onDismissClicked(btn: *c.GtkButton, _: c.gpointer) callconv(.c) void {
-    // Walk up from the button to find the GtkListBoxRow ancestor.
-    // AdwActionRow internal hierarchy varies, so walk until we hit a list-box row.
-    var widget: ?*c.GtkWidget = @ptrCast(btn);
-    while (widget != null) {
-        widget = c.gtk_widget_get_parent(widget.?);
-        if (widget != null and c.g_type_check_instance_is_a(
-            @ptrCast(widget.?),
-            c.gtk_list_box_row_get_type(),
-        ) != 0) break;
-    }
-    const row_widget = widget orelse return;
-    const row: *c.GtkListBoxRow = @ptrCast(@alignCast(row_widget));
-    const index: usize = @intCast(c.gtk_list_box_row_get_index(row));
-
-    // Get panel from the button's data
     const panel_ptr = c.g_object_get_data(@as(*c.GObject, @ptrCast(btn)), "panel");
     if (panel_ptr == null) return;
     const panel: *NotificationPanel = @ptrCast(@alignCast(panel_ptr));
+    const id = notificationIdOf(@as(*c.GObject, @ptrCast(btn))) orelse return;
 
-    panel.center.store.removeAt(index);
-    panel.refresh();
+    // The center notifies the panel synchronously; guard the rebuild so the
+    // button this handler is running on is not removed mid-signal.
+    const was_refreshing = panel.beginSignalGuard();
+    panel.center.clearById(id);
+    panel.endSignalGuard(was_refreshing);
 }
 
 fn onRowActivated(
@@ -289,16 +389,18 @@ fn onRowActivated(
 ) callconv(.c) void {
     const self: *NotificationPanel = @ptrCast(@alignCast(data));
     const r = row orelse return;
-    const index: usize = @intCast(c.gtk_list_box_row_get_index(r));
-
-    const notif = self.center.store.getByIndex(index) orelse return;
+    const id = notificationIdOf(@as(*c.GObject, @ptrCast(r))) orelse return;
+    const notif = self.center.store.findById(id) orelse return;
 
     const ws_id = notif.workspace_id;
     const pg_id = notif.pane_group_id;
     const p_id = notif.pane_id;
 
     // Mark only the clicked notification read; it stays as muted history.
-    self.center.store.markReadAt(index);
+    // Guarded so the store-change refresh runs after this signal returns.
+    const was_refreshing = self.beginSignalGuard();
+    self.center.markReadById(id);
+    self.endSignalGuard(was_refreshing);
 
     // Suppress the blanket markReadForPane that pane.focus() would trigger,
     // so sibling alerts for this pane stay unread.
@@ -311,5 +413,5 @@ fn onRowActivated(
     }
 
     self.dismissPopover();
-    self.refresh();
+    self.scheduleRefresh();
 }
