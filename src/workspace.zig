@@ -2646,6 +2646,52 @@ test "expelling a stacked row into a tabbed column reseats the source in the sam
     try std.testing.expectEqual(page, c.adw_tab_view_get_selected_page(target.tab_view));
 }
 
+test "expelling a tabbed row into a tabbed column transfers the page in the same frame" {
+    if (c.gtk_init_check() == 0) return error.SkipZigTest;
+    const alloc = std.testing.allocator;
+    const ws = try Workspace.create(alloc, "expel");
+    const container = ws.container;
+    _ = c.g_object_ref_sink(@ptrCast(container));
+    defer {
+        ws.destroy();
+        _ = c.g_object_unref(@ptrCast(container));
+    }
+
+    const target = ws.columns.items[0].groups.items[0];
+    target.exitStackedMode();
+
+    const source = try ws.addColumn(null);
+    try source.addPanel(.{ .terminal = try Pane.create(alloc, null, source.workspace_id, source.id) });
+    source.exitStackedMode();
+    try std.testing.expect(!target.in_stacked_mode and !source.in_stacked_mode);
+    try std.testing.expectEqual(@as(usize, 2), source.panels.items.len);
+
+    const expelled = source.panels.items[source.active_panel];
+    ws.expelPane(.left);
+
+    // Same frame, no tick: the page itself moved between tab views, so the
+    // panel lists follow and the widget keeps a single owning parent.
+    try std.testing.expectEqual(@as(usize, 2), target.panels.items.len);
+    try std.testing.expectEqual(@as(usize, 1), source.panels.items.len);
+    try std.testing.expectEqual(expelled.getWidget(), target.panels.items[1].getWidget());
+    try std.testing.expectEqual(@as(usize, 0), ws.focused_column);
+    try std.testing.expectEqual(@as(usize, 1), target.active_panel);
+    try std.testing.expect(!ws.columns.items[1].closing);
+
+    const tgt_page = c.adw_tab_view_get_page(target.tab_view, expelled.getWidget());
+    try std.testing.expect(tgt_page != null);
+    try std.testing.expectEqual(tgt_page, c.adw_tab_view_get_selected_page(target.tab_view));
+    // A page lookup on the source would assert: the child belongs to the
+    // target view now, so the page counts are what show the move.
+    try std.testing.expectEqual(@as(usize, 2), @as(usize, @intCast(c.adw_tab_view_get_n_pages(target.tab_view))));
+    try std.testing.expectEqual(@as(usize, 1), @as(usize, @intCast(c.adw_tab_view_get_n_pages(source.tab_view))));
+
+    // The fast path never parks the widget on the workspace GtkFixed.
+    const parent = c.gtk_widget_get_parent(expelled.getWidget());
+    try std.testing.expect(parent != null);
+    try std.testing.expect(parent.? != ws.fixed);
+}
+
 test "WorkspaceMetadata: setStatus inserts new entry" {
     var meta = WorkspaceMetadata{};
     meta.setStatus("agent", "running", 0, true, "Claude");
