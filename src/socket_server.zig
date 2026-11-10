@@ -205,15 +205,19 @@ pub const SocketServer = struct {
             if (!transferred) posix.close(conn_fd);
         }
 
-        // Guard: don't let a slow client stall the GTK main thread.
-        // Data from local Unix sockets arrives in microseconds; 10 ms is generous.
+        // Guard: don't let a client that never sends stall the GTK main thread.
+        // A local client writes right after connecting, but it can be
+        // descheduled between the two calls, so allow a bounded arrival window
+        // instead of dropping the connection after one millisecond.
         var pfd = [1]posix.pollfd{.{
             .fd = conn_fd,
             .events = posix.POLL.IN,
             .revents = 0,
         }};
-        _ = posix.poll(&pfd, 1) catch return 1; // 1ms max stall per chunk
-        if (pfd[0].revents & posix.POLL.IN == 0) return 1;
+        const request_arrival_ms = 100;
+        const request_ready = posix.poll(&pfd, request_arrival_ms) catch return 1;
+        if (request_ready == 0) return 1; // no request within the window
+        if (pfd[0].revents & posix.POLL.IN == 0) return 1; // peer hung up
 
         // Read command. Sized to accommodate a 4096-byte text payload in its
         // worst-case JSON encoding: every byte expanded to `\u00XX` (6 bytes)

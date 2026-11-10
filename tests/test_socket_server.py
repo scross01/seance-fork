@@ -2,6 +2,7 @@
 import json
 import math
 import socket
+import time
 
 from test_ghostty_integration import GhosttyTestCase
 
@@ -29,6 +30,21 @@ class SocketNumberTests(GhosttyTestCase):
                 self.assertEqual(reply["id"], request_id)
                 self.assertEqual(reply["result"], {"pong": True})
         self.call("system.ping")
+
+    def test_request_arriving_after_connect_is_answered(self):
+        # A client can be descheduled between connect and write; the server must
+        # wait for the request instead of closing the connection almost at once.
+        with socket.socket(socket.AF_UNIX) as conn:
+            conn.settimeout(3)
+            conn.connect(str(self.socket_path))
+            time.sleep(0.05)
+            conn.sendall((json.dumps({"id": "late", "method": "system.ping"}) + "\n").encode())
+            reply = b""
+            while b"\n" not in reply:
+                part = conn.recv(65536)
+                self.assertTrue(part, "application closed the socket before the request arrived")
+                reply += part
+        self.assertEqual(json.loads(reply)["result"], {"pong": True})
 
     def test_integer_parameters_handle_float_boundaries(self):
         self.wait(lambda: self.call("surface.read_screen").get("text"), "shell startup")
