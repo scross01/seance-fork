@@ -41,6 +41,7 @@ pub const Pane = struct {
     /// One-shot fallback that forces a render if the first one never arrives.
     init_fallback_id: c.guint = 0,
     init_fallback_attempts: u8 = 0,
+    diag_sample_id: c.guint = 0,
     init_diag_attempts: u8 = 0,
     // Cached terminal title (updated via ghostty SET_TITLE action)
     cached_title: [256]u8 = [_]u8{0} ** 256,
@@ -668,6 +669,27 @@ fn requestLayoutForStarvedPane(pane: *Pane) void {
 /// Frame-clock evidence for a starved pane: whether the workspace is ticking at
 /// all and whether the GL area's native surface is mapped, so "no frames" can be
 /// told apart from "frames that skip this subtree".
+fn windowCount() usize {
+    const Window = @import("window.zig");
+    const wm = Window.window_manager orelse return 0;
+    return wm.windows.items.len;
+}
+
+fn diagSampleCb(user_data: c.gpointer) callconv(.c) c.gboolean {
+    const pane: *Pane = @ptrCast(@alignCast(user_data));
+    pane.diag_sample_id = 0;
+    const Window = @import("window.zig");
+    const wm = Window.window_manager orelse return c.G_SOURCE_REMOVE;
+    const state = wm.findByWorkspaceId(pane.workspace_id) orelse return c.G_SOURCE_REMOVE;
+    for (state.workspaces.items) |ws| {
+        if (ws.id != pane.workspace_id) continue;
+        std.log.info("pane {d}: late sample windows={d}", .{ pane.id, wm.windows.items.len });
+        logFrameState(pane, ws);
+        return c.G_SOURCE_REMOVE;
+    }
+    return c.G_SOURCE_REMOVE;
+}
+
 fn logFrameState(pane: *Pane, ws: *@import("workspace.zig").Workspace) void {
     const gl = pane.gl_area orelse return;
     const widget: *c.GtkWidget = @ptrCast(gl);
@@ -712,7 +734,7 @@ fn logFrameState(pane: *Pane, ws: *@import("workspace.zig").Workspace) void {
         }
     }
     std.log.info(
-        "pane {d}: frames ticks={d} frame_time={d} surface={} surface_mapped={} realized={} mapped={} gl_error={} window_active={} toplevel_state=0x{x}",
+        "pane {d}: frames ticks={d} frame_time={d} surface={} surface_mapped={} realized={} mapped={} gl_error={} window_active={} toplevel_state=0x{x} windows={d}",
         .{
             pane.id,
             ws.tick_count,
@@ -724,6 +746,7 @@ fn logFrameState(pane: *Pane, ws: *@import("workspace.zig").Workspace) void {
             gl_error,
             window_active,
             window_toplevel_state,
+            windowCount(),
         },
     );
 }
@@ -742,6 +765,9 @@ fn initFallbackCb(user_data: c.gpointer) callconv(.c) c.gboolean {
     }
     if (pane.init_fallback_attempts <= init_fallback_max_attempts) {
         requestLayoutForStarvedPane(pane);
+        if (initDiagEnabled() and pane.diag_sample_id == 0) {
+            pane.diag_sample_id = c.g_timeout_add(900, @ptrCast(&diagSampleCb), @ptrCast(pane));
+        }
         if (pane.gl_area) |gl| c.gtk_gl_area_queue_render(gl);
         pane.init_fallback_id = c.g_timeout_add(init_fallback_ms, @ptrCast(&initFallbackCb), @ptrCast(pane));
     }
