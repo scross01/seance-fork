@@ -23,6 +23,15 @@ LINUXDEPLOY_URL := https://github.com/linuxdeploy/linuxdeploy/releases/download/
 GTK_PLUGIN_URL := https://raw.githubusercontent.com/niclas3640/linuxdeploy-plugin-gtk/master/linuxdeploy-plugin-gtk.sh
 LOCALBIN := $(HOME)/.local/bin
 
+# Some pkg-config builds (notably Homebrew's) report only their own prefix, so a
+# plain `pkg-config --libs gtk4` fails even when GTK4 is installed by the
+# distribution. Append the system pkg-config directories that exist here, so the
+# build works without an exported PKG_CONFIG_PATH; caller entries keep their
+# order and win.
+PKG_CONFIG_SYSTEM_DIRS := $(shell for d in /usr/lib/*/pkgconfig /usr/lib/pkgconfig /usr/lib64/pkgconfig /usr/share/pkgconfig /usr/local/lib/pkgconfig /usr/local/share/pkgconfig; do [ -d "$$d" ] && ls "$$d"/*.pc >/dev/null 2>&1 && printf '%s ' "$$d"; done)
+space := $(subst ,, )
+export PKG_CONFIG_PATH := $(subst $(space),:,$(strip $(PKG_CONFIG_PATH) $(PKG_CONFIG_SYSTEM_DIRS)))
+
 # Zig toolchain pin: this project builds ONLY with Zig 0.16.0. Zig 0.17.0 may
 # be what plain `zig` resolves to on PATH, but it is not supported yet and must
 # not be used. Resolution order:
