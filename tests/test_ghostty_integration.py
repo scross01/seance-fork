@@ -16,7 +16,11 @@ class GhosttyTestCase(unittest.TestCase):
     shell_command = "/bin/bash --noprofile --norc"
 
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory(prefix="seance-ghostty-")
+        # Mesa flushes its shader cache into XDG_CACHE_HOME while the app shuts
+        # down, so a file can appear between rmtree's listing and its rmdir.
+        # Losing the race must not fail an otherwise green case.
+        self.tmp = tempfile.TemporaryDirectory(prefix="seance-ghostty-",
+                                               ignore_cleanup_errors=True)
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
         self.binary = str(Path(os.environ["SEANCE_TEST_BINARY"]).resolve())
