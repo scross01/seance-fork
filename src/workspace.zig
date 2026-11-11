@@ -701,6 +701,25 @@ pub const Workspace = struct {
     /// Position all pane group widgets according to column layout and camera.
     /// Poll for the container's first real size so layout never waits on a
     /// frame clock that has already gone idle.
+    /// Ask the frame clock to run again. GTK only produces frames while
+    /// something requests them, and an idle clock never applies the sizes
+    /// applyLayout requested — which leaves a pane stuck at 0x0 forever.
+    pub fn requestFrames(self: *Workspace) void {
+        if (self.tick_callback_id != 0) {
+            _ = c.gtk_widget_remove_tick_callback(self.fixed, self.tick_callback_id);
+            self.tick_callback_id = 0;
+        }
+        self.tick_callback_id = c.gtk_widget_add_tick_callback(
+            self.fixed,
+            @ptrCast(&onTick),
+            @ptrCast(self),
+            null,
+        );
+        if (c.gtk_widget_get_frame_clock(self.fixed)) |clock| {
+            c.gdk_frame_clock_request_phase(@ptrCast(clock), c.GDK_FRAME_CLOCK_PHASE_UPDATE);
+        }
+    }
+
     pub fn applyLayout(self: *Workspace) void {
         self.layout_passes +%= 1;
         const layout_diag = pane_mod.initDiagEnabled();

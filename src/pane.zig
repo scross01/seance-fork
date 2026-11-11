@@ -659,6 +659,7 @@ fn requestLayoutForStarvedPane(pane: *Pane) void {
         // frame clock runs and the requested sizes actually land.
         c.gtk_widget_queue_allocate(ws.container);
         c.gtk_widget_queue_draw(ws.container);
+        ws.requestFrames();
         if (initDiagEnabled()) logFrameState(pane, ws);
         return;
     }
