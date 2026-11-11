@@ -618,7 +618,7 @@ const init_fallback_ms = 500;
 /// Starved pane initialization is rare but noisy, so its diagnostics are opt-in.
 const init_diag_env = "SEANCE_INIT_DIAG";
 
-fn initDiagEnabled() bool {
+pub fn initDiagEnabled() bool {
     return std.c.getenv(init_diag_env) != null;
 }
 
@@ -629,7 +629,7 @@ fn logAncestry(pane: *Pane) void {
     var node: ?*c.GtkWidget = if (pane.gl_area) |gl| @ptrCast(gl) else null;
     var depth: usize = 0;
     while (node) |w| : (depth += 1) {
-        std.log.info("pane {d}: ancestor[{d}] {d}x{d} visible={} mapped={} child_visible={}", .{
+        std.log.info("pane {d}: ancestor[{d}] {d}x{d} visible={} mapped={} child_visible={} ptr=0x{x}", .{
             pane.id,
             depth,
             c.gtk_widget_get_width(w),
@@ -637,6 +637,7 @@ fn logAncestry(pane: *Pane) void {
             c.gtk_widget_get_visible(w) != 0,
             c.gtk_widget_get_mapped(w) != 0,
             c.gtk_widget_get_child_visible(w) != 0,
+            @intFromPtr(w),
         });
         if (depth >= 9) break;
         node = c.gtk_widget_get_parent(w);

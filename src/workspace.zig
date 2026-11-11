@@ -1,7 +1,8 @@
 const std = @import("std");
 const c = @import("c.zig").c;
 const PaneGroup = @import("pane_group.zig").PaneGroup;
-const Pane = @import("pane.zig").Pane;
+const pane_mod = @import("pane.zig");
+const Pane = pane_mod.Pane;
 const Panel = @import("panel.zig").Panel;
 const Column = @import("column.zig").Column;
 const WebPanel = @import("web_panel.zig").WebPanel;
@@ -416,6 +417,14 @@ pub const Workspace = struct {
         _ = c.g_signal_connect_data(@ptrCast(widgets.container), "notify::height", @as(c.GCallback, @ptrCast(&onContainerAllocated)), @ptrCast(ws), null, 0);
         _ = c.g_signal_connect_data(@ptrCast(widgets.fixed), "notify::width", @as(c.GCallback, @ptrCast(&onContainerAllocated)), @ptrCast(ws), null, 0);
         _ = c.g_signal_connect_data(@ptrCast(widgets.fixed), "notify::height", @as(c.GCallback, @ptrCast(&onContainerAllocated)), @ptrCast(ws), null, 0);
+        if (pane_mod.initDiagEnabled()) {
+            std.log.info("workspace {d}: hooks container=0x{x} fixed=0x{x} child=0x{x}", .{
+                ws.id,
+                @intFromPtr(widgets.container),
+                @intFromPtr(widgets.fixed),
+                @intFromPtr(widgets.fixed),
+            });
+        }
 
         _ = try ws.addColumn(null);
 
@@ -447,6 +456,14 @@ pub const Workspace = struct {
         _ = c.g_signal_connect_data(@ptrCast(widgets.container), "notify::height", @as(c.GCallback, @ptrCast(&onContainerAllocated)), @ptrCast(ws), null, 0);
         _ = c.g_signal_connect_data(@ptrCast(widgets.fixed), "notify::width", @as(c.GCallback, @ptrCast(&onContainerAllocated)), @ptrCast(ws), null, 0);
         _ = c.g_signal_connect_data(@ptrCast(widgets.fixed), "notify::height", @as(c.GCallback, @ptrCast(&onContainerAllocated)), @ptrCast(ws), null, 0);
+        if (pane_mod.initDiagEnabled()) {
+            std.log.info("workspace {d}: hooks container=0x{x} fixed=0x{x} child=0x{x}", .{
+                ws.id,
+                @intFromPtr(widgets.container),
+                @intFromPtr(widgets.fixed),
+                @intFromPtr(widgets.fixed),
+            });
+        }
 
         _ = try ws.addColumn(cwd);
 
