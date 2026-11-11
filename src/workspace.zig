@@ -247,9 +247,12 @@ const remeasure_max_attempts: u8 = 60;
 fn remeasureCb(user_data: c.gpointer) callconv(.c) c.gboolean {
     const self: *Workspace = @ptrCast(@alignCast(user_data));
     self.remeasure_id = 0;
+    self.remeasure_fires += 1;
 
     const w = c.gtk_widget_get_width(self.container);
     const h = c.gtk_widget_get_height(self.container);
+    self.remeasure_last_w = w;
+    self.remeasure_last_h = h;
     if (w > 0 and h > 0) {
         self.cached_width = w;
         self.cached_height = h;
@@ -260,6 +263,8 @@ fn remeasureCb(user_data: c.gpointer) callconv(.c) c.gboolean {
     self.remeasure_attempts += 1;
     if (self.remeasure_attempts < remeasure_max_attempts) {
         self.remeasure_id = c.g_timeout_add(remeasure_interval_ms, @ptrCast(&remeasureCb), @ptrCast(self));
+    } else {
+        self.remeasure_exhausted = true;
     }
     return c.G_SOURCE_REMOVE;
 }
@@ -296,6 +301,12 @@ pub const Workspace = struct {
     tick_callback_id: c.guint = 0,
     remeasure_id: c.guint = 0,
     remeasure_attempts: u8 = 0,
+    remeasure_arms: u32 = 0,
+    remeasure_fires: u32 = 0,
+    remeasure_cancels: u32 = 0,
+    remeasure_last_w: c_int = 0,
+    remeasure_last_h: c_int = 0,
+    remeasure_exhausted: bool = false,
     last_frame_time: i64 = 0,
 
     // Suppress transient onFocusEnter during restructuring
@@ -707,12 +718,14 @@ pub const Workspace = struct {
     /// frame clock that has already gone idle.
     pub fn requestRemeasure(self: *Workspace) void {
         if (self.remeasure_id != 0) return;
+        self.remeasure_arms += 1;
         self.remeasure_attempts = 0;
         self.remeasure_id = c.g_timeout_add(remeasure_interval_ms, @ptrCast(&remeasureCb), @ptrCast(self));
     }
 
     fn cancelRemeasure(self: *Workspace) void {
         if (self.remeasure_id == 0) return;
+        self.remeasure_cancels += 1;
         _ = c.g_source_remove(self.remeasure_id);
         self.remeasure_id = 0;
     }
