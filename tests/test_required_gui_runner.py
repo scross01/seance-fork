@@ -3,6 +3,7 @@
 These use synthetic test modules in a temporary directory, so they never start
 the application or need a display.
 """
+import ast
 import io
 import tempfile
 import textwrap
@@ -46,6 +47,41 @@ class Failing(unittest.TestCase):
 IMPORT_ERROR = """
 raise RuntimeError("import exploded")
 """
+
+
+def xdotool_bare_keysyms(source, filename="<source>"):
+    """Find unmodified keysyms sent through ``xdotool key``.
+
+    xdotool infers modifiers for a bare keysym from the server's XKB map and
+    pressed Alt before F11/F12 on some servers, so GUI suites send unmodified
+    keys through ``PhysicalKeyboardTestCase.press`` (XTest keycodes) instead.
+    Modifier chords and option values stay on xdotool.
+    """
+    offenders = []
+    for node in ast.walk(ast.parse(source, filename=filename)):
+        if not isinstance(node, ast.Call):
+            continue
+        tokens = []
+        for argument in node.args:
+            if isinstance(argument, ast.Constant) and isinstance(argument.value, str):
+                tokens.append((argument.lineno, argument.value))
+            elif isinstance(argument, (ast.List, ast.Tuple)):
+                tokens.extend(
+                    (item.lineno, item.value) for item in argument.elts
+                    if isinstance(item, ast.Constant) and isinstance(item.value, str)
+                )
+        words = [value for _, value in tokens]
+        if "xdotool" not in words:
+            continue
+        start = words.index("xdotool") + 1
+        if words[start:start + 1] != ["key"]:
+            continue
+        for position in range(start + 1, len(tokens)):
+            value, previous = tokens[position][1], tokens[position - 1][1]
+            if value.startswith("-") or "+" in value or previous.startswith("-"):
+                continue
+            offenders.append((tokens[position][0], value))
+    return offenders
 
 
 class RequiredRunnerTests(unittest.TestCase):
@@ -161,6 +197,36 @@ class RequiredRunnerTests(unittest.TestCase):
             if not (tests_dir / f"{name}.py").is_file()
         ]
         self.assertEqual(missing, [])
+
+    def test_bare_keysym_guard_flags_xdotool_keys(self):
+        source = textwrap.dedent("""
+            self.run_x("xdotool", "key", "F11")
+            subprocess.run(["xdotool", "key", "a", "b"], check=True)
+            self.run_x("xdotool", "key", "--delay", "150", "Return")
+        """)
+        self.assertEqual(
+            [keysym for _, keysym in xdotool_bare_keysyms(source)],
+            ["F11", "a", "b", "Return"],
+        )
+
+    def test_bare_keysym_guard_allows_chords_and_xtest(self):
+        source = textwrap.dedent("""
+            self.run_x("xdotool", "key", "ctrl+shift+p")
+            self.run_x("xdotool", "key", "--clearmodifiers", chord)
+            self.run_x("xdotool", "key", "--delay", "150", *sequence)
+            self.run_x("xdotool", "type", "Toggle Fullscreen")
+            self.press("F11", "Return")
+        """)
+        self.assertEqual(xdotool_bare_keysyms(source), [])
+
+    def test_gui_suites_send_unmodified_keys_through_the_xtest_helper(self):
+        tests_dir = Path(__file__).resolve().parent
+        offenders = [
+            f"{path.name}:{line}: {keysym!r} sent through xdotool; use press(...)"
+            for path in sorted(tests_dir.glob("test_*.py"))
+            for line, keysym in xdotool_bare_keysyms(path.read_text(), filename=str(path))
+        ]
+        self.assertEqual(offenders, [])
 
 
 if __name__ == "__main__":
