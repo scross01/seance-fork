@@ -27,7 +27,7 @@ changes that must survive upstream updates. Run
 reparenting with:
 
 ```bash
-SEANCE_TEST_BINARY="$PWD/zig-out/bin/seance" xvfb-run python3 -m unittest discover -s tests -p 'test_ghostty_integration.py' -v
+SEANCE_TEST_BINARY="$PWD/AppDir/usr/bin/seance" xvfb-run python3 -m unittest discover -s tests -p 'test_ghostty_integration.py' -v
 ```
 
 Run the Codex wrapper regression tests with `python3 -m unittest discover -s tests -v`.
@@ -41,7 +41,7 @@ provides the plugin runtime. To also verify plugin loading against an installed
 OpenCode binary without model calls:
 
 ```bash
-SEANCE_TEST_BINARY="$PWD/zig-out/bin/seance" SEANCE_TEST_OPENCODE=/usr/bin/opencode \
+SEANCE_TEST_BINARY="$PWD/AppDir/usr/bin/seance" SEANCE_TEST_OPENCODE=/usr/bin/opencode \
   python3 -m unittest discover -s tests -p 'test_opencode.py' -v
 ```
 
@@ -51,7 +51,7 @@ fake agent and socket server, without model calls. The pane test requires Xvfb:
 
 ```bash
 python3 -m unittest discover -s tests -p 'test_antigravity.py' -v
-SEANCE_TEST_BINARY="$PWD/zig-out/bin/seance" xvfb-run -a python3 -m unittest discover -s tests -p 'test_antigravity_pane.py' -v
+SEANCE_TEST_BINARY="$PWD/AppDir/usr/bin/seance" xvfb-run -a python3 -m unittest discover -s tests -p 'test_antigravity_pane.py' -v
 ```
 
 For a live Antigravity check, launch `agy` in a pane of the new build. Confirm
@@ -69,15 +69,15 @@ libadwaita headers. They use a separate X server and window manager. Shell
 integration tests require zsh and check user startup files and both sets of hooks:
 
 ```bash
-SEANCE_TEST_BINARY="$PWD/zig-out/bin/seance" python3 -m unittest discover -s tests -p 'test_fullscreen.py' -v
-SEANCE_TEST_BINARY="$PWD/zig-out/bin/seance" xvfb-run -a python3 -m unittest discover -s tests -p 'test_shell_integration.py' -v
+SEANCE_TEST_BINARY="$PWD/AppDir/usr/bin/seance" python3 -m unittest discover -s tests -p 'test_fullscreen.py' -v
+SEANCE_TEST_BINARY="$PWD/AppDir/usr/bin/seance" xvfb-run -a python3 -m unittest discover -s tests -p 'test_shell_integration.py' -v
 ```
 
 Physical keyboard remap tests require `Xvfb`, `xdotool`, and `setxkbmap`.
 They create a separate X server and never modify your desktop's keyboard layout:
 
 ```bash
-SEANCE_TEST_BINARY="$PWD/zig-out/bin/seance" python3 -m unittest discover -s tests -p 'test_keyboard_remaps.py' -v
+SEANCE_TEST_BINARY="$PWD/AppDir/usr/bin/seance" python3 -m unittest discover -s tests -p 'test_keyboard_remaps.py' -v
 ```
 
 Pane close tests use the same isolated keyboard setup. They check last-tab
@@ -87,14 +87,14 @@ remaining window or workspace must still accept input. The fork's patch ledger
 also lists the Ghostty queue cancellation and payload ownership tests:
 
 ```bash
-SEANCE_TEST_BINARY="$PWD/zig-out/bin/seance" python3 -m unittest discover -s tests -p 'test_pane_close.py' -v
+SEANCE_TEST_BINARY="$PWD/AppDir/usr/bin/seance" python3 -m unittest discover -s tests -p 'test_pane_close.py' -v
 ```
 
 Control-socket number parsing tests cover oversized request IDs and integer
 parameter boundaries:
 
 ```bash
-SEANCE_TEST_BINARY="$PWD/zig-out/bin/seance" xvfb-run -a python3 -m unittest discover -s tests -p 'test_socket_server.py' -v
+SEANCE_TEST_BINARY="$PWD/AppDir/usr/bin/seance" xvfb-run -a python3 -m unittest discover -s tests -p 'test_socket_server.py' -v
 ```
 
 IME tests also use isolated X servers. They exercise GTK's compose engine and a
@@ -102,7 +102,7 @@ test input context for Korean syllable transitions, asynchronous commits, focus,
 and cursor positioning. The test context requires a C compiler and GTK4 headers:
 
 ```bash
-SEANCE_TEST_BINARY="$PWD/zig-out/bin/seance" python3 -m unittest discover -s tests -p 'test_ime.py' -v
+SEANCE_TEST_BINARY="$PWD/AppDir/usr/bin/seance" python3 -m unittest discover -s tests -p 'test_ime.py' -v
 ```
 
 For a desktop check, build and launch with `make build` then `make run` (installed AppDir assets) at your next restart
