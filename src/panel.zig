@@ -69,6 +69,12 @@ pub const Panel = union(PanelType) {
     }
 
     /// Returns the terminal pane if this is a terminal panel, null otherwise.
+    /// True while a terminal panel has not created its ghostty surface yet.
+    pub fn needsSurface(self: Panel) bool {
+        const pane = self.asTerminal() orelse return false;
+        return pane.surface == null;
+    }
+
     pub fn asTerminal(self: Panel) ?*Pane {
         return switch (self) {
             .terminal => |p| p,

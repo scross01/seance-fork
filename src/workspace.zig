@@ -811,8 +811,17 @@ pub const Workspace = struct {
 
         if (ctx.offscreen) {
             c.gtk_widget_set_visible(container_w, 0);
+            // Keep hidden panels' geometry current. A pane created while its
+            // column is offscreen would otherwise never receive a size, so its
+            // GLArea never allocates, never emits "resize", and its surface
+            // (and shell) is never created.
+            const hidden_h = @max(0.0, ctx.fh - tab_area_h);
             for (grp.panels.items) |panel| {
-                c.gtk_widget_set_visible(panel.getWidget(), 0);
+                const pw = panel.getWidget();
+                c.gtk_widget_set_visible(pw, 0);
+                const iw: c_int = @intFromFloat(@max(1.0, @round(ctx.pixel_w)));
+                const ih: c_int = @intFromFloat(@max(1.0, @round(panel.getStackedFracH() * hidden_h)));
+                c.gtk_widget_set_size_request(pw, iw, ih);
             }
             return;
         }
@@ -882,7 +891,13 @@ pub const Workspace = struct {
                 const target_y = tab_area_h + slot_y;
 
                 if (anim <= 0.01 and i != grp.active_panel) {
+                    // Hidden while it fades in, but keep its geometry so the
+                    // first allocation (and the GLArea resize that creates the
+                    // surface) is immediate.
+                    const iw: c_int = @intFromFloat(@max(1.0, @round(ctx.pixel_w)));
+                    const ih: c_int = @intFromFloat(@max(1.0, @round(slot_h)));
                     c.gtk_widget_set_visible(pw, 0);
+                    c.gtk_widget_set_size_request(pw, iw, ih);
                 } else {
                     const p_scale = 0.5 + 0.5 * anim;
                     const combined_scale = ctx.col_scale * p_scale;
@@ -1111,6 +1126,18 @@ pub const Workspace = struct {
                 if (grp.needs_stacked_layout) {
                     grp.needs_stacked_layout = false;
                     needs_layout = true;
+                }
+                // A stacked pane only gets its ghostty surface once its GLArea
+                // has been allocated. Keep laying out until that has happened
+                // so a pane created offscreen (or while no animation kept the
+                // tick busy) is sized as soon as its column is on screen.
+                if (grp.in_stacked_mode) {
+                    for (grp.panels.items) |panel| {
+                        if (panel.needsSurface()) {
+                            needs_layout = true;
+                            break;
+                        }
+                    }
                 }
                 // Compute total height weight for weight-based distribution
                 var total_weight: f64 = 0.0;
