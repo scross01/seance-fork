@@ -414,6 +414,8 @@ pub const Workspace = struct {
         ws.initResizeHandles();
         _ = c.g_signal_connect_data(@ptrCast(widgets.container), "notify::width", @as(c.GCallback, @ptrCast(&onContainerAllocated)), @ptrCast(ws), null, 0);
         _ = c.g_signal_connect_data(@ptrCast(widgets.container), "notify::height", @as(c.GCallback, @ptrCast(&onContainerAllocated)), @ptrCast(ws), null, 0);
+        _ = c.g_signal_connect_data(@ptrCast(widgets.fixed), "notify::width", @as(c.GCallback, @ptrCast(&onContainerAllocated)), @ptrCast(ws), null, 0);
+        _ = c.g_signal_connect_data(@ptrCast(widgets.fixed), "notify::height", @as(c.GCallback, @ptrCast(&onContainerAllocated)), @ptrCast(ws), null, 0);
 
         _ = try ws.addColumn(null);
 
@@ -443,6 +445,8 @@ pub const Workspace = struct {
         ws.initResizeHandles();
         _ = c.g_signal_connect_data(@ptrCast(widgets.container), "notify::width", @as(c.GCallback, @ptrCast(&onContainerAllocated)), @ptrCast(ws), null, 0);
         _ = c.g_signal_connect_data(@ptrCast(widgets.container), "notify::height", @as(c.GCallback, @ptrCast(&onContainerAllocated)), @ptrCast(ws), null, 0);
+        _ = c.g_signal_connect_data(@ptrCast(widgets.fixed), "notify::width", @as(c.GCallback, @ptrCast(&onContainerAllocated)), @ptrCast(ws), null, 0);
+        _ = c.g_signal_connect_data(@ptrCast(widgets.fixed), "notify::height", @as(c.GCallback, @ptrCast(&onContainerAllocated)), @ptrCast(ws), null, 0);
 
         _ = try ws.addColumn(cwd);
 
@@ -458,8 +462,12 @@ pub const Workspace = struct {
     fn onContainerAllocated(_: *c.GtkWidget, _: ?*anyopaque, user_data: ?*anyopaque) callconv(.c) void {
         const self: *Workspace = @ptrCast(@alignCast(user_data));
 
-        const w = c.gtk_widget_get_width(self.container);
-        const h = c.gtk_widget_get_height(self.container);
+        var w = c.gtk_widget_get_width(self.container);
+        var h = c.gtk_widget_get_height(self.container);
+        if (w <= 0 or h <= 0) {
+            w = c.gtk_widget_get_width(self.fixed);
+            h = c.gtk_widget_get_height(self.fixed);
+        }
         if (w <= 0 or h <= 0) return;
         if (w == self.cached_width and h == self.cached_height) return;
 
@@ -685,8 +693,15 @@ pub const Workspace = struct {
             // frame clock may already be idle, so waiting for a tick never
             // re-measures. Take one live sample instead; the documented
             // feedback-loop worry only applies once a size is cached.
-            const live_w = c.gtk_widget_get_width(self.container);
-            const live_h = c.gtk_widget_get_height(self.container);
+            var live_w = c.gtk_widget_get_width(self.container);
+            var live_h = c.gtk_widget_get_height(self.container);
+            // The container can be unmeasured while GtkFixed already holds the
+            // real viewport, so fall back to the fixed's allocation instead of
+            // returning and leaving every pane wrapper at 0x0.
+            if (live_w <= 0 or live_h <= 0) {
+                live_w = c.gtk_widget_get_width(self.fixed);
+                live_h = c.gtk_widget_get_height(self.fixed);
+            }
             if (live_w <= 0 or live_h <= 0) return;
             self.cached_width = live_w;
             self.cached_height = live_h;
