@@ -40,7 +40,6 @@ pub const Pane = struct {
     pending_init_height: u32 = 0,
     /// One-shot fallback that forces a render if the first one never arrives.
     init_fallback_id: c.guint = 0,
-    init_fallback_attempts: u8 = 0,
     diag_sample_id: c.guint = 0,
     init_diag_attempts: u8 = 0,
     // Cached terminal title (updated via ghostty SET_TITLE action)
@@ -616,7 +615,6 @@ fn deferredRedrawCb(user_data: c.gpointer) callconv(.c) c.gboolean {
 }
 
 const init_fallback_ms = 500;
-const init_fallback_max_attempts: u8 = 3;
 
 /// Starved pane initialization is rare but noisy, so its diagnostics are opt-in.
 const init_diag_env = "SEANCE_INIT_DIAG";
@@ -654,13 +652,6 @@ fn requestLayoutForStarvedPane(pane: *Pane) void {
     for (state.workspaces.items) |ws| {
         if (ws.id != pane.workspace_id) continue;
         ws.applyLayout();
-        // Sizes set by applyLayout only queue a resize; the allocation itself
-        // happens in a frame, and a pane that never got a size produces no
-        // damage to trigger one. Mark the workspace allocated and damaged so the
-        // frame clock runs and the requested sizes actually land.
-        c.gtk_widget_queue_allocate(ws.container);
-        c.gtk_widget_queue_draw(ws.container);
-        ws.requestFrames();
         if (initDiagEnabled()) logFrameState(pane, ws);
         return;
     }
@@ -757,22 +748,16 @@ fn initFallbackCb(user_data: c.gpointer) callconv(.c) c.gboolean {
     if (pane.surface != null) return c.G_SOURCE_REMOVE;
 
     // A pane with no allocation produces no damage, so GTK may never run a frame
-    // that measures the workspace viewport. Retry the layout from the workspace a
-    // few times instead of leaving the pane blank until the window is resized.
-    pane.init_fallback_attempts +%= 1;
-    if (initDiagEnabled()) {
-        std.log.info("pane {d}: watchdog attempt {d}", .{ pane.id, pane.init_fallback_attempts });
-    }
-    if (pane.init_fallback_attempts <= init_fallback_max_attempts) {
-        requestLayoutForStarvedPane(pane);
-        if (initDiagEnabled() and pane.diag_sample_id == 0) {
-            pane.diag_sample_id = c.g_timeout_add(900, @ptrCast(&diagSampleCb), @ptrCast(pane));
-        }
-        if (pane.gl_area) |gl| c.gtk_gl_area_queue_render(gl);
-        pane.init_fallback_id = c.g_timeout_add(init_fallback_ms, @ptrCast(&initFallbackCb), @ptrCast(pane));
-    }
+    // that measures the workspace viewport; ask the workspace to lay out once
+    // more and re-render before reporting the pane as starved.
+    requestLayoutForStarvedPane(pane);
+    if (pane.gl_area) |gl| c.gtk_gl_area_queue_render(gl);
 
     if (!initDiagEnabled()) return c.G_SOURCE_REMOVE;
+
+    if (pane.diag_sample_id == 0) {
+        pane.diag_sample_id = c.g_timeout_add(900, @ptrCast(&diagSampleCb), @ptrCast(pane));
+    }
 
     const gl_widget: ?*c.GtkWidget = if (pane.gl_area) |gl| @ptrCast(gl) else null;
     const root = if (gl_widget) |w| c.gtk_widget_get_root(w) else null;
