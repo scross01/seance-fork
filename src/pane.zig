@@ -622,6 +622,27 @@ fn initDiagEnabled() bool {
     return std.c.getenv(init_diag_env) != null;
 }
 
+/// Walk from the pane's GL area to the window, so a starved pane reports the
+/// exact widget that never received an allocation instead of a workspace
+/// looked up by id (which may be a different, still-sized stack child).
+fn logAncestry(pane: *Pane) void {
+    var node: ?*c.GtkWidget = if (pane.gl_area) |gl| @ptrCast(gl) else null;
+    var depth: usize = 0;
+    while (node) |w| : (depth += 1) {
+        std.log.info("pane {d}: ancestor[{d}] {d}x{d} visible={} mapped={} child_visible={}", .{
+            pane.id,
+            depth,
+            c.gtk_widget_get_width(w),
+            c.gtk_widget_get_height(w),
+            c.gtk_widget_get_visible(w) != 0,
+            c.gtk_widget_get_mapped(w) != 0,
+            c.gtk_widget_get_child_visible(w) != 0,
+        });
+        if (depth >= 9) break;
+        node = c.gtk_widget_get_parent(w);
+    }
+}
+
 fn initFallbackCb(user_data: c.gpointer) callconv(.c) c.gboolean {
     const pane: *Pane = @ptrCast(@alignCast(user_data));
     pane.init_fallback_id = 0;
@@ -648,28 +669,10 @@ fn initFallbackCb(user_data: c.gpointer) callconv(.c) c.gboolean {
         .{ pane.id, init_fallback_ms, pane.pending_init_width, pane.pending_init_height, pane_w, pane_h, mapped, root_w, root_h, root_mapped },
     );
 
-    // Follow-up samples distinguish "layout never ran" (cache still unset, no
-    // passes) from "layout ran but the widget never received it".
+    // Follow-up samples report where the widget chain lost its allocation.
     pane.init_diag_attempts += 1;
     if (pane.init_diag_attempts < 3) {
-        const Window = @import("window.zig");
-        if (Window.window_manager) |wm| {
-            if (wm.findByWorkspaceId(pane.workspace_id)) |state| {
-                for (state.workspaces.items) |ws| {
-                    if (ws.id != pane.workspace_id) continue;
-                    std.log.info("pane {d}: attempt {d}: cached={d}x{d} passes={d} container={d}x{d}", .{
-                        pane.id,
-                        pane.init_diag_attempts,
-                        ws.cached_width,
-                        ws.cached_height,
-                        ws.layout_passes,
-                        c.gtk_widget_get_width(ws.container),
-                        c.gtk_widget_get_height(ws.container),
-                    });
-                    break;
-                }
-            }
-        }
+        logAncestry(pane);
         pane.init_fallback_id = c.g_timeout_add(init_fallback_ms, @ptrCast(&initFallbackCb), @ptrCast(pane));
     }
 
