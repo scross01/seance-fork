@@ -615,13 +615,24 @@ fn deferredRedrawCb(user_data: c.gpointer) callconv(.c) c.gboolean {
 
 const init_fallback_ms = 500;
 
+/// Starved pane initialization is rare but noisy, so its diagnostics are opt-in.
+const init_diag_env = "SEANCE_INIT_DIAG";
+
+fn initDiagEnabled() bool {
+    return std.c.getenv(init_diag_env) != null;
+}
+
 fn initFallbackCb(user_data: c.gpointer) callconv(.c) c.gboolean {
     const pane: *Pane = @ptrCast(@alignCast(user_data));
     pane.init_fallback_id = 0;
     if (pane.surface != null) return c.G_SOURCE_REMOVE;
 
-    // Starved initialization: report what the widget tree actually looks
-    // like, since a missing allocation and a missing draw need different fixes.
+    if (pane.gl_area) |gl| c.gtk_gl_area_queue_render(gl);
+
+    // Report a starved pane (and keep sampling it) only when asked, so a
+    // healthy run never logs about panes that simply had not drawn yet.
+    if (!initDiagEnabled()) return c.G_SOURCE_REMOVE;
+
     const gl_widget: ?*c.GtkWidget = if (pane.gl_area) |gl| @ptrCast(gl) else null;
     const root = if (gl_widget) |w| c.gtk_widget_get_root(w) else null;
     const root_widget: ?*c.GtkWidget = if (root) |r| @ptrCast(@alignCast(r)) else null;
@@ -636,8 +647,6 @@ fn initFallbackCb(user_data: c.gpointer) callconv(.c) c.gboolean {
         "pane {d}: still no surface after {d} ms: pending={d}x{d} gl={d}x{d} mapped={} root={d}x{d} mapped={}",
         .{ pane.id, init_fallback_ms, pane.pending_init_width, pane.pending_init_height, pane_w, pane_h, mapped, root_w, root_h, root_mapped },
     );
-
-    if (pane.gl_area) |gl| c.gtk_gl_area_queue_render(gl);
 
     // Follow-up samples distinguish "layout never ran" (cache still unset, no
     // passes) from "layout ran but the widget never received it".
