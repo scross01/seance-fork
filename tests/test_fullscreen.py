@@ -57,54 +57,45 @@ class FullscreenTests(keyboard.PhysicalKeyboardTestCase):
                        self.state().get("header_height", 0) > 0),
                       f"fullscreen={fullscreen}, header={header}; last state={self.state()}")
 
-    # xdotool infers modifiers for a bare keysym from the server's XKB map
-    # and presses Alt for F11/F12 on some servers; send the physical keycode
-    # through XTest like the rest of this suite.
-    def f11(self):
-        self.tap(95)
-
-    def f12(self):
-        self.tap(96)
-
     def palette_toggle(self):
         self.run_x("xdotool", "key", "ctrl+shift+p")
         self.app.wait(lambda: self.state().get("search_focused"), "command palette focus")
         self.run_x("xdotool", "type", "Toggle Fullscreen")
         # GtkSearchEntry debounces search-changed; Enter must use the new results.
         self.app.wait(lambda: self.state().get("fullscreen_selected"), "fullscreen search result")
-        self.run_x("xdotool", "key", "Return")
+        self.press("Return")
 
     def test_f11_and_palette_restore_header_and_terminal_input(self):
         self.capture()
-        self.f11()
+        self.press("F11")
         self.expect_state(True, 0)
-        self.run_x("xdotool", "key", "a")
+        self.press("a")
         self.palette_toggle()
         self.expect_state(False, 1)
         self.palette_toggle()
         self.expect_state(True, 0)
-        self.f11()
+        self.press("F11")
         self.expect_state(False, 1)
-        self.run_x("xdotool", "key", "b")
+        self.press("b")
         self.app.wait(lambda: self.received().endswith(b"b"), "typing after fullscreen")
         self.assertEqual(self.received(), b"ab", "fullscreen shortcuts must not reach the terminal")
 
     def test_decoration_reload_keeps_fullscreen_header_hidden(self):
-        self.f11()
+        self.press("F11")
         self.expect_state(True, 0)
         config = self.app.root / "config" / "seance" / "config.toml"
         original = config.read_text()
         config.write_text(original.replace('decoration-mode = "csd"', 'decoration-mode = "ssd"'))
         self.run_x("xdotool", "key", "ctrl+shift+comma")
         self.expect_state(True, -1)
-        self.f11()
+        self.press("F11")
         self.expect_state(False, -1)
-        self.f11()
+        self.press("F11")
         self.expect_state(True, -1)
         config.write_text(original)
         self.run_x("xdotool", "key", "ctrl+shift+comma")
         self.expect_state(True, 0)
-        self.f11()
+        self.press("F11")
         self.expect_state(False, 1)
 
     def test_fullscreen_binding_can_be_reassigned(self):
@@ -113,12 +104,12 @@ class FullscreenTests(keyboard.PhysicalKeyboardTestCase):
             output.write('\n[keybinds]\ntoggle-fullscreen = "F12"\n')
         self.run_x("xdotool", "key", "ctrl+shift+comma")
         self.capture()
-        self.f11()
-        self.run_x("xdotool", "key", "a")
+        self.press("F11")
+        self.press("a")
         self.app.wait(lambda: self.received().endswith(b"a"), "unbound F11 delivered to terminal")
         self.assertEqual(self.received(), b"\x1b[23~a")
         self.expect_state(False, 1)
-        self.f12()
+        self.press("F12")
         self.expect_state(True, 0)
-        self.f12()
+        self.press("F12")
         self.expect_state(False, 1)

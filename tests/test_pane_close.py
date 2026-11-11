@@ -8,7 +8,7 @@ class PaneCloseTests(keyboard.PhysicalKeyboardTestCase):
     def expect_terminal_input(self):
         # Sending through the socket would bypass GTK focus and controllers.
         self.capture()
-        self.run_x("xdotool", "key", "a", "b")
+        self.press("a", "b")
         self.app.wait(lambda: self.received() == b"ab", "keyboard input after closing a pane")
         self.app.stop()
         self.assertEqual(self.app.process.returncode, 0)

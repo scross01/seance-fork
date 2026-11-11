@@ -44,6 +44,10 @@ class PhysicalKeyboardTestCase(unittest.TestCase):
         self.x11.XCloseDisplay.argtypes = [ctypes.c_void_p]
         self.x11.XSync.argtypes = [ctypes.c_void_p, ctypes.c_int]
         self.xtst.XTestFakeKeyEvent.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.c_int, ctypes.c_ulong]
+        self.x11.XStringToKeysym.argtypes = [ctypes.c_char_p]
+        self.x11.XStringToKeysym.restype = ctypes.c_ulong
+        self.x11.XKeysymToKeycode.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
+        self.x11.XKeysymToKeycode.restype = ctypes.c_ubyte
         self.display = self.x11.XOpenDisplay(display.encode())
         self.assertTrue(self.display)
         self.addCleanup(self.x11.XCloseDisplay, self.display)
@@ -79,13 +83,27 @@ class PhysicalKeyboardTestCase(unittest.TestCase):
         self.app.call("surface.send_text", {"text": "python3 " + shlex.quote(str(script)) + "\n"})
         self.app.wait(ready.exists, "raw input recorder")
 
-    def key(self, code, pressed):
-        self.assertTrue(self.xtst.XTestFakeKeyEvent(self.display, code, pressed, 20))
+    def key(self, code, pressed, delay=20):
+        self.assertTrue(self.xtst.XTestFakeKeyEvent(self.display, code, pressed, delay))
         self.x11.XSync(self.display, 0)
 
-    def tap(self, code):
-        self.key(code, True)
-        self.key(code, False)
+    def tap(self, code, delay=20):
+        self.key(code, True, delay)
+        self.key(code, False, delay)
+
+    def keycode(self, name):
+        # xdotool infers modifiers for a bare keysym from the server's XKB map
+        # and presses Alt for F11/F12 on some servers, so unmodified keys go
+        # through XTest as physical keycodes instead.
+        keysym = self.x11.XStringToKeysym(name.encode())
+        self.assertNotEqual(keysym, 0, f"unknown keysym {name!r}")
+        code = self.x11.XKeysymToKeycode(self.display, keysym)
+        self.assertNotEqual(code, 0, f"keysym {name!r} is not mapped")
+        return code
+
+    def press(self, *names, delay=20):
+        for name in names:
+            self.tap(self.keycode(name), delay)
 
     def received(self):
         return self.output.read_bytes()

@@ -25,7 +25,7 @@ class SimpleIMETests(keyboard.PhysicalKeyboardTestCase):
         self.key(50, False)
         self.key(37, False)
         self.run_x("xdotool", "type", codepoint)
-        self.run_x("xdotool", "key", terminator)
+        self.press(terminator)
 
     def test_korean_commit_is_sent_once_without_enter_or_paste_markers(self):
         self.capture(bracketed_paste=True)
@@ -64,9 +64,9 @@ class SimpleIMETests(keyboard.PhysicalKeyboardTestCase):
     def test_cjk_commit_in_middle_of_existing_text(self):
         self.app.call("surface.send_text", {"text": "printf '<%s>\\n' AB"})
         self.app.wait(lambda: "AB" in self.app.call("surface.read_screen")["text"], "existing text")
-        self.run_x("xdotool", "key", "Left")
+        self.press("Left")
         self.unicode_input("d55c")
-        self.run_x("xdotool", "key", "End", "Return")
+        self.press("End", "Return")
         self.app.wait(lambda: "<A한B>" in self.app.call("surface.read_screen")["text"],
                       "CJK insertion at the shell cursor")
 
@@ -102,20 +102,20 @@ class IMESignalTests(keyboard.PhysicalKeyboardTestCase):
 
     def test_commit_then_preedit_change_keeps_next_korean_syllable(self):
         self.capture()
-        self.run_x("xdotool", "key", "F6", "F8", "F7", "q", "a")
+        self.press("F6", "F8", "F7", "q", "a")
         self.app.wait(lambda: self.received().endswith(b"a"), "Hangul syllables and key translation")
         self.assertEqual(self.received(), "안녕λa".encode())
 
     def test_async_commit_is_complete_and_does_not_use_bracketed_paste(self):
         self.capture(bracketed_paste=True)
-        self.run_x("xdotool", "key", "F9")
+        self.press("F9")
         expected = ("한글" * 128).encode()
         self.app.wait(lambda: len(self.received()) >= len(expected), "asynchronous IME commit")
         self.assertEqual(self.received(), expected)
 
     def cursor(self):
         count = len(self.ime_log.read_text().splitlines())
-        self.run_x("xdotool", "key", "F10")
+        self.press("F10")
         self.app.wait(lambda: len(self.ime_log.read_text().splitlines()) > count, "IME cursor location")
         return tuple(map(int, self.ime_log.read_text().splitlines()[-1].split()))
 
@@ -129,16 +129,16 @@ class IMESignalTests(keyboard.PhysicalKeyboardTestCase):
         self.assertGreaterEqual(y, 0)
         self.assertGreaterEqual(width, 1)
         self.assertGreater(height, 1)
-        self.run_x("xdotool", "key", "Left")
+        self.press("Left")
         # Readline updates the terminal cursor asynchronously after the key.
         self.app.wait(lambda: self.cursor()[1] < x, "candidate anchor after cursor movement")
-        self.run_x("xdotool", "key", "F6")
+        self.press("F6")
         other = self.app.call("surface.split")["surface_id"]
         self.app.wait(lambda: self.app.call("surface.read_screen", {"surface_id": other}).get("text"),
                       "split startup")
         self.assertEqual(self.cursor()[0], 1)
         self.app.call("surface.focus", {"surface_id": original})
         self.assertEqual(self.cursor()[0], 1)
-        self.run_x("xdotool", "key", "q")
+        self.press("q")
         self.app.wait(lambda: "AλB" in self.app.call("surface.read_screen")["text"],
                       "plain translation after focus reset")
