@@ -411,6 +411,8 @@ pub const Workspace = struct {
             null,
         );
         ws.initResizeHandles();
+        _ = c.g_signal_connect_data(@ptrCast(widgets.container), "notify::width", @as(c.GCallback, @ptrCast(&onContainerAllocated)), @ptrCast(ws), null, 0);
+        _ = c.g_signal_connect_data(@ptrCast(widgets.container), "notify::height", @as(c.GCallback, @ptrCast(&onContainerAllocated)), @ptrCast(ws), null, 0);
 
         _ = try ws.addColumn(null);
 
@@ -438,10 +440,31 @@ pub const Workspace = struct {
             null,
         );
         ws.initResizeHandles();
+        _ = c.g_signal_connect_data(@ptrCast(widgets.container), "notify::width", @as(c.GCallback, @ptrCast(&onContainerAllocated)), @ptrCast(ws), null, 0);
+        _ = c.g_signal_connect_data(@ptrCast(widgets.container), "notify::height", @as(c.GCallback, @ptrCast(&onContainerAllocated)), @ptrCast(ws), null, 0);
 
         _ = try ws.addColumn(cwd);
 
         return ws;
+    }
+
+    /// The tick callback is the only place cached_width/cached_height are
+    /// refreshed, and GTK only runs frames while something is dirty. A pane that
+    /// never received a size produces no damage, so the clock can idle before the
+    /// workspace container has been allocated and layout never runs at all: the
+    /// GLArea stays 0x0 and its surface (and shell) is never created. React to the
+    /// allocation itself so the first real size always reaches applyLayout.
+    fn onContainerAllocated(_: *c.GtkWidget, _: ?*anyopaque, user_data: ?*anyopaque) callconv(.c) void {
+        const self: *Workspace = @ptrCast(@alignCast(user_data));
+        if (self.cached_width > 0 and self.cached_height > 0) return;
+
+        const w = c.gtk_widget_get_width(self.container);
+        const h = c.gtk_widget_get_height(self.container);
+        if (w <= 0 or h <= 0) return;
+
+        self.cached_width = w;
+        self.cached_height = h;
+        self.applyLayout();
     }
 
     /// Add a new column at the end of the strip with one pane group.

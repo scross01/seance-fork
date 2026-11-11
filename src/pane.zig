@@ -619,14 +619,25 @@ fn initFallbackCb(user_data: c.gpointer) callconv(.c) c.gboolean {
     pane.init_fallback_id = 0;
     if (pane.surface != null) return c.G_SOURCE_REMOVE;
 
-    if (pane.pending_init_width > 0 and pane.pending_init_height > 0) {
-        std.log.info("pane {d}: no surface after {d}x{d} allocation, forcing a render", .{
-            pane.id, pane.pending_init_width, pane.pending_init_height,
-        });
-        if (pane.gl_area) |gl| c.gtk_gl_area_queue_render(gl);
-    } else {
-        std.log.info("pane {d}: no surface or allocation after {d} ms", .{ pane.id, init_fallback_ms });
-    }
+    // Starved initialization: report what the widget tree actually looks
+    // like, since a missing allocation and a missing draw need different fixes.
+    const gl_widget: ?*c.GtkWidget = if (pane.gl_area) |gl| @ptrCast(gl) else null;
+    const root = if (gl_widget) |w| c.gtk_widget_get_root(w) else null;
+    const root_widget: ?*c.GtkWidget = if (root) |r| @ptrCast(@alignCast(r)) else null;
+    const pane_w = if (gl_widget) |w| c.gtk_widget_get_width(w) else 0;
+    const pane_h = if (gl_widget) |w| c.gtk_widget_get_height(w) else 0;
+    const mapped = if (gl_widget) |w| c.gtk_widget_get_mapped(w) != 0 else false;
+    const root_w = if (root_widget) |w| c.gtk_widget_get_width(w) else 0;
+    const root_h = if (root_widget) |w| c.gtk_widget_get_height(w) else 0;
+    const root_mapped = if (root_widget) |w| c.gtk_widget_get_mapped(w) != 0 else false;
+
+    std.log.info(
+        "pane {d}: still no surface after {d} ms: pending={d}x{d} gl={d}x{d} mapped={} root={d}x{d} mapped={}",
+        .{ pane.id, init_fallback_ms, pane.pending_init_width, pane.pending_init_height, pane_w, pane_h, mapped, root_w, root_h, root_mapped },
+    );
+
+    if (pane.gl_area) |gl| c.gtk_gl_area_queue_render(gl);
+
     return c.G_SOURCE_REMOVE;
 }
 
