@@ -183,12 +183,13 @@ pub const WindowState = struct {
         // re-reads them and forces applyLayout(). While hidden in the
         // GtkStack the tick callback doesn't fire, so stale cache +
         // no active animations can leave columns unpositioned.
-        ws.cached_width = 0;
-        ws.cached_height = 0;
-        // Re-measure now, and keep polling if the container has no size yet:
-        // no tick or notify may follow to drive this workspace's first layout.
+        // Lay out from the last known size, then ask for a fresh allocation: a
+        // changed size reaches the container's allocation hook, which updates the
+        // cache and lays out again. Clearing the cache here would throw away the
+        // only measurement while the new allocation may be identical, leaving
+        // nothing to trigger a re-measure.
         ws.applyLayout();
-        ws.requestRemeasure();
+        c.gtk_widget_queue_resize(ws.container);
 
         self.sidebar.setActive(index);
 

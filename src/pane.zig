@@ -657,24 +657,15 @@ fn initFallbackCb(user_data: c.gpointer) callconv(.c) c.gboolean {
             if (wm.findByWorkspaceId(pane.workspace_id)) |state| {
                 for (state.workspaces.items) |ws| {
                     if (ws.id != pane.workspace_id) continue;
-                    std.log.info(
-                        "pane {d}: attempt {d}: cached={d}x{d} passes={d} container={d}x{d} poll={d} arms={d} cancels={d} last={d}x{d} exhausted={}",
-                        .{
-                            pane.id,
-                            pane.init_diag_attempts,
-                            ws.cached_width,
-                            ws.cached_height,
-                            ws.layout_passes,
-                            c.gtk_widget_get_width(ws.container),
-                            c.gtk_widget_get_height(ws.container),
-                            ws.remeasure_fires,
-                            ws.remeasure_arms,
-                            ws.remeasure_cancels,
-                            ws.remeasure_last_w,
-                            ws.remeasure_last_h,
-                            ws.remeasure_exhausted,
-                        },
-                    );
+                    std.log.info("pane {d}: attempt {d}: cached={d}x{d} passes={d} container={d}x{d}", .{
+                        pane.id,
+                        pane.init_diag_attempts,
+                        ws.cached_width,
+                        ws.cached_height,
+                        ws.layout_passes,
+                        c.gtk_widget_get_width(ws.container),
+                        c.gtk_widget_get_height(ws.container),
+                    });
                     break;
                 }
             }
