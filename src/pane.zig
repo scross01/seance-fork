@@ -40,6 +40,7 @@ pub const Pane = struct {
     pending_init_height: u32 = 0,
     /// One-shot fallback that forces a render if the first one never arrives.
     init_fallback_id: c.guint = 0,
+    init_diag_attempts: u8 = 0,
     // Cached terminal title (updated via ghostty SET_TITLE action)
     cached_title: [256]u8 = [_]u8{0} ** 256,
     cached_title_len: usize = 0,
@@ -637,6 +638,31 @@ fn initFallbackCb(user_data: c.gpointer) callconv(.c) c.gboolean {
     );
 
     if (pane.gl_area) |gl| c.gtk_gl_area_queue_render(gl);
+
+    // Follow-up samples distinguish "layout never ran" (cache still unset, no
+    // passes) from "layout ran but the widget never received it".
+    pane.init_diag_attempts += 1;
+    if (pane.init_diag_attempts < 3) {
+        const Window = @import("window.zig");
+        if (Window.window_manager) |wm| {
+            if (wm.findByWorkspaceId(pane.workspace_id)) |state| {
+                for (state.workspaces.items) |ws| {
+                    if (ws.id != pane.workspace_id) continue;
+                    std.log.info("pane {d}: attempt {d}: cached={d}x{d} passes={d} container={d}x{d}", .{
+                        pane.id,
+                        pane.init_diag_attempts,
+                        ws.cached_width,
+                        ws.cached_height,
+                        ws.layout_passes,
+                        c.gtk_widget_get_width(ws.container),
+                        c.gtk_widget_get_height(ws.container),
+                    });
+                    break;
+                }
+            }
+        }
+        pane.init_fallback_id = c.g_timeout_add(init_fallback_ms, @ptrCast(&initFallbackCb), @ptrCast(pane));
+    }
 
     return c.G_SOURCE_REMOVE;
 }

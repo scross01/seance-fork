@@ -185,6 +185,9 @@ pub const WindowState = struct {
         // no active animations can leave columns unpositioned.
         ws.cached_width = 0;
         ws.cached_height = 0;
+        // Re-measure now: the container is usually already sized, and no tick
+        // or notify may follow to drive the first layout of this workspace.
+        ws.applyLayout();
 
         self.sidebar.setActive(index);
 

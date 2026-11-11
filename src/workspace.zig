@@ -266,6 +266,7 @@ pub const Workspace = struct {
     camera_target: f64 = 0.0,
     cached_width: c_int = 0,
     cached_height: c_int = 0,
+    layout_passes: u64 = 0,
     tick_callback_id: c.guint = 0,
     last_frame_time: i64 = 0,
 
@@ -673,10 +674,21 @@ pub const Workspace = struct {
 
     /// Position all pane group widgets according to column layout and camera.
     pub fn applyLayout(self: *Workspace) void {
+        self.layout_passes +%= 1;
         // Use cached viewport size — NOT a live widget query. GtkFixed
         // computes its minimum size from children positions, which inflates
         // all ancestor widgets and creates a feedback loop each frame.
-        if (self.cached_width <= 0 or self.cached_height <= 0) return;
+        if (self.cached_width <= 0 or self.cached_height <= 0) {
+            // The cache is zeroed when a workspace becomes visible, and the
+            // frame clock may already be idle, so waiting for a tick never
+            // re-measures. Take one live sample instead; the documented
+            // feedback-loop worry only applies once a size is cached.
+            const live_w = c.gtk_widget_get_width(self.container);
+            const live_h = c.gtk_widget_get_height(self.container);
+            if (live_w <= 0 or live_h <= 0) return;
+            self.cached_width = live_w;
+            self.cached_height = live_h;
+        }
 
         const fw: f64 = @floatFromInt(self.cached_width);
         const fh: f64 = @floatFromInt(self.cached_height);
