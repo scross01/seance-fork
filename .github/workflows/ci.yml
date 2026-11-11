@@ -50,6 +50,7 @@ jobs:
             libharfbuzz-dev \
             libonig-dev \
             inotify-tools \
+            pkg-config \
             openssl \
             xdotool \
             x11-xkb-utils \
