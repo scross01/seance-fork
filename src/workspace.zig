@@ -702,6 +702,7 @@ pub const Workspace = struct {
     /// frame clock that has already gone idle.
     pub fn applyLayout(self: *Workspace) void {
         self.layout_passes +%= 1;
+        const layout_diag = pane_mod.initDiagEnabled();
         // Use cached viewport size — NOT a live widget query. GtkFixed
         // computes its minimum size from children positions, which inflates
         // all ancestor widgets and creates a feedback loop each frame.
@@ -719,7 +720,18 @@ pub const Workspace = struct {
                 live_w = c.gtk_widget_get_width(self.fixed);
                 live_h = c.gtk_widget_get_height(self.fixed);
             }
-            if (live_w <= 0 or live_h <= 0) return;
+            if (live_w <= 0 or live_h <= 0) {
+                if (layout_diag) {
+                    std.log.info("workspace {d}: layout skipped: no measurement container={d}x{d} fixed={d}x{d}", .{
+                        self.id,
+                        c.gtk_widget_get_width(self.container),
+                        c.gtk_widget_get_height(self.container),
+                        c.gtk_widget_get_width(self.fixed),
+                        c.gtk_widget_get_height(self.fixed),
+                    });
+                }
+                return;
+            }
             self.cached_width = live_w;
             self.cached_height = live_h;
         }
@@ -779,8 +791,27 @@ pub const Workspace = struct {
             for (col.groups.items) |grp| {
                 const end_x = screen_x + pixel_w;
                 const offscreen = end_x <= 0 or screen_x >= fw;
+                if (layout_diag and offscreen) {
+                    std.log.info("workspace {d}: group 0x{x} offscreen screen_x={d:.1} pixel_w={d:.1} viewport={d:.1}x{d:.1}", .{
+                        self.id,
+                        @intFromPtr(grp),
+                        screen_x,
+                        pixel_w,
+                        fw,
+                        fh,
+                    });
+                }
 
                 if (grp.in_stacked_mode or col.isModeTransitioning()) {
+                    if (layout_diag) {
+                        std.log.info("workspace {d}: group 0x{x} stacked target screen_x={d:.1} pixel_w={d:.1} offscreen={}", .{
+                            self.id,
+                            @intFromPtr(grp),
+                            screen_x,
+                            pixel_w,
+                            offscreen,
+                        });
+                    }
                     self.layoutStackedGroup(grp, .{
                         .screen_x = screen_x,
                         .pixel_w = pixel_w,
@@ -804,6 +835,15 @@ pub const Workspace = struct {
                         c.gtk_widget_set_opacity(w, col.open_anim);
                         const pw: c_int = @intFromFloat(@max(1.0, @round(pixel_w)));
                         const ph: c_int = @intFromFloat(@max(1.0, @round(fh)));
+                        if (layout_diag) {
+                            std.log.info("workspace {d}: group 0x{x} tabbed request {d}x{d} at {d}", .{
+                                self.id,
+                                @intFromPtr(grp),
+                                pw,
+                                ph,
+                                @as(c_int, @intFromFloat(@round(screen_x))),
+                            });
+                        }
                         c.gtk_widget_set_size_request(w, pw, ph);
                         setChildTransform(self.fixed, w, @floatCast(col_scale), @floatCast(pixel_w), @floatCast(fh), screen_x, 0);
                         setCssClass(w, "column-has-divider", col_idx > 0);
