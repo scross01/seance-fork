@@ -659,13 +659,37 @@ fn requestLayoutForStarvedPane(pane: *Pane) void {
         // frame clock runs and the requested sizes actually land.
         c.gtk_widget_queue_allocate(ws.container);
         c.gtk_widget_queue_draw(ws.container);
-        if (initDiagEnabled()) {
-            const gl = c.gtk_widget_get_width(@ptrCast(pane.gl_area orelse break));
-            const gh = c.gtk_widget_get_height(@ptrCast(pane.gl_area orelse break));
-            std.log.info("pane {d}: forced allocation after layout, gl={d}x{d}", .{ pane.id, gl, gh });
-        }
+        if (initDiagEnabled()) logFrameState(pane, ws);
         return;
     }
+}
+
+/// Frame-clock evidence for a starved pane: whether the workspace is ticking at
+/// all and whether the GL area's native surface is mapped, so "no frames" can be
+/// told apart from "frames that skip this subtree".
+fn logFrameState(pane: *Pane, ws: *@import("workspace.zig").Workspace) void {
+    const gl = pane.gl_area orelse return;
+    const widget: *c.GtkWidget = @ptrCast(gl);
+    const clock = c.gtk_widget_get_frame_clock(widget);
+    const frame_time: i64 = if (clock) |clk| c.gdk_frame_clock_get_frame_time(@ptrCast(clk)) else -1;
+    // GtkGLArea is not itself a GtkNative; its surface belongs to the toplevel.
+    const native = c.gtk_widget_get_native(widget);
+    const surface = if (native) |n| c.gtk_native_get_surface(n) else null;
+    const surface_mapped = if (surface) |s| c.gdk_surface_get_mapped(s) != 0 else false;
+    const gl_error = c.gtk_gl_area_get_error(gl) != null;
+    std.log.info(
+        "pane {d}: frames ticks={d} frame_time={d} surface={} surface_mapped={} realized={} mapped={} gl_error={}",
+        .{
+            pane.id,
+            ws.tick_count,
+            frame_time,
+            surface != null,
+            surface_mapped,
+            c.gtk_widget_get_realized(widget) != 0,
+            c.gtk_widget_get_mapped(widget) != 0,
+            gl_error,
+        },
+    );
 }
 
 fn initFallbackCb(user_data: c.gpointer) callconv(.c) c.gboolean {

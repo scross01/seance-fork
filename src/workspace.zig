@@ -268,6 +268,7 @@ pub const Workspace = struct {
     cached_width: c_int = 0,
     cached_height: c_int = 0,
     layout_passes: u64 = 0,
+    tick_count: u64 = 0,
     tick_callback_id: c.guint = 0,
     last_frame_time: i64 = 0,
 
@@ -1150,6 +1151,7 @@ pub const Workspace = struct {
 
     fn onTick(_: *c.GtkWidget, frame_clock: ?*anyopaque, user_data: c.gpointer) callconv(.c) c.gboolean {
         const self: *Workspace = @ptrCast(@alignCast(user_data));
+        self.tick_count +%= 1;
         var needs_layout = false;
 
         // Compute delta time from frame clock (microseconds → seconds)
