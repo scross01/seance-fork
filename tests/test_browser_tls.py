@@ -19,8 +19,6 @@ the dialog with Escape and wait for the logged cancel response.
 """
 import json
 import os
-import select
-import shutil
 import socket
 import ssl
 import subprocess
@@ -29,6 +27,7 @@ import threading
 import time
 import unittest
 
+import test_keyboard_remaps as keyboard
 from test_ghostty_integration import GhosttyTestCase
 
 _counter = 0
@@ -123,37 +122,17 @@ class _Page:
         self.tmp.cleanup()
 
 
-class BrowserTlsTestCase(GhosttyTestCase):
+class BrowserTlsTestCase(keyboard.XServerTestCase, GhosttyTestCase):
     env_extra = {"G_DEBUG": "fatal-criticals", "SEANCE_TLS_DIALOG_LOG": "1"}
+    required_commands = ("Xvfb", "xdotool")
 
     def setUp(self):
         # A bare X server, not the developer's session: with a window manager
         # in the way the mounted dialog never receives the keyboard, so the
         # approval keys land in the terminal.
-        for command in ("Xvfb", "xdotool"):
-            if not shutil.which(command):
-                self.skipTest(f"browser TLS tests require {command}")
-        server = subprocess.Popen(
-            ["Xvfb", "-displayfd", "1", "-screen", "0", "1280x800x24",
-             "-nolisten", "tcp", "-noreset"],
-            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-        self.addCleanup(self.stop_server, server)
-        if not select.select([server.stdout], [], [], 10)[0]:
-            self.fail("Xvfb startup timed out")
-        display = ":" + server.stdout.readline().decode().strip()
-        self.assertNotEqual(display, ":", "Xvfb failed to start")
-        self.env_extra = dict(type(self).env_extra, DISPLAY=display)
-        super().setUp()
-
-    @staticmethod
-    def stop_server(server):
-        server.terminate()
-        try:
-            server.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            server.kill()
-            server.wait()
-        server.stdout.close()
+        keyboard.XServerTestCase.setUp(self)
+        self.env_extra = dict(type(self).env_extra, DISPLAY=self.display_name)
+        GhosttyTestCase.setUp(self)
 
     def prepare(self):
         pass

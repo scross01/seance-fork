@@ -12,11 +12,15 @@ import test_ghostty_integration as integration
 
 
 @unittest.skipUnless(os.environ.get("SEANCE_TEST_BINARY"), "set SEANCE_TEST_BINARY for GUI validation")
-class PhysicalKeyboardTestCase(unittest.TestCase):
+class XServerTestCase(unittest.TestCase):
+    """Run each case on a private Xvfb so input never reaches the desktop."""
+
+    required_commands = ("Xvfb",)
+
     def setUp(self):
-        for command in ("Xvfb", "xdotool", "setxkbmap"):
+        for command in self.required_commands:
             if not shutil.which(command):
-                self.skipTest(f"keyboard tests require {command}")
+                self.skipTest(f"{type(self).__name__} requires {command}")
         # Never change the developer's desktop keymap, even when run outside xvfb-run.
         server = subprocess.Popen(
             ["Xvfb", "-displayfd", "1", "-screen", "0", "1280x800x24", "-nolisten", "tcp", "-noreset"],
@@ -24,13 +28,30 @@ class PhysicalKeyboardTestCase(unittest.TestCase):
         )
         self.addCleanup(self.stop_server, server)
         self.assertTrue(select.select([server.stdout], [], [], 10)[0], "Xvfb startup timed out")
-        display = ":" + server.stdout.readline().decode().strip()
-        self.assertNotEqual(display, ":", "Xvfb failed to start")
+        self.display_name = ":" + server.stdout.readline().decode().strip()
+        self.assertNotEqual(self.display_name, ":", "Xvfb failed to start")
+
+    @staticmethod
+    def stop_server(server):
+        server.terminate()
+        try:
+            server.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            server.kill()
+            server.wait()
+        server.stdout.close()
+
+
+class PhysicalKeyboardTestCase(XServerTestCase):
+    required_commands = ("Xvfb", "xdotool", "setxkbmap")
+
+    def setUp(self):
+        super().setUp()
         self.app = integration.GhosttyTestCase()
         self.app.config_extra = getattr(self, "config_extra", "")
         self.app.env_extra = getattr(self, "env_extra", {})
         self.addCleanup(self.app.doCleanups)
-        with patch.dict(os.environ, {"DISPLAY": display}):
+        with patch.dict(os.environ, {"DISPLAY": self.display_name}):
             self.app.setUp()
         self.app.wait(lambda: self.app.call("surface.read_screen").get("text"), "shell startup")
         window = self.run_x("xdotool", "search", "--onlyvisible", "--pid", str(self.app.process.pid)).strip().splitlines()[0]
@@ -48,19 +69,9 @@ class PhysicalKeyboardTestCase(unittest.TestCase):
         self.x11.XStringToKeysym.restype = ctypes.c_ulong
         self.x11.XKeysymToKeycode.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
         self.x11.XKeysymToKeycode.restype = ctypes.c_ubyte
-        self.display = self.x11.XOpenDisplay(display.encode())
-        self.assertTrue(self.display)
-        self.addCleanup(self.x11.XCloseDisplay, self.display)
-
-    @staticmethod
-    def stop_server(server):
-        server.terminate()
-        try:
-            server.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            server.kill()
-            server.wait()
-        server.stdout.close()
+        self.x_display = self.x11.XOpenDisplay(self.display_name.encode())
+        self.assertTrue(self.x_display)
+        self.addCleanup(self.x11.XCloseDisplay, self.x_display)
 
     def run_x(self, *args):
         return subprocess.run(args, env=self.app.env, check=True, capture_output=True,
@@ -84,8 +95,8 @@ class PhysicalKeyboardTestCase(unittest.TestCase):
         self.app.wait(ready.exists, "raw input recorder")
 
     def key(self, code, pressed, delay=20):
-        self.assertTrue(self.xtst.XTestFakeKeyEvent(self.display, code, pressed, delay))
-        self.x11.XSync(self.display, 0)
+        self.assertTrue(self.xtst.XTestFakeKeyEvent(self.x_display, code, pressed, delay))
+        self.x11.XSync(self.x_display, 0)
 
     def tap(self, code, delay=20):
         self.key(code, True, delay)
@@ -97,7 +108,7 @@ class PhysicalKeyboardTestCase(unittest.TestCase):
         # through XTest as physical keycodes instead.
         keysym = self.x11.XStringToKeysym(name.encode())
         self.assertNotEqual(keysym, 0, f"unknown keysym {name!r}")
-        code = self.x11.XKeysymToKeycode(self.display, keysym)
+        code = self.x11.XKeysymToKeycode(self.x_display, keysym)
         self.assertNotEqual(code, 0, f"keysym {name!r} is not mapped")
         return code
 
