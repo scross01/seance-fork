@@ -238,6 +238,32 @@ pub const WorkspaceMetadata = struct {
 
 pub const FocusDirection = enum { left, right, up, down };
 
+/// Frame-clock ticks and allocation notifications can both go quiet before a
+/// workspace has ever been measured, so the first real viewport size is polled
+/// from the GLib main loop instead.
+const remeasure_interval_ms: c_uint = 16;
+const remeasure_max_attempts: u8 = 60;
+
+fn remeasureCb(user_data: c.gpointer) callconv(.c) c.gboolean {
+    const self: *Workspace = @ptrCast(@alignCast(user_data));
+    self.remeasure_id = 0;
+
+    const w = c.gtk_widget_get_width(self.container);
+    const h = c.gtk_widget_get_height(self.container);
+    if (w > 0 and h > 0) {
+        self.cached_width = w;
+        self.cached_height = h;
+        self.applyLayout();
+        return c.G_SOURCE_REMOVE;
+    }
+
+    self.remeasure_attempts += 1;
+    if (self.remeasure_attempts < remeasure_max_attempts) {
+        self.remeasure_id = c.g_timeout_add(remeasure_interval_ms, @ptrCast(&remeasureCb), @ptrCast(self));
+    }
+    return c.G_SOURCE_REMOVE;
+}
+
 pub const Workspace = struct {
     id: u64,
     title: [128]u8 = [_]u8{0} ** 128,
@@ -268,6 +294,8 @@ pub const Workspace = struct {
     cached_height: c_int = 0,
     layout_passes: u64 = 0,
     tick_callback_id: c.guint = 0,
+    remeasure_id: c.guint = 0,
+    remeasure_attempts: u8 = 0,
     last_frame_time: i64 = 0,
 
     // Suppress transient onFocusEnter during restructuring
@@ -416,6 +444,7 @@ pub const Workspace = struct {
         _ = c.g_signal_connect_data(@ptrCast(widgets.container), "notify::height", @as(c.GCallback, @ptrCast(&onContainerAllocated)), @ptrCast(ws), null, 0);
 
         _ = try ws.addColumn(null);
+        ws.requestRemeasure();
 
         return ws;
     }
@@ -445,6 +474,7 @@ pub const Workspace = struct {
         _ = c.g_signal_connect_data(@ptrCast(widgets.container), "notify::height", @as(c.GCallback, @ptrCast(&onContainerAllocated)), @ptrCast(ws), null, 0);
 
         _ = try ws.addColumn(cwd);
+        ws.requestRemeasure();
 
         return ws;
     }
@@ -673,6 +703,20 @@ pub const Workspace = struct {
     }
 
     /// Position all pane group widgets according to column layout and camera.
+    /// Poll for the container's first real size so layout never waits on a
+    /// frame clock that has already gone idle.
+    pub fn requestRemeasure(self: *Workspace) void {
+        if (self.remeasure_id != 0) return;
+        self.remeasure_attempts = 0;
+        self.remeasure_id = c.g_timeout_add(remeasure_interval_ms, @ptrCast(&remeasureCb), @ptrCast(self));
+    }
+
+    fn cancelRemeasure(self: *Workspace) void {
+        if (self.remeasure_id == 0) return;
+        _ = c.g_source_remove(self.remeasure_id);
+        self.remeasure_id = 0;
+    }
+
     pub fn applyLayout(self: *Workspace) void {
         self.layout_passes +%= 1;
         // Use cached viewport size — NOT a live widget query. GtkFixed
@@ -1779,6 +1823,7 @@ pub const Workspace = struct {
 
     pub fn destroy(self: *Workspace) void {
         // Remove tick callback before destroying widgets
+        self.cancelRemeasure();
         if (self.tick_callback_id != 0) {
             c.gtk_widget_remove_tick_callback(self.fixed, self.tick_callback_id);
             self.tick_callback_id = 0;
