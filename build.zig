@@ -60,6 +60,12 @@ fn addSeanceDeps(
     mod.linkSystemLibrary("gtk4", sys_lib);
     mod.linkSystemLibrary("libadwaita-1", sys_lib);
 
+    // GtkBox subclass that reports every size_allocate, including the first.
+    mod.addCSourceFile(.{
+        .file = b.path("src/workspace_box.c"),
+        .flags = &.{},
+    });
+
     // Linux-only desktop integration libraries
     if (is_linux) {
         mod.linkSystemLibrary("libcanberra", sys_lib);
@@ -183,6 +189,7 @@ pub fn build(b: *std.Build) void {
         .link_system_libs = c_libs.items,
     });
     translated.addIncludePath(ghostty_dep.path("include"));
+    translated.addIncludePath(b.path("src"));
 
     const exe_mod = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),

@@ -1,4 +1,5 @@
 #include <adwaita.h>
+#include "workspace_box.h"
 #include <glib-unix.h>
 
 #ifdef __linux__
