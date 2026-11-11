@@ -40,16 +40,25 @@ class NotificationIdentityTests(keyboard.PhysicalKeyboardTestCase):
         self.app.wait(lambda: title in [n["title"] for n in self.notifications()],
                       f"notification {title}")
 
-    def press(self, *sequence):
+    def send(self, *sequence):
+        """Focus the app window, then send keys through XTest.
+
+        The 150 ms per-event delay keeps the popover's row seating settled
+        between keys; chords hold their modifiers explicitly.
+        """
         windows = self.run_x(
             "xdotool", "search", "--onlyvisible", "--pid", str(self.app.process.pid)
         ).split()
         if windows:
             self.run_x("xdotool", "windowfocus", "--sync", windows[0])
-        self.run_x("xdotool", "key", "--delay", "150", *sequence)
+        for spec in sequence:
+            if "+" in spec:
+                self.chord(spec, delay=150)
+            else:
+                self.press(spec, delay=150)
 
     def open_panel(self):
-        self.press("ctrl+shift+i")
+        self.send("ctrl+shift+i")
         time.sleep(1.0)
 
     def ctl(self, *args):
@@ -61,7 +70,7 @@ class NotificationIdentityTests(keyboard.PhysicalKeyboardTestCase):
         self.emit("ALPHA")
         self.open_panel()
         self.emit("BRAVO")
-        self.press("Return")
+        self.send("Return")
         self.app.wait(lambda: self.notifications()[1]["read"], "ALPHA marked read")
 
         records = self.notifications()
@@ -77,7 +86,7 @@ class NotificationIdentityTests(keyboard.PhysicalKeyboardTestCase):
         self.emit("ALPHA")
         self.open_panel()
         self.emit("BRAVO")
-        self.press("Tab", "Return")
+        self.send("Tab", "Return")
         self.app.wait(lambda: [n["title"] for n in self.notifications()] == ["BRAVO"],
                       "dismiss displayed row")
 
@@ -91,7 +100,7 @@ class NotificationIdentityTests(keyboard.PhysicalKeyboardTestCase):
         self.emit("ALPHA")
         self.assertTrue(self.unread()[self.background["id"]])
         self.open_panel()
-        self.press("Tab", "Return")
+        self.send("Tab", "Return")
         self.app.wait(lambda: self.notifications() == [], "dismiss last notification")
         self.assertFalse(self.unread()[self.background["id"]],
                          "clearing the last unread record must clear the pane badge")
@@ -102,7 +111,7 @@ class NotificationIdentityTests(keyboard.PhysicalKeyboardTestCase):
         self.assertEqual([n["title"] for n in self.notifications()], ["CHARLIE", "ALPHA"])
 
         self.open_panel()
-        self.press("Tab", "Return")
+        self.send("Tab", "Return")
         self.app.wait(lambda: [n["title"] for n in self.notifications()] == ["ALPHA"],
                       "dismiss newest sibling")
         self.assertFalse(self.notifications()[0]["read"],
@@ -114,13 +123,13 @@ class NotificationIdentityTests(keyboard.PhysicalKeyboardTestCase):
         self.emit("ALPHA")
         self.emit("CHARLIE")
         self.open_panel()
-        self.press("Return")
+        self.send("Return")
         self.app.wait(lambda: self.notifications()[0]["read"], "CHARLIE read")
         focused = [pane["id"] for pane in self.panes() if pane["focused"]]
         self.assertEqual(focused, [self.background["id"]], "activation jumps to the record's pane")
 
         self.open_panel()
-        self.press("Tab", "Return")
+        self.send("Tab", "Return")
         self.app.wait(lambda: [n["title"] for n in self.notifications()] == ["ALPHA"],
                       "dismiss reopened row")
         self.assertFalse(self.notifications()[0]["read"],
@@ -142,7 +151,7 @@ class NotificationIdentityTests(keyboard.PhysicalKeyboardTestCase):
 
         newest = self.notifications()[0]
         self.open_panel()
-        self.press("Tab", "Return")
+        self.send("Tab", "Return")
         self.app.wait(lambda: len(self.notifications()) == 99, "dismiss newest displayed row")
         remaining = self.notifications()
         self.assertNotIn(newest["id"], [n["id"] for n in remaining])

@@ -13,61 +13,16 @@ run script.
 """
 
 import json
-import os
-import select
-import shutil
 import socket
-import subprocess
 import unittest
-from unittest.mock import patch
 
-import test_ghostty_integration as integration
+import test_keyboard_remaps as keyboard
 
 EVAL_TIMEOUT = 10
 
 
-class MixedPanelTransferTest(unittest.TestCase):
-    def setUp(self):
-        for command in ("Xvfb", "xdotool"):
-            if not shutil.which(command):
-                self.skipTest(f"mixed transfer tests require {command}")
-        server = subprocess.Popen(
-            ["Xvfb", "-displayfd", "1", "-screen", "0", "1280x800x24",
-             "-nolisten", "tcp", "-noreset"],
-            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-        )
-        self.addCleanup(self.stop_server, server)
-        self.assertTrue(select.select([server.stdout], [], [], 10)[0],
-                        "Xvfb startup timed out")
-        display = ":" + server.stdout.readline().decode().strip()
-        self.assertNotEqual(display, ":", "Xvfb failed to start")
-        self.app = integration.GhosttyTestCase()
-        self.addCleanup(self.app.doCleanups)
-        with patch.dict(os.environ, {"DISPLAY": display}):
-            self.app.setUp()
-        self.app.wait(lambda: self.app.call("surface.read_screen").get("text"),
-                      "shell startup")
-        # A bare X server has no window manager, so focus the toplevel directly.
-        window = self.run_x("xdotool", "search", "--onlyvisible", "--pid",
-                            str(self.app.process.pid)).strip().splitlines()[0]
-        self.run_x("xdotool", "windowfocus", "--sync", window)
-
-    @staticmethod
-    def stop_server(server):
-        server.terminate()
-        try:
-            server.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            server.kill()
-            server.wait()
-        server.stdout.close()
-
+class MixedPanelTransferTest(keyboard.PhysicalKeyboardTestCase):
     # ── helpers ─────────────────────────────────────────────────────────
-
-    def run_x(self, *args):
-        return subprocess.run(args, env=self.app.env, check=True,
-                              capture_output=True, text=True,
-                              timeout=10).stdout
 
     def assert_running(self, note):
         if self.app.process.poll() is None:
@@ -77,7 +32,7 @@ class MixedPanelTransferTest(unittest.TestCase):
         self.fail(f"{note}: application exited with status "
                   f"{self.app.process.returncode}\n{self.app.log.read()[-4000:]}")
 
-    def key(self, chord, until):
+    def chord_and_settle(self, chord, until):
         """Press chord, wait for it to take effect, then for a settled layout.
 
         Expel and layout transitions animate over frame ticks, so the state a
@@ -85,7 +40,7 @@ class MixedPanelTransferTest(unittest.TestCase):
         emptied column) is only final once system.tree reports the workspace
         settled.
         """
-        self.run_x("xdotool", "key", "--clearmodifiers", chord)
+        self.chord(chord)
         self.app.wait(until, f"{chord} takes effect")
         self.app.wait(self.app.settled, f"layout settles after {chord}")
         self.assert_running(f"after {chord}")
@@ -138,7 +93,7 @@ class MixedPanelTransferTest(unittest.TestCase):
     def browser_tab(self):
         """Add a browser panel to the focused column as another panel."""
         before = self.browser_ids()
-        self.key("ctrl+alt+e", lambda: len(self.browser_ids()) == len(before) + 1)
+        self.chord_and_settle("ctrl+alt+e", lambda: len(self.browser_ids()) == len(before) + 1)
         created = [pid for pid in self.browser_ids() if pid not in before]
         self.assertEqual(len(created), 1, created)
         return created[0]
@@ -146,17 +101,17 @@ class MixedPanelTransferTest(unittest.TestCase):
     def toggle_layout(self):
         """Flip the focused column between stacked and tabbed."""
         mode = self.focused_group()["layout_mode"]
-        self.key("ctrl+shift+l",
+        self.chord_and_settle("ctrl+shift+l",
                  lambda: self.focused_group()["layout_mode"] != mode)
 
     def focus_column(self, side):
         target = self.groups()[0 if side == "Left" else -1]["id"]
-        self.key("ctrl+shift+" + side,
+        self.chord_and_settle("ctrl+shift+" + side,
                  lambda: self.focused_group()["id"] == target)
 
     def transfer(self, side="Left"):
         before = self.groups()
-        self.key("ctrl+alt+" + side, lambda: self.groups() != before)
+        self.chord_and_settle("ctrl+alt+" + side, lambda: self.groups() != before)
 
     def wait_groups(self, count, description):
         """Wait for a column count: emptied columns close on a later frame."""
@@ -270,7 +225,7 @@ class MixedPanelTransferTest(unittest.TestCase):
     def test_terminal_slow_path_still_transfers(self):
         self.split_terminal()
         # Second terminal, so the source column survives the expel.
-        self.key("ctrl+shift+t",
+        self.chord_and_settle("ctrl+shift+t",
                  lambda: len(self.app.call("surface.list")["surfaces"]) == 3)
         moved = [s["id"] for s in self.app.call("surface.list")["surfaces"]
                  if s["focused"]][0]

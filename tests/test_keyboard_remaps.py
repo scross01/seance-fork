@@ -105,6 +105,20 @@ class PhysicalKeyboardTestCase(unittest.TestCase):
         for name in names:
             self.tap(self.keycode(name), delay)
 
+    MODIFIERS = {"ctrl": "Control_L", "shift": "Shift_L", "alt": "Alt_L",
+                 "super": "Super_L", "altgr": "ISO_Level3_Shift"}
+
+    def chord(self, spec, delay=20):
+        """Send a ``ctrl+shift+key`` chord as explicit XTest modifier holds."""
+        *modifiers, name = spec.split("+")
+        codes = [self.keycode(self.MODIFIERS.get(modifier, modifier))
+                 for modifier in modifiers]
+        for code in codes:
+            self.key(code, True, delay)
+        self.tap(self.keycode(name), delay)
+        for code in reversed(codes):
+            self.key(code, False, delay)
+
     def received(self):
         return self.output.read_bytes()
 
