@@ -687,6 +687,30 @@ fn logFrameState(pane: *Pane, ws: *@import("workspace.zig").Workspace) void {
     if (surface) |s| {
         window_toplevel_state = @intCast(c.gdk_toplevel_get_state(@ptrCast(s)));
     }
+    const Window = @import("window.zig");
+    if (Window.window_manager) |wm| {
+        for (wm.windows.items) |win| {
+            const ww: *c.GtkWidget = @ptrCast(win.gtk_window);
+            const wclock = c.gtk_widget_get_frame_clock(ww);
+            const wtime: i64 = if (wclock) |cl| c.gdk_frame_clock_get_frame_time(@ptrCast(cl)) else -1;
+            std.log.info(
+                "pane {d}: window clock time={d} active={} mapped={}",
+                .{ pane.id, wtime, c.gtk_window_is_active(@ptrCast(win.gtk_window)) != 0, c.gtk_widget_get_mapped(ww) != 0 },
+            );
+            for (win.workspaces.items) |other| {
+                std.log.info(
+                    "pane {d}: workspace {d} ticks={d} container={d}x{d}",
+                    .{
+                        pane.id,
+                        other.id,
+                        other.tick_count,
+                        c.gtk_widget_get_width(other.container),
+                        c.gtk_widget_get_height(other.container),
+                    },
+                );
+            }
+        }
+    }
     std.log.info(
         "pane {d}: frames ticks={d} frame_time={d} surface={} surface_mapped={} realized={} mapped={} gl_error={} window_active={} toplevel_state=0x{x}",
         .{
