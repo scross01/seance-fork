@@ -179,6 +179,25 @@ and IME suites. `python3 -m unittest discover -s tests -v` still runs the wrappe
 and plugin suites; its GUI modules skip without `SEANCE_TEST_BINARY`, so it does
 not replace the runner. Real-agent checks stay opt-in.
 
+### Diagnostic Environment Variables
+
+These are off by default. None of them change behaviour — they only add lines to
+stderr for debugging and for the GUI harness.
+
+| Variable | What it logs |
+|---|---|
+| `SEANCE_INIT_DIAG` | A pane that still has no terminal surface 500 ms after creation: its pending size, GLArea size and root-window state, then two follow-up samples of the workspace's viewport cache and layout passes. A healthy start logs nothing. |
+| `SEANCE_TLS_DIALOG_LOG` | When the browser TLS exception dialog is presented, and which response it returned. `test_browser_tls.py` waits for the presentation line before typing at the dialog. |
+| `SEANCE_NOTIF_FOCUS_LOG` | The keyboard-focus owner each frame while the notification popover is open, plus Tab/Return key probes at the capture and bubble phases. |
+| `SEANCE_DEBUG` | What `summarizeNotification` produced for an agent hook notification (`subtitle` and `body`). |
+
+For example, tracing a pane that never brought up its shell:
+
+```bash
+SEANCE_INIT_DIAG=1 SEANCE_TEST_BINARY="$PWD/AppDir/usr/bin/seance" \
+  G_DEBUG=fatal-criticals GTK_A11Y=none xvfb-run -a python3 -B tests/run_required_gui.py
+```
+
 ### Test Files
 
 - `src/osc_parser.zig` — OSC protocol parser tests
