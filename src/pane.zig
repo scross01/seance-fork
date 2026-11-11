@@ -702,6 +702,9 @@ fn initFallbackCb(user_data: c.gpointer) callconv(.c) c.gboolean {
     // that measures the workspace viewport. Retry the layout from the workspace a
     // few times instead of leaving the pane blank until the window is resized.
     pane.init_fallback_attempts +%= 1;
+    if (initDiagEnabled()) {
+        std.log.info("pane {d}: watchdog attempt {d}", .{ pane.id, pane.init_fallback_attempts });
+    }
     if (pane.init_fallback_attempts <= init_fallback_max_attempts) {
         requestLayoutForStarvedPane(pane);
         if (pane.gl_area) |gl| c.gtk_gl_area_queue_render(gl);

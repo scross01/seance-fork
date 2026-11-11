@@ -705,6 +705,7 @@ pub const Workspace = struct {
     /// something requests them, and an idle clock never applies the sizes
     /// applyLayout requested — which leaves a pane stuck at 0x0 forever.
     pub fn requestFrames(self: *Workspace) void {
+        const old = self.tick_callback_id;
         if (self.tick_callback_id != 0) {
             _ = c.gtk_widget_remove_tick_callback(self.fixed, self.tick_callback_id);
             self.tick_callback_id = 0;
@@ -715,8 +716,25 @@ pub const Workspace = struct {
             @ptrCast(self),
             null,
         );
-        if (c.gtk_widget_get_frame_clock(self.fixed)) |clock| {
-            c.gdk_frame_clock_request_phase(@ptrCast(clock), c.GDK_FRAME_CLOCK_PHASE_UPDATE);
+        const clock = c.gtk_widget_get_frame_clock(self.fixed);
+        if (clock) |clk| {
+            c.gdk_frame_clock_request_phase(@ptrCast(clk), c.GDK_FRAME_CLOCK_PHASE_UPDATE);
+        }
+        if (pane_mod.initDiagEnabled()) {
+            const frame_time: i64 = if (clock) |clk| c.gdk_frame_clock_get_frame_time(@ptrCast(clk)) else -1;
+            std.log.info(
+                "workspace {d}: requestFrames old={d} new={d} clock={} frame_time={d} fixed_mapped={} fixed_realized={} ticks={d}",
+                .{
+                    self.id,
+                    old,
+                    self.tick_callback_id,
+                    clock != null,
+                    frame_time,
+                    c.gtk_widget_get_mapped(self.fixed) != 0,
+                    c.gtk_widget_get_realized(self.fixed) != 0,
+                    self.tick_count,
+                },
+            );
         }
     }
 
