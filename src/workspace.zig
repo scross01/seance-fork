@@ -268,7 +268,6 @@ pub const Workspace = struct {
     cached_width: c_int = 0,
     cached_height: c_int = 0,
     layout_passes: u64 = 0,
-    layout_waiting: bool = false,
     tick_callback_id: c.guint = 0,
     last_frame_time: i64 = 0,
 
@@ -377,7 +376,7 @@ pub const Workspace = struct {
     /// tree used by every workspace. The ScrolledWindow prevents GtkFixed's
     /// children-based minimum size from propagating up the widget tree.
     fn initWidgets() struct { container: *c.GtkWidget, fixed: *c.GtkWidget } {
-        const container = c.seance_workspace_box_new(c.GTK_ORIENTATION_VERTICAL, 0);
+        const container = c.gtk_box_new(c.GTK_ORIENTATION_VERTICAL, 0);
         c.gtk_widget_set_hexpand(container, 1);
         c.gtk_widget_set_vexpand(container, 1);
 
@@ -414,7 +413,10 @@ pub const Workspace = struct {
             null,
         );
         ws.initResizeHandles();
-        c.seance_workspace_box_set_notify(widgets.container, &onSizeAllocated, @ptrCast(ws));
+        _ = c.g_signal_connect_data(@ptrCast(widgets.container), "notify::width", @as(c.GCallback, @ptrCast(&onContainerAllocated)), @ptrCast(ws), null, 0);
+        _ = c.g_signal_connect_data(@ptrCast(widgets.container), "notify::height", @as(c.GCallback, @ptrCast(&onContainerAllocated)), @ptrCast(ws), null, 0);
+        _ = c.g_signal_connect_data(@ptrCast(widgets.fixed), "notify::width", @as(c.GCallback, @ptrCast(&onContainerAllocated)), @ptrCast(ws), null, 0);
+        _ = c.g_signal_connect_data(@ptrCast(widgets.fixed), "notify::height", @as(c.GCallback, @ptrCast(&onContainerAllocated)), @ptrCast(ws), null, 0);
         if (pane_mod.initDiagEnabled()) {
             std.log.info("workspace {d}: hooks container=0x{x} fixed=0x{x} child=0x{x}", .{
                 ws.id,
@@ -450,7 +452,10 @@ pub const Workspace = struct {
             null,
         );
         ws.initResizeHandles();
-        c.seance_workspace_box_set_notify(widgets.container, &onSizeAllocated, @ptrCast(ws));
+        _ = c.g_signal_connect_data(@ptrCast(widgets.container), "notify::width", @as(c.GCallback, @ptrCast(&onContainerAllocated)), @ptrCast(ws), null, 0);
+        _ = c.g_signal_connect_data(@ptrCast(widgets.container), "notify::height", @as(c.GCallback, @ptrCast(&onContainerAllocated)), @ptrCast(ws), null, 0);
+        _ = c.g_signal_connect_data(@ptrCast(widgets.fixed), "notify::width", @as(c.GCallback, @ptrCast(&onContainerAllocated)), @ptrCast(ws), null, 0);
+        _ = c.g_signal_connect_data(@ptrCast(widgets.fixed), "notify::height", @as(c.GCallback, @ptrCast(&onContainerAllocated)), @ptrCast(ws), null, 0);
         if (pane_mod.initDiagEnabled()) {
             std.log.info("workspace {d}: hooks container=0x{x} fixed=0x{x} child=0x{x}", .{
                 ws.id,
@@ -471,33 +476,20 @@ pub const Workspace = struct {
     /// workspace container has been allocated and layout never runs at all: the
     /// GLArea stays 0x0 and its surface (and shell) is never created. React to the
     /// allocation itself so the first real size always reaches applyLayout.
-    /// size_allocate always runs when the workspace is allocated, unlike
-    /// notify::width, which was never delivered for this container. Record the
-    /// new size and apply layout from an idle so it runs after GTK's allocation
-    /// pass instead of re-entering it.
-    fn onSizeAllocated(user_data: c.gpointer, width: c_int, height: c_int) callconv(.c) void {
+    fn onContainerAllocated(_: *c.GtkWidget, _: ?*anyopaque, user_data: ?*anyopaque) callconv(.c) void {
         const self: *Workspace = @ptrCast(@alignCast(user_data));
-        if (width <= 0 or height <= 0) return;
-        if (width == self.cached_width and height == self.cached_height) return;
 
-        self.cached_width = width;
-        self.cached_height = height;
-        if (self.layout_waiting) return;
-        self.layout_waiting = true;
-        _ = c.g_idle_add_once(@ptrCast(&applyIdleCb), @ptrCast(self));
-    }
-
-    fn applyIdleCb(user_data: c.gpointer) callconv(.c) void {
-        const self: *Workspace = @ptrCast(@alignCast(user_data));
-        self.layout_waiting = false;
-        if (pane_mod.initDiagEnabled()) {
-            std.log.info("workspace {d}: sized {d}x{d} allocs={d}", .{
-                self.id,
-                self.cached_width,
-                self.cached_height,
-                c.seance_workspace_box_allocations(self.container),
-            });
+        var w = c.gtk_widget_get_width(self.container);
+        var h = c.gtk_widget_get_height(self.container);
+        if (w <= 0 or h <= 0) {
+            w = c.gtk_widget_get_width(self.fixed);
+            h = c.gtk_widget_get_height(self.fixed);
         }
+        if (w <= 0 or h <= 0) return;
+        if (w == self.cached_width and h == self.cached_height) return;
+
+        self.cached_width = w;
+        self.cached_height = h;
         self.applyLayout();
     }
 

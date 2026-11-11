@@ -40,6 +40,7 @@ pub const Pane = struct {
     pending_init_height: u32 = 0,
     /// One-shot fallback that forces a render if the first one never arrives.
     init_fallback_id: c.guint = 0,
+    init_fallback_attempts: u8 = 0,
     init_diag_attempts: u8 = 0,
     // Cached terminal title (updated via ghostty SET_TITLE action)
     cached_title: [256]u8 = [_]u8{0} ** 256,
@@ -614,6 +615,7 @@ fn deferredRedrawCb(user_data: c.gpointer) callconv(.c) c.gboolean {
 }
 
 const init_fallback_ms = 500;
+const init_fallback_max_attempts: u8 = 3;
 
 /// Starved pane initialization is rare but noisy, so its diagnostics are opt-in.
 const init_diag_env = "SEANCE_INIT_DIAG";
@@ -644,15 +646,32 @@ fn logAncestry(pane: *Pane) void {
     }
 }
 
+fn requestLayoutForStarvedPane(pane: *Pane) void {
+    const Window = @import("window.zig");
+    const wm = Window.window_manager orelse return;
+    const state = wm.findByWorkspaceId(pane.workspace_id) orelse return;
+    for (state.workspaces.items) |ws| {
+        if (ws.id != pane.workspace_id) continue;
+        ws.applyLayout();
+        return;
+    }
+}
+
 fn initFallbackCb(user_data: c.gpointer) callconv(.c) c.gboolean {
     const pane: *Pane = @ptrCast(@alignCast(user_data));
     pane.init_fallback_id = 0;
     if (pane.surface != null) return c.G_SOURCE_REMOVE;
 
-    if (pane.gl_area) |gl| c.gtk_gl_area_queue_render(gl);
+    // A pane with no allocation produces no damage, so GTK may never run a frame
+    // that measures the workspace viewport. Retry the layout from the workspace a
+    // few times instead of leaving the pane blank until the window is resized.
+    pane.init_fallback_attempts +%= 1;
+    if (pane.init_fallback_attempts <= init_fallback_max_attempts) {
+        requestLayoutForStarvedPane(pane);
+        if (pane.gl_area) |gl| c.gtk_gl_area_queue_render(gl);
+        pane.init_fallback_id = c.g_timeout_add(init_fallback_ms, @ptrCast(&initFallbackCb), @ptrCast(pane));
+    }
 
-    // Report a starved pane (and keep sampling it) only when asked, so a
-    // healthy run never logs about panes that simply had not drawn yet.
     if (!initDiagEnabled()) return c.G_SOURCE_REMOVE;
 
     const gl_widget: ?*c.GtkWidget = if (pane.gl_area) |gl| @ptrCast(gl) else null;
@@ -670,12 +689,8 @@ fn initFallbackCb(user_data: c.gpointer) callconv(.c) c.gboolean {
         .{ pane.id, init_fallback_ms, pane.pending_init_width, pane.pending_init_height, pane_w, pane_h, mapped, root_w, root_h, root_mapped },
     );
 
-    // Follow-up samples report where the widget chain lost its allocation.
     pane.init_diag_attempts += 1;
-    if (pane.init_diag_attempts < 3) {
-        logAncestry(pane);
-        pane.init_fallback_id = c.g_timeout_add(init_fallback_ms, @ptrCast(&initFallbackCb), @ptrCast(pane));
-    }
+    logAncestry(pane);
 
     return c.G_SOURCE_REMOVE;
 }
