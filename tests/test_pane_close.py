@@ -66,6 +66,41 @@ class PaneCloseTests(keyboard.PhysicalKeyboardTestCase):
         self.expect_terminal_input()
 
 
+class OffscreenPaneTests(keyboard.PhysicalKeyboardTestCase):
+    """A pane created before its window is laid out must still initialize.
+
+    The new window exists before its first layout pass, so a split issued right
+    after ``window.create`` lands in a column with no allocation yet. The
+    deferred surface creation that spawns the shell only runs from a render, so
+    the pane has to be sized and drawn once the window is mapped.
+
+    This guards that contract; it does not reproduce the intermittent
+    zero-allocation race on its own (it passes on the pre-fix build too).
+    """
+
+    def assert_pane_alive(self, surface_id, marker):
+        params = {"surface_id": surface_id}
+        self.app.wait(
+            lambda: self.app.call("surface.read_screen", params).get("text"),
+            "surface and shell for a pane created before layout",
+        )
+        self.app.call("surface.send_text", {"surface_id": surface_id,
+                                            "text": f"printf '%s\\n' {marker}\\n"})
+        self.app.wait(
+            lambda: marker in self.app.call("surface.read_screen", params)["text"],
+            "shell runs input in a pane created before layout",
+        )
+
+    def test_split_immediately_after_creating_a_window(self):
+        self.app.wait(lambda: self.app.call("surface.read_screen").get("text"),
+                      "first shell")
+        # No intermediate round trip: the split must land before the new
+        # window's first layout pass has sized its column.
+        self.app.call("window.create")
+        split = self.app.call("surface.split")["surface_id"]
+        self.assert_pane_alive(split, "OFFSCREEN_PANE_OK")
+
+
 class WindowCloseTests(keyboard.PhysicalKeyboardTestCase):
     env_extra = {"G_DEBUG": "fatal-criticals"}
 
