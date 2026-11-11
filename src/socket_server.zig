@@ -1546,7 +1546,13 @@ pub const SocketServer = struct {
             .err => |e| return e,
         };
 
-        const surface = pane.surface orelse return writeJsonError(buf, id, "terminal_destroyed", "Terminal has been destroyed");
+        // A null surface here means Pane.initSurface has not run yet (it is
+        // only reached from onGlRender), so the shell does not exist either.
+        // Log it: "never created" and "created but empty" are different bugs.
+        const surface = pane.surface orelse {
+            std.log.warn("pane {d}: surface.read_screen before surface init", .{pane.id});
+            return writeJsonError(buf, id, "terminal_destroyed", "Terminal surface is not initialized yet");
+        };
 
         // Get terminal grid dimensions from ghostty
         const size = c.ghostty_surface_size(surface);

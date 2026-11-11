@@ -38,6 +38,8 @@ pub const Pane = struct {
     surface_initialized: bool = false,
     pending_init_width: u32 = 0,
     pending_init_height: u32 = 0,
+    /// One-shot fallback that forces a render if the first one never arrives.
+    init_fallback_id: c.guint = 0,
     // Cached terminal title (updated via ghostty SET_TITLE action)
     cached_title: [256]u8 = [_]u8{0} ** 256,
     cached_title_len: usize = 0,
@@ -151,6 +153,12 @@ pub const Pane = struct {
         // File drop target
         setupDropTarget(pane);
 
+        // Deferred surface creation only runs from onGlRender. If a draw is
+        // starved (heavy load, an unmapped pane) the pane would keep a null
+        // surface and never spawn its shell, which looks like a dead terminal to
+        // ctl clients. Force one render once the first allocation is known.
+        pane.init_fallback_id = c.g_timeout_add(init_fallback_ms, @ptrCast(&initFallbackCb), @ptrCast(pane));
+
         return pane;
     }
 
@@ -161,6 +169,7 @@ pub const Pane = struct {
     /// in create() will have nulled self.gl_area in that case).
     pub fn disconnectSignals(self: *Pane) void {
         cancelIdle(&self.deferred_redraw_id);
+        cancelIdle(&self.init_fallback_id);
         if (self.scrollbar_hide_timeout != 0) {
             _ = c.g_source_remove(self.scrollbar_hide_timeout);
             self.scrollbar_hide_timeout = 0;
@@ -599,6 +608,24 @@ fn deferredRedrawCb(user_data: c.gpointer) callconv(.c) c.gboolean {
     pane.deferred_redraw_id = 0;
     if (pane.surface != null) {
         pane.queueRedraw();
+    }
+    return c.G_SOURCE_REMOVE;
+}
+
+const init_fallback_ms = 500;
+
+fn initFallbackCb(user_data: c.gpointer) callconv(.c) c.gboolean {
+    const pane: *Pane = @ptrCast(@alignCast(user_data));
+    pane.init_fallback_id = 0;
+    if (pane.surface != null) return c.G_SOURCE_REMOVE;
+
+    if (pane.pending_init_width > 0 and pane.pending_init_height > 0) {
+        std.log.info("pane {d}: no surface after {d}x{d} allocation, forcing a render", .{
+            pane.id, pane.pending_init_width, pane.pending_init_height,
+        });
+        if (pane.gl_area) |gl| c.gtk_gl_area_queue_render(gl);
+    } else {
+        std.log.info("pane {d}: no surface or allocation after {d} ms", .{ pane.id, init_fallback_ms });
     }
     return c.G_SOURCE_REMOVE;
 }
