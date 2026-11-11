@@ -189,6 +189,31 @@ class RequiredRunnerTests(unittest.TestCase):
         self.assertIn("test_strict_skip tests=1 FAIL", output.getvalue())
         self.assertIn("1 failing suites", output.getvalue())
 
+    def test_pkg_config_path_gains_system_directories(self):
+        (self.directory / "gtk4.pc").write_text("Name: gtk4\n")
+        environ = {"PKG_CONFIG_PATH": "/opt/keep-me/pkgconfig"}
+        run_required_gui.ensure_pkg_config_path(environ, patterns=(str(self.directory),))
+        entries = environ["PKG_CONFIG_PATH"].split(":")
+        self.assertEqual(entries[0], "/opt/keep-me/pkgconfig")
+        self.assertIn(str(self.directory), entries)
+
+    def test_pkg_config_path_is_not_duplicated(self):
+        (self.directory / "gtk4.pc").write_text("Name: gtk4\n")
+        environ = {}
+        patterns = (str(self.directory),)
+        run_required_gui.ensure_pkg_config_path(environ, patterns=patterns)
+        once = environ["PKG_CONFIG_PATH"]
+        run_required_gui.ensure_pkg_config_path(environ, patterns=patterns)
+        self.assertEqual(environ["PKG_CONFIG_PATH"], once)
+
+    def test_pkg_config_path_skips_directories_without_pc_files(self):
+        environ = {}
+        run_required_gui.ensure_pkg_config_path(environ, patterns=(str(self.directory),))
+        self.assertEqual(environ.get("PKG_CONFIG_PATH", ""), "")
+
+    def test_pkg_config_path_searches_multiarch_system_dirs(self):
+        self.assertIn("/usr/lib/*/pkgconfig", run_required_gui.PC_SEARCH_GLOBS)
+
     def test_required_inventory_names_existing_files(self):
         tests_dir = Path(run_required_gui.__file__).resolve().parent
         missing = [

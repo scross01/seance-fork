@@ -11,6 +11,7 @@ Run it from the repository root after ``make build``::
     G_DEBUG=fatal-criticals GTK_A11Y=none \
     xvfb-run -a python3 -B tests/run_required_gui.py
 """
+import glob
 import io
 import os
 import sys
@@ -44,6 +45,52 @@ REQUIRED_SUITES = (
     "test_notification_identity",
     "test_unicode_titles",
 )
+
+
+# Suites here compile GTK probe libraries, and some pkg-config builds (notably
+# Homebrew's) report only their own prefix in ``pc_path``. Look for the system
+# pkg-config directories directly so the caller never has to export a search path.
+PC_SEARCH_GLOBS = (
+    "/usr/lib/*/pkgconfig",
+    "/usr/lib/pkgconfig",
+    "/usr/lib64/pkgconfig",
+    "/usr/share/pkgconfig",
+    "/usr/local/lib/pkgconfig",
+    "/usr/local/share/pkgconfig",
+)
+
+
+def system_pc_dirs(patterns=PC_SEARCH_GLOBS):
+    """Return the system pkg-config directories that exist on this machine.
+
+    A module's own ``.pc`` is not enough: ``gtk4.pc`` depends on files that live
+    in a second directory, so every existing candidate is added rather than only
+    the one that carries the module.
+    """
+    found = []
+    for pattern in patterns:
+        for directory in sorted(glob.glob(pattern)):
+            if not Path(directory).is_dir() or not glob.glob(f"{directory}/*.pc"):
+                continue
+            if directory not in found:
+                found.append(directory)
+    return found
+
+
+def ensure_pkg_config_path(environ, patterns=PC_SEARCH_GLOBS):
+    """Append the system GTK pkg-config directories to ``PKG_CONFIG_PATH``.
+
+    The suites that build probe libraries (``test_fullscreen``, ``test_ime``)
+    call ``pkg-config --libs`` themselves, so a pkg-config that cannot see the
+    distribution's GTK4 files fails them inside ``setUpClass``. Adding those
+    directories here keeps the gate self-contained: nothing has to be exported
+    by the caller. Existing entries keep their order and win.
+    """
+    current = [entry for entry in environ.get("PKG_CONFIG_PATH", "").split(":") if entry]
+    added = [directory for directory in system_pc_dirs(patterns) if directory not in current]
+    if added:
+        environ["PKG_CONFIG_PATH"] = ":".join(current + added)
+    return current + added
 
 
 def environment_problems(binary, display):
@@ -92,6 +139,7 @@ def run_suite(tests_dir, name, stream=None):
 def main(environ=None, suites=REQUIRED_SUITES, tests_dir=None, stream=None):
     environ = os.environ if environ is None else environ
     stream = sys.stdout if stream is None else stream
+    ensure_pkg_config_path(environ)
     problems = environment_problems(
         environ.get("SEANCE_TEST_BINARY", ""), environ.get("DISPLAY", "")
     )
