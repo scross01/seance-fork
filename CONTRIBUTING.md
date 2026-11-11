@@ -132,6 +132,9 @@ prints per-suite `tests=` counts so an absent suite cannot pass for a green run.
 Adding a GUI regression means adding its module to `REQUIRED_SUITES` in
 `tests/run_required_gui.py`.
 
+The runner resolves the GTK pkg-config directories itself, so nothing beyond
+`SEANCE_TEST_BINARY` has to be exported to build and run the gate.
+
 The runner needs `Xvfb`, `xvfb-run`, `xdotool`, `setxkbmap` (`x11-xkb-utils`),
 `openbox`, `zsh`, `openssl` and `inotify-tools`. Fullscreen and IME tests also
 need a C compiler and GTK4 headers. The broad

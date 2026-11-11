@@ -20,6 +20,9 @@ make appimage
 
 Requires: Zig **0.16.0** (pinned), GTK4, libadwaita, pkg-config, OpenGL 4.3+.
 
+`make build` and the required GUI runner add the system pkg-config directories
+themselves, so `PKG_CONFIG_PATH` never needs to be exported on either path.
+
 ### Zig toolchain — pinned to 0.16.0
 
 Zig 0.17.0 may be installed and even be the default `zig` on PATH, but it is

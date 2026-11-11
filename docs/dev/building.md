@@ -37,6 +37,11 @@ sudo pacman -S gtk4 libadwaita libcanberra webkitgtk-6.0 inotify-tools
 
 `inotify-tools` is required for real-time agent status monitoring with Codebuff and Freebuff agents (the Freebuff monitor also uses `ps` from procps, present on any standard Linux system).
 
+The Makefile adds the distribution's pkg-config directories (including the
+multiarch one) to `PKG_CONFIG_PATH` itself, because some pkg-config builds
+search only their own prefix. Nothing has to be exported before `make build`;
+an explicit `PKG_CONFIG_PATH` still wins if you set one.
+
 ## Clone and Build
 
 ```bash
@@ -173,6 +178,9 @@ The runner rejects a missing or non-executable binary, a missing display, a
 missing suite file, an import error, a zero-test module, any skip and any
 failure, and prints `tests=` counts per suite. Its inventory lives in
 `REQUIRED_SUITES` in `tests/run_required_gui.py`; add new GUI regressions there.
+The runner resolves the GTK pkg-config directories for the fullscreen and IME
+suites on its own, so the command above is the whole environment: no
+`PKG_CONFIG_PATH` or other export is needed.
 Required host tools: `Xvfb`/`xvfb-run`, `xdotool`, `setxkbmap`, `openbox`, `zsh`,
 `openssl`, `inotify-tools`, plus a C compiler with GTK4 headers for the fullscreen
 and IME suites. `python3 -m unittest discover -s tests -v` still runs the wrapper
