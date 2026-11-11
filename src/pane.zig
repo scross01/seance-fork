@@ -653,6 +653,17 @@ fn requestLayoutForStarvedPane(pane: *Pane) void {
     for (state.workspaces.items) |ws| {
         if (ws.id != pane.workspace_id) continue;
         ws.applyLayout();
+        // Sizes set by applyLayout only queue a resize; the allocation itself
+        // happens in a frame, and a pane that never got a size produces no
+        // damage to trigger one. Mark the workspace allocated and damaged so the
+        // frame clock runs and the requested sizes actually land.
+        c.gtk_widget_queue_allocate(ws.container);
+        c.gtk_widget_queue_draw(ws.container);
+        if (initDiagEnabled()) {
+            const gl = c.gtk_widget_get_width(@ptrCast(pane.gl_area orelse break));
+            const gh = c.gtk_widget_get_height(@ptrCast(pane.gl_area orelse break));
+            std.log.info("pane {d}: forced allocation after layout, gl={d}x{d}", .{ pane.id, gl, gh });
+        }
         return;
     }
 }
