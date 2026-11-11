@@ -96,7 +96,10 @@ chmod +x seance-*-x86_64.AppImage
 ./seance-*-x86_64.AppImage
 ```
 
-Requires `libfuse2` on the host. Uses the host's `libGL`/`libEGL`, so Mesa or proprietary GPU drivers must be installed.
+Requires the FUSE 2 library on the host (`libfuse2` on Ubuntu 22.04,
+`libfuse2t64` on 24.04 and newer; `--appimage-extract-and-run` avoids the
+dependency). Uses the host's `libGL`/`libEGL`, so Mesa or proprietary GPU
+drivers must be installed.
 
 The AppImage bundles a transparent PNG icon that appimaged will use for thumbnails and desktop entries regardless of where you place the file. When updating, move the fully-written new AppImage into the watched folder as a replacement — never overwrite it while the file is still being written, because appimaged may cache stale or partial icons.
 

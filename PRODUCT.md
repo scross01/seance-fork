@@ -28,7 +28,7 @@ The tracking superset of Séance: it stays compatible with no1msd/seance and mer
 - Notification-driven workflow: permission prompts and task completions arrive as desktop notifications with unread tracking, so the user can leave agents unattended.
 - Scripting context: `seance ctl` over a Unix socket exposes every action with JSON output; AI agents themselves drive the multiplexer via the bundled skill file (`skills/seance-skill.md`).
 - Agent setup rituals the product performs on the user's behalf: wrapper scripts for Claude Code/Codex/Pi, auto-installed plugins for OpenCode/Kilo/MiMo/Hermes, TOML hooks for Vibe, a status-line callback for Antigravity (with `settings.json.seance-backup` preserved). Codex requires a one-time `/hooks` review per hook-definition change.
-- Distributed as an AppImage (requires host `libfuse2` and GPU drivers) and built from source with Zig 0.16.x.
+- Distributed as an AppImage (requires the host's FUSE 2 library and GPU drivers) and built from source with Zig 0.16.x.
 
 ## Capabilities and Constraints
 

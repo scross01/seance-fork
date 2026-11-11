@@ -19,7 +19,9 @@ chmod +x seance-*-x86_64.AppImage
 ```
 
 ::: tip
-Requires `libfuse2` on the host. On Ubuntu/Debian: `sudo apt install libfuse2`.
+Requires the FUSE 2 library on the host: `libfuse2` on Ubuntu 22.04, and
+`libfuse2t64` on 24.04 and newer, where the package was renamed. Without it,
+run the AppImage with `--appimage-extract-and-run`.
 :::
 
 ### PATH setup

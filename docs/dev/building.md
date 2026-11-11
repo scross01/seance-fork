@@ -105,7 +105,10 @@ Build an AppImage for distribution:
 make appimage
 ```
 
-The AppImage requires `libfuse2` on the host and uses the host's `libGL`/`libEGL`.
+The AppImage needs the FUSE 2 library on the host to mount itself: `libfuse2`
+on Ubuntu 22.04, `libfuse2t64` on 24.04 and newer, where the package was
+renamed. Without it, run the AppImage with `--appimage-extract-and-run`. It
+uses the host's `libGL`/`libEGL`.
 
 To use `seance ctl` from your shell, move the AppImage onto your `PATH`:
 
