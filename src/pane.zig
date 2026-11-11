@@ -678,8 +678,17 @@ fn logFrameState(pane: *Pane, ws: *@import("workspace.zig").Workspace) void {
     const surface = if (native) |n| c.gtk_native_get_surface(n) else null;
     const surface_mapped = if (surface) |s| c.gdk_surface_get_mapped(s) != 0 else false;
     const gl_error = c.gtk_gl_area_get_error(gl) != null;
+    const root = c.gtk_widget_get_root(widget);
+    var window_active = false;
+    var window_toplevel_state: u32 = 0;
+    if (root) |r| {
+        window_active = c.gtk_window_is_active(@ptrCast(@alignCast(r))) != 0;
+    }
+    if (surface) |s| {
+        window_toplevel_state = @intCast(c.gdk_toplevel_get_state(@ptrCast(s)));
+    }
     std.log.info(
-        "pane {d}: frames ticks={d} frame_time={d} surface={} surface_mapped={} realized={} mapped={} gl_error={}",
+        "pane {d}: frames ticks={d} frame_time={d} surface={} surface_mapped={} realized={} mapped={} gl_error={} window_active={} toplevel_state=0x{x}",
         .{
             pane.id,
             ws.tick_count,
@@ -689,6 +698,8 @@ fn logFrameState(pane: *Pane, ws: *@import("workspace.zig").Workspace) void {
             c.gtk_widget_get_realized(widget) != 0,
             c.gtk_widget_get_mapped(widget) != 0,
             gl_error,
+            window_active,
+            window_toplevel_state,
         },
     );
 }
