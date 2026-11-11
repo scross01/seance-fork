@@ -97,7 +97,7 @@ jobs:
           echo "libadwaita-1: $(pkg-config --modversion libadwaita-1)"
 
       - name: Build
-        run: zig build -p AppDir/usr -Doptimize=ReleaseSafe -Dstrip=true
+        run: make build
 
       - name: Stage AppImage top-level files
         run: |
