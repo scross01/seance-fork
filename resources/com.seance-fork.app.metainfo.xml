@@ -48,6 +48,11 @@
   <content_rating type="oars-1.1" />
 
   <releases>
+    <release version="0.8.0" date="2026-11-12">
+      <description>
+        <p>Stacked-pane layout reworked to seat rows by height weight at every insertion point, panes lay out from the container allocation so splits and restores no longer leave blank panes, safe browser panel transfer across stacked and tabbed columns, browser TLS approval scoped to the approved certificate and host, notifications bound to stable identity with UTF-8-safe truncation, agent configuration installers preserve existing settings with atomic writes and a one-time backup, control-socket requests arriving after connect are no longer dropped, session snapshots and installer writes flush before the rename, and CI now requires the installed-binary GUI suites.</p>
+      </description>
+    </release>
     <release version="0.7.0" date="2026-10-24">
       <description>
         <p>Command Code agent integration with sidebar status tracking, native Pool CLI hooks (inotify-tools no longer needed for Pool), MiMo Code integration rewritten against the 0.1.15 plugin API, stable Mistral Vibe hook names, and a fix for Freebuff sidebar status tracking.</p>

@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.8.0]
+
 ### Added
 - `system.tree` reports each pane group's settled layout state, so automation can wait for a workspace to finish laying out instead of polling sizes.
 - Starved-pane diagnostics behind `SEANCE_INIT_DIAG` are documented, naming what each sample reports.
