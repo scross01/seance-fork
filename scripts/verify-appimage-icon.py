@@ -177,16 +177,27 @@ def verify_appimage_icon(appdir_path: Path, source_png: Path | None = None, requ
         if svg_path.exists():
             errors.append(f"Obsolete SVG found: {svg_path}")
 
-    # 7. Check installed PNG location
+    # 7. Check installed PNG locations.
+    #
+    # The root icon must be a transparent PNG of a valid size, and it must
+    # resolve to one of the icons installed under hicolor. It must NOT be
+    # required to be the 256x256 file: linuxdeploy's AppDir root setup picks
+    # the raster size closest to 64x64 by design (getIconPreference prefers
+    # "logarithmically closest to 64"), and it re-creates the root symlink on
+    # every run -- including the final `--output appimage` step, which runs
+    # after this verifier. Demanding 256 here fails a correctly built image.
     installed_png = appdir / "usr/share/icons/hicolor/256x256/apps/com.seance-fork.app.png"
     if not installed_png.exists():
         errors.append(f"Installed PNG not found: {installed_png}")
     else:
-        resolved_installed = resolve_path(installed_png)
-        if resolved_installed != resolved_root_png:
+        installed_icons = {
+            resolve_path(p)
+            for p in (appdir / "usr/share/icons").rglob("com.seance-fork.app.png")
+        }
+        if resolved_root_png not in installed_icons:
             errors.append(
-                f"Installed PNG resolves differently from root PNG: "
-                f"{resolved_installed} vs {resolved_root_png}"
+                f"Root PNG resolves outside the installed hicolor icons: "
+                f"{resolved_root_png}"
             )
 
     # 8. Check standard icon sizes are present for crisp rendering (optional)
