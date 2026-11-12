@@ -234,7 +234,16 @@ class BrowserTlsTestCase(keyboard.XServerTestCase, GhosttyTestCase):
                               text=True, timeout=10)
 
     def _visible_windows(self):
-        return self.x("xdotool", "search", "--onlyvisible", "--pid",
+        """Windows the app owns, largest last.
+
+        `--onlyvisible` is deliberately not used: the app's toplevel is
+        decorated and reparented under Xvfb, and `--onlyvisible` filters on
+        the window's own map state, so it intermittently reports nothing even
+        though the window is on screen and can take focus. `search --pid` finds
+        it reliably (verified: it returns the app's toplevel while
+        `--onlyvisible` returns an empty list in the same instant).
+        """
+        return self.x("xdotool", "search", "--pid",
                       str(self.process.pid)).stdout.split()
 
     def _focus_app_window(self):
@@ -266,7 +275,20 @@ class BrowserTlsTestCase(keyboard.XServerTestCase, GhosttyTestCase):
             area = int(fields.get("WIDTH", 0)) * int(fields.get("HEIGHT", 0))
             if area > best_area:
                 best, best_area = window, area
-        self.x("xdotool", "windowfocus", "--sync", best)
+
+        # Xvfb has no window manager, so nothing manages input focus: focus
+        # follows whatever we set, and a window that is not yet viewable makes
+        # `windowfocus` a silent no-op. Verify the focus actually landed before
+        # the caller types, otherwise the keys go to nothing and the dialog
+        # never answers (which is exactly what the CI log showed).
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            self.x("xdotool", "windowfocus", "--sync", best)
+            focused = self.x("xdotool", "getwindowfocus").stdout.strip()
+            if focused == best:
+                return
+            time.sleep(0.1)
+        self.fail("could not focus window %s (focus is %r)" % (best, focused))
 
     def send_keys(self, *keys):
         self._focus_app_window()
@@ -277,11 +299,33 @@ class BrowserTlsTestCase(keyboard.XServerTestCase, GhosttyTestCase):
 
         `presented` is the presentation count captured before the load that
         triggered this dialog, so the harness types only at this dialog.
+
+        The approval keys are re-sent while the dialog has recorded *no*
+        response at all. `adw_dialog_present` schedules presentation, so on a
+        loaded machine the first Shift+Tab/Return can arrive before the dialog
+        is mapped and interactive; those keys are simply lost, which is what
+        the CI failures showed (the dialog was presented, nothing was
+        answered, and the page never loaded). A retry stops as soon as a
+        response is logged: if that response was a cancel the keystroke did
+        reach the dialog and the case fails immediately rather than typing at
+        a half-dismissed dialog.
         """
         self.wait(lambda: page.accepts > 0, "TLS handshake attempt")
         self.wait_dialog(presented)
-        self.send_keys("shift+Tab", "Return")
-        self.wait_loaded(panel_id, page)
+
+        canceled = self.dialogs_canceled()
+        deadline = time.monotonic() + 45
+        while time.monotonic() < deadline:
+            self.send_keys("shift+Tab", "Return")
+            settle = time.monotonic() + 4
+            while time.monotonic() < settle:
+                if page.delivered > 0:
+                    self.wait_loaded(panel_id, page)
+                    return
+                if self.dialogs_canceled() != canceled:
+                    self.fail("approval keys were answered with cancel")
+                time.sleep(0.2)
+        self.fail("TLS approval did not take effect; dialog was never answered")
 
     def dismiss_dialog(self):
         canceled = self.dialogs_canceled()
