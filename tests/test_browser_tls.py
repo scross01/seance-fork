@@ -233,6 +233,10 @@ class BrowserTlsTestCase(keyboard.XServerTestCase, GhosttyTestCase):
         return subprocess.run(args, env=self.env, check=check, capture_output=True,
                               text=True, timeout=10)
 
+    def _visible_windows(self):
+        return self.x("xdotool", "search", "--onlyvisible", "--pid",
+                      str(self.process.pid)).stdout.split()
+
     def _focus_app_window(self):
         """Focus the app's largest visible toplevel.
 
@@ -240,9 +244,21 @@ class BrowserTlsTestCase(keyboard.XServerTestCase, GhosttyTestCase):
         input focus can land on one that never sees the dialog. Picking the
         largest visible window and focusing it explicitly keeps the keyboard
         harness deterministic.
+
+        A window is only returned by ``search --onlyvisible`` once it is
+        viewable, so on a loaded machine this can briefly find nothing. Sending
+        keys then would deliver them to whatever holds the X focus, and the
+        dialog would silently never see them, so wait for a window instead of
+        typing into the void, and fail loudly if one never appears.
         """
-        windows = self.x("xdotool", "search", "--onlyvisible", "--pid",
-                         str(self.process.pid)).stdout.split()
+        deadline = time.monotonic() + 15
+        windows = self._visible_windows()
+        while not windows and time.monotonic() < deadline:
+            time.sleep(0.1)
+            windows = self._visible_windows()
+        if not windows:
+            self.fail("no visible window for pid %d to send keys to" % self.process.pid)
+
         best, best_area = None, -1
         for window in windows:
             geometry = self.x("xdotool", "getwindowgeometry", "--shell", window).stdout
@@ -250,8 +266,7 @@ class BrowserTlsTestCase(keyboard.XServerTestCase, GhosttyTestCase):
             area = int(fields.get("WIDTH", 0)) * int(fields.get("HEIGHT", 0))
             if area > best_area:
                 best, best_area = window, area
-        if best:
-            self.x("xdotool", "windowfocus", "--sync", best)
+        self.x("xdotool", "windowfocus", "--sync", best)
 
     def send_keys(self, *keys):
         self._focus_app_window()
