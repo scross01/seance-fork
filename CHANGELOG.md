@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Fixed
+- Activating a notification no longer marks the pane's other alerts read when
+  focus is restored asynchronously, which previously read the alert that
+  arrived after the popover opened.
+
 ## [0.8.0]
 
 ### Added

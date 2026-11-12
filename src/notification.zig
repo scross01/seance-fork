@@ -304,7 +304,13 @@ pub const NotificationStore = struct {
 pub const NotificationCenter = struct {
     store: NotificationStore = .{},
     ctx: ?*anyopaque = null, // WindowState pointer (opaque to avoid circular import)
-    suppress_focus_mark_read: bool = false, // set during notification-panel jump to prevent marking sibling alerts read on focus
+    // Set during a notification-panel jump so the focus it causes does not
+    // blanket-mark the pane's sibling alerts read. Scoped to the activated
+    // pane and consumed by the first focus that observes it: GTK delivers the
+    // restored focus after the activating key handler returns, so a flag
+    // cleared at the end of that handler would be gone by the time focus lands.
+    suppress_focus_mark_read: bool = false,
+    suppress_focus_pane_id: ?u64 = null,
 
     // Callbacks (wired by window.zig during init)
     on_sidebar_refresh: ?*const fn (*anyopaque) void = null,

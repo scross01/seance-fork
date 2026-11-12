@@ -402,10 +402,13 @@ fn onRowActivated(
     self.center.markReadById(id);
     self.endSignalGuard(was_refreshing);
 
-    // Suppress the blanket markReadForPane that pane.focus() would trigger,
-    // so sibling alerts for this pane stay unread.
+    // Suppress the blanket markReadForPane that focusing this pane would
+    // trigger, so its sibling alerts stay unread. This is deliberately not
+    // cleared on return: the jump only requests focus, and GTK delivers it
+    // after this handler unwinds, so clearing here would let that focus
+    // blanket-read the arrival. The pane's focus path consumes it instead.
     self.center.suppress_focus_mark_read = true;
-    defer self.center.suppress_focus_mark_read = false;
+    self.center.suppress_focus_pane_id = p_id;
 
     // Navigate to source
     if (self.on_jump) |jump| {

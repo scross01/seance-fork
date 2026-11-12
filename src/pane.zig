@@ -287,7 +287,18 @@ pub const Pane = struct {
                         c.gtk_widget_get_visible(popover) != 0
                     else
                         false;
-                    if (!state.notif_center.suppress_focus_mark_read and !popover_open) {
+                    const suppressed = state.notif_center.suppress_focus_mark_read and
+                        state.notif_center.suppress_focus_pane_id == self.id;
+                    if (popover_open) {
+                        // Leave the one-shot suppression armed: the focus GTK
+                        // restores when the popover closes arrives later.
+                    } else if (suppressed) {
+                        // This is the pane a notification activation jumped to,
+                        // and only the record acted on was read. Consume the
+                        // suppression so a later ordinary focus marks read.
+                        state.notif_center.suppress_focus_mark_read = false;
+                        state.notif_center.suppress_focus_pane_id = null;
+                    } else {
                         state.notif_center.markReadForPane(self.id, @ptrCast(self));
                     }
                 }
