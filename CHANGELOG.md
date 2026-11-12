@@ -2,16 +2,37 @@
 
 ## [Unreleased]
 
+### Added
+- `system.tree` reports each pane group's settled layout state, so automation can wait for a workspace to finish laying out instead of polling sizes.
+- Starved-pane diagnostics behind `SEANCE_INIT_DIAG` are documented, naming what each sample reports.
+
+### Changed
+- Panes lay out from the container's allocation instead of a viewport poll timer, which removes the panes that stayed blank after a split, restore, or an offscreen stacked column.
+- Terminal and browser panels share one ID counter, so a panel keeps a single identity across every layout operation.
+- Session snapshots are written atomically, ordered, and restored within a bounded budget.
+- The `scrollback-lines` setting maps onto Ghostty's line-based scrollback limit.
+- Browser evaluation returns native JSON with one reply owner per request.
+- CI requires the installed-binary GUI suites instead of silently skipping them, and releases build through `make build`.
+
 ### Fixed
-- Agent launch wrappers no longer print the hook response (`OK`) into the pane
-  when the agent exits. The Hermes, Pi, MiMo Code, Kilo Code, and Mistral Vibe
-  wrappers fired their `session-end` hook without suppressing stdout, so every
-  agent exit leaked `OK` into the terminal.
-- Hermes no longer leaves a stale "Idle" row in the workspace status panel after
-  the process exits. Hermes fires `session-end` between turns, so that event
-  cannot clear status without wiping the per-turn Idle state; the launch wrapper
-  now reports a dedicated `process-exit` event that clears the surface's entry
-  once no hermes process remains.
+- Agent launch wrappers no longer print the hook response (`OK`) into the pane when the agent exits.
+- Hermes no longer leaves a stale "Idle" row after the process exits; a dedicated `process-exit` event clears the entry once no hermes process remains.
+- Stacked rows are seated by height weight at every insertion point, so reorder, close, expel, and restore keep the intended ratios.
+- Browser panels transfer safely across stacked and tabbed columns, and an expelled panel gets its own row.
+- Opening a URL from a pane no longer freezes the interface.
+- Browser TLS approval is scoped to the approved certificate and host.
+- Notifications target records by stable identity, keep siblings unread when the popover reopens, and truncate titles at UTF-8 boundaries.
+- Agent configuration installers fail closed when an existing file cannot be read, write atomically, keep a one-time backup, and preserve user settings across install, upgrade and disable.
+- Pool hooks merge without duplicate events, so existing mappings stay valid.
+- Control-socket requests that arrive after connect are no longer dropped, and the owned socket path is removed on clean shutdown.
+- Delayed file drops and tab dialogs resolve through live identities instead of freed panels.
+- Installer descriptors are closed, and a failed temporary write can be retried.
+- Session snapshots and installer writes flush to disk before publishing the new name, so a power loss cannot leave a truncated file behind.
+- Workspace layout signals are detached on teardown so a later allocation cannot call into freed storage.
+- Port and numeric settings are validated before use, and workspace ordinal exhaustion omits the port variables instead of overflowing.
+- Freebuff and Codebuff sidebar status track their own launch, and a wrapper exits without leaving a monitor behind.
+- The AppImage ships the transparent PNG icon, and the dangling root icon symlink is repaired.
+- Git worktree metadata resolves correctly, and equal-length branch name changes are detected.
 
 ## [0.7.0]
 
