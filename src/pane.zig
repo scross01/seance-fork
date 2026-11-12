@@ -276,34 +276,37 @@ pub const Pane = struct {
             c.ghostty_surface_set_focus(s, true);
         }
 
-        if (self.has_unread) {
-            const Window = @import("window.zig");
-            if (Window.window_manager) |wm| {
-                if (wm.findByWorkspaceId(self.workspace_id)) |state| {
-                    // While the notification popover owns the keyboard, a focus
-                    // event it triggers must not blanket-read the pane's
-                    // remaining alerts; only the record acted on was read.
-                    const popover_open = if (state.notif_popover) |popover|
-                        c.gtk_widget_get_visible(popover) != 0
-                    else
-                        false;
-                    const suppressed = state.notif_center.suppress_focus_mark_read and
-                        state.notif_center.suppress_focus_pane_id == self.id;
-                    if (popover_open) {
-                        // Leave the one-shot suppression armed: the focus GTK
-                        // restores when the popover closes arrives later.
-                    } else if (suppressed) {
-                        // This is the pane a notification activation jumped to,
-                        // and only the record acted on was read. Consume the
-                        // suppression so a later ordinary focus marks read.
+        // While the notification popover owns the keyboard, a focus event it
+        // triggers must not blanket-read the pane's remaining alerts; only the
+        // record acted on was read. The focus GTK restores when the popover
+        // closes arrives later, so the suppression must be consumed by a real
+        // focus rather than expiring with the handler that requested the jump.
+        // It is keyed on the pane, and consumed even when that pane has no
+        // unread alerts left, so it can never suppress a later ordinary focus.
+        const Window = @import("window.zig");
+        if (Window.window_manager) |wm| {
+            if (wm.findByWorkspaceId(self.workspace_id)) |state| {
+                const popover_open = if (state.notif_popover) |popover|
+                    c.gtk_widget_get_visible(popover) != 0
+                else
+                    false;
+                const is_suppressed_target = state.notif_center.suppress_focus_mark_read and
+                    state.notif_center.suppress_focus_pane_id == self.id;
+                if (!popover_open) {
+                    if (is_suppressed_target) {
+                        // This is the focus the activation jump asked for, and
+                        // only the acted-on record was read. Consume the
+                        // suppression so a later focus behaves normally.
                         state.notif_center.suppress_focus_mark_read = false;
                         state.notif_center.suppress_focus_pane_id = null;
-                    } else {
+                    } else if (self.has_unread) {
                         state.notif_center.markReadForPane(self.id, @ptrCast(self));
                     }
                 }
             }
-        } else {
+        }
+
+        if (!self.has_unread) {
             c.gtk_widget_remove_css_class(self.widget, "pane-notification");
         }
     }
