@@ -83,8 +83,8 @@ class GhosttyTestCase(unittest.TestCase):
         self.assertTrue(reply["ok"], reply)
         return reply.get("result")
 
-    def wait(self, check, description):
-        deadline = time.monotonic() + 15
+    def wait(self, check, description, timeout=15):
+        deadline = time.monotonic() + timeout
         last = None
         while time.monotonic() < deadline:
             try:

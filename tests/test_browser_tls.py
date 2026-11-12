@@ -203,9 +203,13 @@ class BrowserTlsTestCase(keyboard.XServerTestCase, GhosttyTestCase):
     def wait_dialog(self, previous):
         self.wait(lambda: self.dialogs_presented() > previous, "TLS dialog presentation")
 
-    def wait_loaded(self, panel_id, page, timeout=15):
+    def wait_loaded(self, panel_id, page, timeout=45):
+        # A TLS-approved page has to clear the certificate decision, load the
+        # document and render it before the marker is readable. On a loaded CI
+        # runner that sequence routinely exceeds the 15 s default, so allow
+        # more headroom here; the assertion itself is unchanged.
         self.wait(lambda: page.marker in self.text(panel_id),
-                  "fixture content for %s" % page.marker)
+                  "fixture content for %s" % page.marker, timeout=timeout)
 
     def assert_not_delivered(self, panel_id, page, baseline, seconds=3.0):
         """Observe a bounded window in which the fixture must stay untouched.
