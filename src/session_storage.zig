@@ -160,6 +160,9 @@ pub const Store = struct {
         // Creation modes pass through the process umask; set the mode
         // explicitly so the committed snapshot is exactly owner-only.
         try file.setPermissions(io_, SNAPSHOT_MODE);
+        // Durability barrier: rename only publishes the entry, so without this
+        // flush a power loss can leave the new name pointing at unwritten data.
+        try file.sync(io_);
         if (self.hook) |h| h(.before_rename);
         if (self.fail_at == .before_rename) return error.WriteFailed;
         try std.Io.Dir.renameAbsolute(tmp_path, path, io_);

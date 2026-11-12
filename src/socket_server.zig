@@ -18,9 +18,26 @@ pub const SocketServer = struct {
     bound: bool = false,
     bound_dev: u64 = 0,
     bound_ino: u64 = 0,
+    /// Accepted connections whose request has not arrived yet. A local client
+    /// can be descheduled between connect() and write(), so instead of blocking
+    /// the GTK main thread for an arrival window, park the descriptor and let a
+    /// GIO watch wake us when bytes are readable.
+    pending: [max_pending_connections]PendingConn = [_]PendingConn{.{}} ** max_pending_connections,
     /// Test seam: force the post-bind failure path instead of depending on a
     /// rare fchmod/listen error. Production code never sets this.
     test_fail_after_bind: bool = false,
+
+    const max_pending_connections = 8;
+    /// How long a parked connection may stay silent before it is closed. A ctl
+    /// client always writes immediately after connecting, so this only bounds
+    /// a peer that never sends.
+    const pending_arrival_ms: c.guint = 5000;
+
+    const PendingConn = struct {
+        fd: c_int = -1,
+        watch_id: c.guint = 0,
+        timeout_id: c.guint = 0,
+    };
 
     /// Return the resolved socket path (expanded, no ~).
     /// Prefers XDG_RUNTIME_DIR for runtime sockets, falls back to $HOME/.seance/.
@@ -149,6 +166,20 @@ pub const SocketServer = struct {
             _ = c.g_source_remove(self.watch_id);
             self.watch_id = 0;
         }
+        // Drop parked connections too: their watches call back into this
+        // struct and reference descriptors that must not outlive the server.
+        for (&self.pending) |*slot| {
+            if (slot.watch_id != 0) {
+                _ = c.g_source_remove(slot.watch_id);
+                slot.watch_id = 0;
+            }
+            if (slot.timeout_id != 0) {
+                _ = c.g_source_remove(slot.timeout_id);
+                slot.timeout_id = 0;
+            }
+            if (slot.fd >= 0) posix.close(slot.fd);
+            slot.fd = -1;
+        }
         self.releaseSocket();
     }
 
@@ -198,26 +229,82 @@ pub const SocketServer = struct {
         const self: *SocketServer = @ptrCast(@alignCast(user_data));
         if (self.fd < 0) return 0;
 
-        // Accept connection
+        // Accept connection. The descriptor is either handed to a parked slot
+        // (which then owns it) or closed here, so the deferred close is keyed
+        // on the same flag the park path sets.
         const conn_fd = posix.accept(@intCast(self.fd), null, null, 0) catch return 1;
         var transferred = false;
         defer {
             if (!transferred) posix.close(conn_fd);
         }
 
-        // Guard: don't let a client that never sends stall the GTK main thread.
         // A local client writes right after connecting, but it can be
-        // descheduled between the two calls, so allow a bounded arrival window
-        // instead of dropping the connection after one millisecond.
-        var pfd = [1]posix.pollfd{.{
-            .fd = conn_fd,
-            .events = posix.POLL.IN,
-            .revents = 0,
-        }};
-        const request_arrival_ms = 100;
-        const request_ready = posix.poll(&pfd, request_arrival_ms) catch return 1;
-        if (request_ready == 0) return 1; // no request within the window
-        if (pfd[0].revents & posix.POLL.IN == 0) return 1; // peer hung up
+        // descheduled between the two calls. Never block the main loop waiting
+        // for it: park the descriptor under a GIO watch and return. If the data
+        // is already there the watch fires on the next main-loop iteration.
+        if (self.parkConnection(conn_fd) == null) return 1;
+        transferred = true;
+        return 1;
+    }
+
+    /// Hand a freshly accepted connection to a readable-watch so the request
+    /// can be read without stalling the main loop. Returns the slot, or null
+    /// when all slots are busy (the caller then closes the descriptor).
+    fn parkConnection(self: *SocketServer, conn_fd: c_int) ?*PendingConn {
+        for (&self.pending) |*slot| {
+            if (slot.fd >= 0) continue;
+            slot.* = .{ .fd = conn_fd };
+            const channel = c.g_io_channel_unix_new(conn_fd);
+            _ = c.g_io_channel_set_encoding(channel, null, null);
+            c.g_io_channel_set_buffered(channel, 0);
+            slot.watch_id = c.g_io_add_watch(channel, c.G_IO_IN, @ptrCast(&onRequestReady), @ptrCast(slot));
+            c.g_io_channel_unref(channel);
+            slot.timeout_id = c.g_timeout_add(pending_arrival_ms, @ptrCast(&onPendingTimeout), @ptrCast(slot));
+            return slot;
+        }
+        return null;
+    }
+
+    fn onRequestReady(_: ?*c.GIOChannel, _: c.GIOCondition, user_data: c.gpointer) callconv(.c) c.gboolean {
+        const slot: *PendingConn = @ptrCast(@alignCast(user_data));
+        const conn_fd = slot.fd;
+        // The deadline already reclaimed this connection.
+        if (conn_fd < 0) return 0;
+        // Disarm before dispatching: readAndDispatch closes the descriptor, and
+        // a leftover deadline must never touch a recycled fd number.
+        slot.fd = -1;
+        if (slot.timeout_id != 0) {
+            _ = c.g_source_remove(slot.timeout_id);
+            slot.timeout_id = 0;
+        }
+        slot.watch_id = 0;
+        readAndDispatch(conn_fd);
+        return 0; // one request per connection: drop the watch
+    }
+
+    fn onPendingTimeout(user_data: c.gpointer) callconv(.c) c.gboolean {
+        const slot: *PendingConn = @ptrCast(@alignCast(user_data));
+        slot.timeout_id = 0;
+        // The readable-watch owns cleanup when it fires first.
+        if (slot.fd < 0) return 0;
+        // Remove the watch before closing so GIO can never read a closed fd.
+        if (slot.watch_id != 0) {
+            _ = c.g_source_remove(slot.watch_id);
+            slot.watch_id = 0;
+        }
+        posix.close(slot.fd);
+        slot.fd = -1;
+        return 0;
+    }
+
+    /// Read one request from an accepted connection, dispatch it and answer.
+    /// Takes ownership of `conn_fd` on every path: it either replies and closes,
+    /// or (browser.eval) hands the descriptor to the deferred eval context.
+    fn readAndDispatch(conn_fd: c_int) void {
+        var transferred = false;
+        defer {
+            if (!transferred) posix.close(conn_fd);
+        }
 
         // Read command. Sized to accommodate a 4096-byte text payload in its
         // worst-case JSON encoding: every byte expanded to `\u00XX` (6 bytes)
@@ -230,12 +317,14 @@ pub const SocketServer = struct {
             if (n == 0) break;
             total += n;
             if (std.mem.indexOfScalar(u8, buf[0..total], '\n') != null) break;
+            // The watch proved readability; this only coalesces a payload that
+            // straddles several writes, so a small bound is enough.
             var pfd2 = [1]posix.pollfd{.{ .fd = conn_fd, .events = posix.POLL.IN, .revents = 0 }};
-            const ready = posix.poll(&pfd2, 1) catch break; // 1ms bounded stall
+            const ready = posix.poll(&pfd2, 1) catch break;
             if (ready == 0) break;
             if (pfd2[0].revents & posix.POLL.IN == 0) break;
         }
-        if (total == 0) return 1;
+        if (total == 0) return;
 
         // Trim trailing newline/whitespace
         const line = std.mem.trimEnd(u8, buf[0..total], &[_]u8{ '\r', '\n', ' ' });
@@ -254,7 +343,7 @@ pub const SocketServer = struct {
         } else |_| {}
 
         if (is_browser_eval) {
-            const line_copy = std.heap.page_allocator.dupe(u8, line) catch return 1;
+            const line_copy = std.heap.page_allocator.dupe(u8, line) catch return;
             // startBrowserEval owns the copy and the connection from here on:
             // it answers and closes, or keeps the descriptor for a deferred
             // reply. Neither is closed or freed again on this path.
@@ -263,14 +352,12 @@ pub const SocketServer = struct {
                 .alloc = std.heap.page_allocator,
                 .close = closeFd,
             });
-            return 1;
+            return;
         }
 
         var resp_buf: [16384]u8 = undefined;
         const response = handleJsonRequest(line, &resp_buf);
         _ = posix.write(conn_fd, response) catch {};
-
-        return 1; // continue watching
     }
 
     // ── JSON protocol ─────────────────────────────────────────────────

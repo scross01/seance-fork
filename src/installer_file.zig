@@ -62,6 +62,10 @@ pub fn install(path: []const u8, data: []const u8, opts: Options) !void {
         return error.WriteFailed;
     }
     try tmp.writeStreamingAll(io_, data);
+    // Flush before the rename: without this the rename can reach the journal
+    // while the data blocks are still dirty, so a power loss would expose an
+    // intact directory entry pointing at a truncated file.
+    try tmp.sync(io_);
     if (opts.fail_at == .rename) return error.RenameFailed;
     try std.Io.Dir.renameAbsolute(tmp_path, path, io_);
     renamed = true;

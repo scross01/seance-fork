@@ -43,10 +43,17 @@ pub const OwnedTempFile = struct {
         // hostile entry can never be followed.
         var attempts: u32 = 0;
         while (attempts < 16) : (attempts += 1) {
-            const ts = io.timestamp();
-            const pid = std.c.getpid();
-            const rand_part = @as(u64, @bitCast(ts)) ^ (@as(u64, @intCast(pid)) << 32);
-            const dir_name = std.fmt.bufPrint(&self.dir_path, "{s}/seance-private-{x}-{d}", .{ base_dir, rand_part, attempts }) catch return error.PathTooLong;
+            // The directory name must be unguessable, not merely unique: a
+            // predictable timestamp/pid pair lets another process pre-create
+            // (and own) the path before we do. Derive it from real entropy and
+            // fall back to the clock only if the pool is unavailable.
+            var nonce: u64 = 0;
+            io.get().randomSecure(std.mem.asBytes(&nonce)) catch {
+                const ts = io.timestamp();
+                const pid = std.c.getpid();
+                nonce = @as(u64, @bitCast(ts)) ^ (@as(u64, @intCast(pid)) << 32);
+            };
+            const dir_name = std.fmt.bufPrint(&self.dir_path, "{s}/seance-private-{x}-{d}", .{ base_dir, nonce, attempts }) catch return error.PathTooLong;
             self.dir_len = dir_name.len;
             // Ensure null termination not needed for dir; store slice length.
             std.Io.Dir.createDirAbsolute(io.get(), self.dir_path[0..self.dir_len], .default_dir) catch |e| switch (e) {

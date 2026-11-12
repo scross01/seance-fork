@@ -99,14 +99,6 @@ fn readFileContent(path: []const u8, buf: []u8) ?[]const u8 {
     return buf[0..n];
 }
 
-fn readFileSlice(path: []const u8, buf: []u8) ?[]const u8 {
-    const file = std.Io.Dir.openFileAbsolute(io.get(), path, .{}) catch return null;
-    defer file.close(io.get());
-    const n = file.readStreaming(io.get(), &.{buf}) catch return null;
-    if (n == 0) return null;
-    return buf[0..n];
-}
-
 test "getBranch reads .git directory HEAD" {
     const testing = std.testing;
     var tmp = testing.tmpDir(.{});

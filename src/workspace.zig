@@ -270,6 +270,11 @@ pub const Workspace = struct {
     layout_passes: u64 = 0,
     tick_count: u64 = 0,
     tick_callback_id: c.guint = 0,
+    /// Handlers for the container/fixed `notify::width|height` signals that
+    /// drive the first layout. Unlike the pane-group handlers these live on
+    /// widgets that outlive a column, so they must be detached explicitly
+    /// before the Workspace struct is freed. Zero means "not connected".
+    layout_signal_ids: [4]c.gulong = [_]c.gulong{0} ** 4,
     last_frame_time: i64 = 0,
 
     // Suppress transient onFocusEnter during restructuring
@@ -414,15 +419,11 @@ pub const Workspace = struct {
             null,
         );
         ws.initResizeHandles();
-        _ = c.g_signal_connect_data(@ptrCast(widgets.container), "notify::width", @as(c.GCallback, @ptrCast(&onContainerAllocated)), @ptrCast(ws), null, 0);
-        _ = c.g_signal_connect_data(@ptrCast(widgets.container), "notify::height", @as(c.GCallback, @ptrCast(&onContainerAllocated)), @ptrCast(ws), null, 0);
-        _ = c.g_signal_connect_data(@ptrCast(widgets.fixed), "notify::width", @as(c.GCallback, @ptrCast(&onContainerAllocated)), @ptrCast(ws), null, 0);
-        _ = c.g_signal_connect_data(@ptrCast(widgets.fixed), "notify::height", @as(c.GCallback, @ptrCast(&onContainerAllocated)), @ptrCast(ws), null, 0);
+        ws.connectLayoutSignals();
         if (pane_mod.initDiagEnabled()) {
-            std.log.info("workspace {d}: hooks container=0x{x} fixed=0x{x} child=0x{x}", .{
+            std.log.info("workspace {d}: hooks container=0x{x} fixed=0x{x}", .{
                 ws.id,
                 @intFromPtr(widgets.container),
-                @intFromPtr(widgets.fixed),
                 @intFromPtr(widgets.fixed),
             });
         }
@@ -453,15 +454,11 @@ pub const Workspace = struct {
             null,
         );
         ws.initResizeHandles();
-        _ = c.g_signal_connect_data(@ptrCast(widgets.container), "notify::width", @as(c.GCallback, @ptrCast(&onContainerAllocated)), @ptrCast(ws), null, 0);
-        _ = c.g_signal_connect_data(@ptrCast(widgets.container), "notify::height", @as(c.GCallback, @ptrCast(&onContainerAllocated)), @ptrCast(ws), null, 0);
-        _ = c.g_signal_connect_data(@ptrCast(widgets.fixed), "notify::width", @as(c.GCallback, @ptrCast(&onContainerAllocated)), @ptrCast(ws), null, 0);
-        _ = c.g_signal_connect_data(@ptrCast(widgets.fixed), "notify::height", @as(c.GCallback, @ptrCast(&onContainerAllocated)), @ptrCast(ws), null, 0);
+        ws.connectLayoutSignals();
         if (pane_mod.initDiagEnabled()) {
-            std.log.info("workspace {d}: hooks container=0x{x} fixed=0x{x} child=0x{x}", .{
+            std.log.info("workspace {d}: hooks container=0x{x} fixed=0x{x}", .{
                 ws.id,
                 @intFromPtr(widgets.container),
-                @intFromPtr(widgets.fixed),
                 @intFromPtr(widgets.fixed),
             });
         }
@@ -469,6 +466,29 @@ pub const Workspace = struct {
         _ = try ws.addColumn(cwd);
 
         return ws;
+    }
+
+    /// Attach the container/fixed allocation notifications that drive the first
+    /// layout. Handler IDs are kept so teardown can detach them: these widgets
+    /// are owned by the caller and can outlive this Workspace.
+    fn connectLayoutSignals(self: *Workspace) void {
+        self.layout_signal_ids = .{
+            c.g_signal_connect_data(@ptrCast(self.container), "notify::width", @as(c.GCallback, @ptrCast(&onContainerAllocated)), @ptrCast(self), null, 0),
+            c.g_signal_connect_data(@ptrCast(self.container), "notify::height", @as(c.GCallback, @ptrCast(&onContainerAllocated)), @ptrCast(self), null, 0),
+            c.g_signal_connect_data(@ptrCast(self.fixed), "notify::width", @as(c.GCallback, @ptrCast(&onContainerAllocated)), @ptrCast(self), null, 0),
+            c.g_signal_connect_data(@ptrCast(self.fixed), "notify::height", @as(c.GCallback, @ptrCast(&onContainerAllocated)), @ptrCast(self), null, 0),
+        };
+    }
+
+    /// Detach the layout signals exactly once. Guarded by the "not connected"
+    /// zero so a repeated destroy cannot disconnect a recycled handler id.
+    fn disconnectLayoutSignals(self: *Workspace) void {
+        for (self.layout_signal_ids, 0..) |id, i| {
+            if (id == 0) continue;
+            const emitter: *c.GObject = if (i < 2) @ptrCast(self.container) else @ptrCast(self.fixed);
+            c.g_signal_handler_disconnect(emitter, id);
+            self.layout_signal_ids[i] = 0;
+        }
     }
 
     /// The tick callback is the only place cached_width/cached_height are
@@ -1854,6 +1874,9 @@ pub const Workspace = struct {
     }
 
     pub fn destroy(self: *Workspace) void {
+        // Detach the layout notifications first: the container/fixed widgets
+        // outlive this struct, and a later allocation would call back into it.
+        self.disconnectLayoutSignals();
         // Remove tick callback before destroying widgets
         if (self.tick_callback_id != 0) {
             c.gtk_widget_remove_tick_callback(self.fixed, self.tick_callback_id);

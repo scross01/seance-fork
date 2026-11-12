@@ -388,8 +388,12 @@ pub const NotificationCenter = struct {
         // 8. Desktop notification (libnotify) — only if not in active group
         if (opts.desktop_notify and !vis.in_active_group) {
             if (self.on_desktop_notify) |cb| {
+                // Reserve the trailing slot for the terminator: `opts.title` is
+                // caller-supplied and unbounded (notification.create passes the
+                // raw JSON string straight through), so copying into the whole
+                // array could return len == 257 and put the NUL one past the end.
                 var title_z: [257]u8 = undefined;
-                const tlen = text_mod.copy(title_z[0..], opts.title);
+                const tlen = text_mod.copy(title_z[0 .. title_z.len - 1], opts.title);
                 title_z[tlen] = 0;
 
                 // Build combined body: subtitle + body
@@ -917,4 +921,38 @@ test "bounded fields keep complete characters at capacity" {
 
     notif.setSubtitle("\xc3\xa9\xc3\xa9");
     try std.testing.expectEqualStrings("\xc3\xa9\xc3\xa9", notif.getSubtitle());
+}
+
+test "desktop notification truncates an oversized title without overrunning" {
+    // Regression: the title buffer is sized for 256 bytes plus a terminator.
+    // An unbounded `notification.create` title used to copy up to the full 257
+    // bytes and then write the NUL at index 257, one past the end.
+    const Seam = struct {
+        var title_len: usize = 0;
+        var valid: bool = false;
+        fn desktopNotify(title: [*:0]const u8, _: [*:0]const u8) void {
+            const slice = std.mem.span(title);
+            title_len = slice.len;
+            valid = std.unicode.utf8ValidateSlice(slice);
+        }
+    };
+
+    // `emit` requires a non-null ctx; the callbacks below ignore it, so any
+    // stable address will do.
+    var dummy: u8 = 0;
+    var center = NotificationCenter{ .ctx = &dummy };
+    center.on_desktop_notify = &Seam.desktopNotify;
+
+    var long: [1024]u8 = undefined;
+    @memset(&long, 't');
+    center.emit(.{ .title = &long, .pane_id = 1, .workspace_id = 1 });
+    try std.testing.expectEqual(@as(usize, 256), Seam.title_len);
+    try std.testing.expect(Seam.valid);
+
+    // A multibyte tail that would straddle the reserved terminator slot still
+    // yields a valid prefix rather than a partial codepoint.
+    const emoji_tail = ("t" ** 255) ++ "\xf0\x9f\x98\x80";
+    center.emit(.{ .title = emoji_tail, .pane_id = 1, .workspace_id = 1 });
+    try std.testing.expectEqual(@as(usize, 255), Seam.title_len);
+    try std.testing.expect(Seam.valid);
 }

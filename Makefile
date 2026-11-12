@@ -3,6 +3,12 @@
 # from there. Never launch zig-out/bin/seance directly: it lacks installed
 # assets (icons, shell integration, themes).
 BRANCH := $(shell git rev-parse --abbrev-ref HEAD 2>/dev/null)
+# A detached HEAD reports the literal "HEAD", which is not a branch: treat it
+# like a source export so a tagged build keeps the bare release version instead
+# of producing `0.7.0-HEAD-<sha>`.
+ifeq ($(BRANCH),HEAD)
+BRANCH :=
+endif
 # Branch names may contain '/' (e.g. feature/foo). Left as-is, that lands in the
 # AppImage output path and appimagetool fails with "Could not create destination
 # file: No such file or directory" because the parent dir does not exist.
@@ -37,15 +43,17 @@ export PKG_CONFIG_PATH := $(subst $(space),:,$(strip $(PKG_CONFIG_PATH) $(PKG_CO
 # not be used. Resolution order:
 #   1. `make ZIG=/path/to/zig build` — explicit override always wins
 #   2. a `zig` on PATH that reports exactly 0.16.0
-#   3. the keg-only Homebrew zig@0.16 install (not linked onto PATH)
+#   3. the keg-only Homebrew zig@0.16 install, located through `brew --prefix`
+#      so this works on any Homebrew prefix instead of a hardcoded path
 # `check-zig` enforces the pin for every zig-invoking target.
 ZIG_VERSION_PIN := 0.16.0
-ZIG_BREW_016 ?= /home/linuxbrew/.linuxbrew/opt/zig@0.16/bin/zig
+ZIG_BREW_PREFIX := $(shell brew --prefix zig@0.16 2>/dev/null)
+ZIG_BREW_016 ?= $(if $(ZIG_BREW_PREFIX),$(ZIG_BREW_PREFIX)/bin/zig)
 PATH_ZIG_VERSION := $(shell zig version 2>/dev/null)
 ifeq ($(PATH_ZIG_VERSION),$(ZIG_VERSION_PIN))
 ZIG ?= zig
 else
-ZIG ?= $(ZIG_BREW_016)
+ZIG ?= $(if $(ZIG_BREW_016),$(ZIG_BREW_016),zig)
 endif
 
 .PHONY: build run appimage clean check-zig images

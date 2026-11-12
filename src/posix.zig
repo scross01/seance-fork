@@ -149,14 +149,6 @@ pub const FileIdentity = struct {
     ino: u64,
 };
 
-pub fn fdIdentity(fd: c.fd_t) !FileIdentity {
-    var st: std.os.linux.Statx = undefined;
-    const rc = std.os.linux.statx(fd, "", 0x1000, std.os.linux.STATX.BASIC_STATS, &st);
-    if (rc != 0) return failure(@enumFromInt(@intFromEnum(std.os.linux.errno(rc))));
-    const dev = (@as(u64, st.dev_major) << 32) | @as(u64, st.dev_minor);
-    return .{ .dev = dev, .ino = st.ino };
-}
-
 pub fn pathIdentity(path: []const u8) !FileIdentity {
     var buf: [std.fs.max_path_bytes]u8 = undefined;
     const path_z = try std.fmt.bufPrintZ(&buf, "{s}", .{path});
