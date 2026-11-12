@@ -81,8 +81,18 @@ jobs:
         # One strict step: every listed suite must run against the installed
         # binary, and a skip, missing file, zero-test module or failure fails
         # the job. Broad discovery above covers wrappers and plugins only.
+        #
+        # GitHub's runners deny unprivileged user namespaces (AppArmor
+        # restricts them on Ubuntu 24.04+), so WebKitGTK's bubblewrap sandbox
+        # cannot start: every browser panel died with "bwrap: setting up uid
+        # map: Permission denied" / "Failed to fully launch dbus-proxy", which
+        # failed six suites. The sandbox is a defence against untrusted remote
+        # content, and these suites load only local fixtures, so disabling it
+        # for the test run keeps the suites meaningful. It is not a shipping
+        # default: the built binary still sandboxes normally.
         run: xvfb-run -a python3 -B tests/run_required_gui.py
         env:
           SEANCE_TEST_BINARY: ${{ github.workspace }}/AppDir/usr/bin/seance
           G_DEBUG: fatal-criticals
           GTK_A11Y: none
+          WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS: "1"
