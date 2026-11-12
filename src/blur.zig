@@ -48,7 +48,7 @@ fn initWayland(display: *c.GdkDisplay) void {
         .global = &onRegistryGlobal,
         .global_remove = &onRegistryGlobalRemove,
     };
-    _ = c.wl_proxy_add_listener(registry, @constCast(@ptrCast(&listener)), null);
+    _ = c.wl_proxy_add_listener(registry, @ptrCast(@constCast(&listener)), null);
     _ = c.wl_display_roundtrip(wl_display);
 }
 
