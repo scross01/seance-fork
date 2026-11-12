@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Added
+- `seance --version` (and `-V`) prints the release version and exits without
+  starting the window. Both this and the About dialog read one version
+  constant, so they cannot disagree.
+
 ## [0.8.0]
 
 ### Added

@@ -21,7 +21,7 @@ SCRIPT = ROOT / "scripts" / "bump-version.sh"
 
 # Every hand-maintained copy of the release version, besides build.zig.zon.
 VERSION_FILES = (
-    "src/app.zig",
+    "src/version.zig",
     "pkg/arch/PKGBUILD",
     "pkg/arch/.SRCINFO",
     "resources/com.seance-fork.app.metainfo.xml",
@@ -68,14 +68,21 @@ class VersionSyncTests(unittest.TestCase):
     def test_zon_version_is_semver(self):
         self.assertRegex(self.version, r"^\d+\.\d+\.\d+$")
 
-    def test_about_dialog_version(self):
+    def test_version_module(self):
         found = re.search(
-            r'adw_about_dialog_set_version\(d, "([^"]*)"\);',
-            (ROOT / "src/app.zig").read_text(),
+            r'^pub const string = "([^"]*)";$',
+            (ROOT / "src/version.zig").read_text(),
+            re.MULTILINE,
         )
-        if found is None:
-            self.skipTest("the About dialog version is injected via build_options")
+        self.assertIsNotNone(found, "src/version.zig has no version constant")
         self.assertEqual(found.group(1), self.version)
+
+    def test_version_module_is_the_single_literal(self):
+        """The About dialog and the CLI must read src/version.zig, not restate it."""
+        app = (ROOT / "src" / "app.zig").read_text()
+        self.assertIn("adw_about_dialog_set_version(d, version_info.string);", app)
+        main = (ROOT / "src" / "main.zig").read_text()
+        self.assertIn("ctl.printVersion(version.string);", main)
 
     def test_pkgbuild_pkgver(self):
         lines = (ROOT / "pkg/arch/PKGBUILD").read_text().splitlines()
@@ -131,9 +138,9 @@ class VersionSyncTests(unittest.TestCase):
         off_version = "9.8.7"
         v = self.version
         mutations = {
-            "src/app.zig": lambda text: text.replace(
-                f'adw_about_dialog_set_version(d, "{v}");',
-                f'adw_about_dialog_set_version(d, "{off_version}");', 1),
+            "src/version.zig": lambda text: text.replace(
+                f'pub const string = "{v}";',
+                f'pub const string = "{off_version}";', 1),
             "pkg/arch/PKGBUILD": lambda text: text.replace(
                 f"pkgver={v}", f"pkgver={off_version}", 1),
             "pkg/arch/.SRCINFO": lambda text: text.replace(

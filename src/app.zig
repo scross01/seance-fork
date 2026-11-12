@@ -16,6 +16,8 @@ const installer_file = @import("installer_file.zig");
 const vibe_hooks = @import("vibe_hooks.zig");
 const blur_mod = @import("blur.zig");
 const kde_decoration = @import("kde_decoration.zig");
+// Aliased: `version` is already a parameter name in the plugin marker helpers.
+const version_info = @import("version.zig");
 
 const is_linux = builtin.os.tag == .linux;
 
@@ -1685,7 +1687,7 @@ fn onAboutAction(_: ?*c.GSimpleAction, _: ?*c.GVariant, data: c.gpointer) callco
     const d: *c.AdwAboutDialog = @ptrCast(about);
     c.adw_about_dialog_set_application_name(d, "Séance-fork");
     c.adw_about_dialog_set_application_icon(d, "com.seance-fork.app");
-    c.adw_about_dialog_set_version(d, "0.8.0");
+    c.adw_about_dialog_set_version(d, version_info.string);
     c.adw_about_dialog_set_developer_name(d, "Stephen Cross");
     c.adw_about_dialog_set_license_type(d, c.GTK_LICENSE_MIT_X11);
     c.adw_about_dialog_set_website(d, "https://github.com/scross01/seance-fork");

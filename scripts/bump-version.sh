@@ -16,7 +16,7 @@ DRY_RUN_TMP=""
 
 FILES=(
   build.zig.zon
-  src/app.zig
+  src/version.zig
   pkg/arch/PKGBUILD
   pkg/arch/.SRCINFO
   resources/com.seance-fork.app.metainfo.xml
@@ -72,18 +72,13 @@ assert_unique() {
   fi
 }
 
-check_about_dialog() {
+check_version_module() {
   local v="$1"
-  if grep -q 'adw_about_dialog_set_version(d, "' "$ROOT/src/app.zig"; then
-    if grep -qF "adw_about_dialog_set_version(d, \"$v\");" "$ROOT/src/app.zig"; then
-      echo "OK  src/app.zig"
-    else
-      echo "DRIFT src/app.zig: About dialog literal is not \"$v\""
-      return 1
-    fi
+  if grep -qxF "pub const string = \"$v\";" "$ROOT/src/version.zig"; then
+    echo "OK  src/version.zig"
   else
-    # Phase 2 shape: the version comes from build_options, no literal to drift.
-    echo "OK  src/app.zig (version injected via build_options)"
+    echo "DRIFT src/version.zig: pub const string is not \"$v\""
+    return 1
   fi
 }
 
@@ -161,7 +156,7 @@ check_changelog() {
 check_all() {
   local v failures=0
   v="$(canonical_version)"
-  check_about_dialog "$v" || failures=1
+  check_version_module "$v" || failures=1
   check_pkgbuild "$v" || failures=1
   check_srcinfo "$v" || failures=1
   check_metainfo "$v" || failures=1
@@ -174,9 +169,7 @@ guard_edits() {
   local old="$1" old_re
   old_re="$(sed_pattern "$old")"
   assert_unique "$ROOT/build.zig.zon" "^[[:space:]]*\.version = \"$old_re\",$"
-  if grep -qF 'adw_about_dialog_set_version(d, "' "$ROOT/src/app.zig"; then
-    assert_unique "$ROOT/src/app.zig" "adw_about_dialog_set_version\(d, \"$old_re\"\);"
-  fi
+  assert_unique "$ROOT/src/version.zig" "^pub const string = \"$old_re\";$"
   assert_unique "$ROOT/pkg/arch/PKGBUILD" "^pkgver=$old_re$"
   assert_unique "$ROOT/pkg/arch/.SRCINFO" "^	pkgver = $old_re$"
   assert_unique "$ROOT/pkg/arch/.SRCINFO" "^	source = seance-fork-$old_re-src\.tar\.gz::"
@@ -193,11 +186,8 @@ edit_all() {
 
   sed -i "s|^\([[:space:]]*\)\.version = \"$old_re\"|\1.version = \"$new\"|" "$ROOT/build.zig.zon"
 
-  # Phase 2 trees inject the version instead of carrying a literal.
-  if grep -qF 'adw_about_dialog_set_version(d, "' "$ROOT/src/app.zig"; then
-    sed -i "s|adw_about_dialog_set_version(d, \"$old_re\")|adw_about_dialog_set_version(d, \"$new\")|" \
-      "$ROOT/src/app.zig"
-  fi
+  sed -i "s|^pub const string = \"$old_re\";|pub const string = \"$new\";|" \
+    "$ROOT/src/version.zig"
 
   sed -i "s|^pkgver=$old_re$|pkgver=$new|" "$ROOT/pkg/arch/PKGBUILD"
 
@@ -332,7 +322,7 @@ main() {
     if [[ ! -e "$ROOT/.git" ]]; then
       refuse "no git repo at $ROOT (use --no-git to edit without committing)"
     fi
-    git -C "$ROOT" add -- build.zig.zon src/app.zig pkg/arch/PKGBUILD \
+    git -C "$ROOT" add -- build.zig.zon src/version.zig pkg/arch/PKGBUILD \
       pkg/arch/.SRCINFO resources/com.seance-fork.app.metainfo.xml \
       .github/ISSUE_TEMPLATE/bug_report.yml CHANGELOG.md
     git -C "$ROOT" commit -m "chore: bump version to $NEW_VERSION and sync release metadata" \

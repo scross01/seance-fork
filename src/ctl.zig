@@ -3161,12 +3161,17 @@ fn bufCopy(dest: []u8, src: []const u8) usize {
 
 // ── Usage ───────────────────────────────────────────────────────────────
 
+pub fn printVersion(v: []const u8) void {
+    wfmt("seance {s}\n", .{v});
+}
+
 pub fn printTopLevelUsage() void {
     wout(
         \\seance — terminal multiplexer
         \\
         \\Usage: seance              Start a new window (GUI)
         \\       seance ctl <cmd>    Control a running instance (CLI)
+        \\       seance --version    Print the version
         \\
         \\Run 'seance ctl --help' for a list of CLI commands.
         \\

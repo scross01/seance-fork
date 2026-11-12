@@ -3,6 +3,7 @@ const io = @import("io.zig");
 const c = @import("c.zig").c;
 const App = @import("app.zig");
 const ctl = @import("ctl.zig");
+const version = @import("version.zig");
 
 pub const std_options: std.Options = .{
     .log_level = .info,
@@ -20,6 +21,10 @@ pub fn main(init: std.process.Init) !void {
         }
         if (std.mem.eql(u8, arg1, "--help") or std.mem.eql(u8, arg1, "-h") or std.mem.eql(u8, arg1, "help")) {
             ctl.printTopLevelUsage();
+            return;
+        }
+        if (std.mem.eql(u8, arg1, "--version") or std.mem.eql(u8, arg1, "-V")) {
+            ctl.printVersion(version.string);
             return;
         }
     }
