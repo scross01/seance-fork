@@ -913,8 +913,7 @@ pub const WindowState = struct {
             // A fresh activation sequence starts here; drop any suppression
             // left over from a previous jump so the next pane focus behaves
             // normally unless this sequence asks otherwise.
-            self.notif_center.suppress_focus_mark_read = false;
-            self.notif_center.suppress_focus_pane_id = null;
+            self.notif_center.clearActivationSuppression();
             self.notif_panel.refresh();
             c.gtk_popover_popup(@ptrCast(popover));
         }

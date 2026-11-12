@@ -278,35 +278,22 @@ pub const Pane = struct {
 
         // Focusing a pane normally marks all of its alerts read. A pane that a
         // notification activation jumped to is the exception: only the record
-        // the user acted on was read, so its siblings stay unread. The
-        // suppression stays armed for that pane rather than being consumed by
-        // one focus event, because activating a row produces several (the
-        // jump's own focus and the restore GTK performs when the popover
-        // closes), and consuming it on the first would let the next one
-        // blanket-read the arrival. It is cleared when the popover is opened
-        // again or when focus moves to a different pane.
+        // the user acted on was read, so its siblings stay unread. That
+        // suppression is time-bounded in NotificationCenter, because the jump
+        // produces more than one focus transition (its own, and the one GTK
+        // performs when the popover closes) and the count varies with
+        // scheduling.
         const Window = @import("window.zig");
         if (Window.window_manager) |wm| {
             if (wm.findByWorkspaceId(self.workspace_id)) |state| {
-                const suppressed_pane = if (state.notif_center.suppress_focus_mark_read)
-                    state.notif_center.suppress_focus_pane_id
-                else
-                    null;
-                if (suppressed_pane) |id| {
-                    if (id != self.id) {
-                        // Focus moved elsewhere: the activation is over.
-                        state.notif_center.suppress_focus_mark_read = false;
-                        state.notif_center.suppress_focus_pane_id = null;
-                    }
-                }
-
                 const popover_open = if (state.notif_popover) |popover|
                     c.gtk_widget_get_visible(popover) != 0
                 else
                     false;
-                const is_suppressed_target = state.notif_center.suppress_focus_mark_read and
-                    state.notif_center.suppress_focus_pane_id == self.id;
-                if (!popover_open and !is_suppressed_target and self.has_unread) {
+                if (!popover_open and
+                    !state.notif_center.suppressionActive(self.id) and
+                    self.has_unread)
+                {
                     state.notif_center.markReadForPane(self.id, @ptrCast(self));
                 }
             }

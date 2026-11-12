@@ -404,11 +404,9 @@ fn onRowActivated(
 
     // Suppress the blanket markReadForPane that focusing this pane would
     // trigger, so its sibling alerts stay unread. This is deliberately not
-    // cleared on return: the jump only requests focus, and GTK delivers it
-    // after this handler unwinds, so clearing here would let that focus
-    // blanket-read the arrival. The pane's focus path consumes it instead.
-    self.center.suppress_focus_mark_read = true;
-    self.center.suppress_focus_pane_id = p_id;
+    // cleared on return: the jump only requests focus, and GTK delivers that
+    // focus (and another when the popover closes) after this handler unwinds.
+    self.center.noteActivatedPane(p_id);
 
     // Navigate to source
     if (self.on_jump) |jump| {

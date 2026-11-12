@@ -304,13 +304,16 @@ pub const NotificationStore = struct {
 pub const NotificationCenter = struct {
     store: NotificationStore = .{},
     ctx: ?*anyopaque = null, // WindowState pointer (opaque to avoid circular import)
-    // Set during a notification-panel jump so the focus it causes does not
-    // blanket-mark the pane's sibling alerts read. Scoped to the activated
-    // pane and consumed by the first focus that observes it: GTK delivers the
-    // restored focus after the activating key handler returns, so a flag
-    // cleared at the end of that handler would be gone by the time focus lands.
+    // Set when a notification is activated, so the focus churn the jump
+    // produces does not blanket-mark the pane's sibling alerts read: only the
+    // record the user acted on was read. Activating a row focuses its pane and
+    // GTK focuses the pane again when the popover closes, and how many
+    // transitions occur depends on scheduling, so the suppression is bounded by
+    // time rather than by a count of focus events. Once the window expires,
+    // focusing the pane marks its alerts read as usual.
     suppress_focus_mark_read: bool = false,
     suppress_focus_pane_id: ?u64 = null,
+    suppress_focus_until_ms: i64 = 0,
 
     // Callbacks (wired by window.zig during init)
     on_sidebar_refresh: ?*const fn (*anyopaque) void = null,
@@ -426,6 +429,33 @@ pub const NotificationCenter = struct {
         }
 
         self.notifyStoreChanged();
+    }
+
+    /// Long enough to cover a notification jump plus the popover's close
+    /// sequence, short enough that a deliberate later focus still marks read.
+    const suppress_focus_window_ms: i64 = 3000;
+
+    /// True while focusing `pane_id` must not blanket-mark its alerts read.
+    pub fn suppressionActive(self: *const NotificationCenter, pane_id: u64) bool {
+        if (!self.suppress_focus_mark_read) return false;
+        if (self.suppress_focus_pane_id != pane_id) return false;
+        return io.milliTimestamp() < self.suppress_focus_until_ms;
+    }
+
+    /// Record that a notification was activated for `pane_id`. Bounded by time
+    /// rather than by a focus-event count: the jump focuses the pane and GTK
+    /// focuses it again when the popover closes, and how many transitions occur
+    /// depends on scheduling.
+    pub fn noteActivatedPane(self: *NotificationCenter, pane_id: u64) void {
+        self.suppress_focus_mark_read = true;
+        self.suppress_focus_pane_id = pane_id;
+        self.suppress_focus_until_ms = io.milliTimestamp() + suppress_focus_window_ms;
+    }
+
+    pub fn clearActivationSuppression(self: *NotificationCenter) void {
+        self.suppress_focus_mark_read = false;
+        self.suppress_focus_pane_id = null;
+        self.suppress_focus_until_ms = 0;
     }
 
     /// Central mark-read for a pane (called on focus). Marks the pane's alerts
